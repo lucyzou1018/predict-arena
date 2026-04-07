@@ -1,0 +1,720 @@
+import{useState,useEffect,useCallback,useRef}from"react";
+import{useNavigate}from"react-router-dom";
+import{useWallet}from"../context/WalletContext";
+import{useSocket}from"../hooks/useSocket";
+import{useGame}from"../context/GameContext";
+import{useContract}from"../hooks/useContract";
+import{useBtcPrice}from"../hooks/useBtcPrice";
+import{BtcTicker,TeamSlots,MatchAnimation,PaymentModal}from"../components";
+import{ENTRY_FEE,TEAM_SIZES,PAYMENT_TIMEOUT}from"../config/constants";
+
+export default function Home(){
+  const nav=useNavigate();
+  const{wallet,provider,signer,connect,mockMode,refund,pendingAction,setPendingAction}=useWallet();
+  const{emit,on}=useSocket();
+  const{updateGame}=useGame();
+  const{mockPay,loading}=useContract();
+  const price=useBtcPrice();
+
+  const[history,setHistory]=useState([]);
+  const[historyFilter,setHistoryFilter]=useState("all");
+  const[historyPage,setHistoryPage]=useState(1);
+  const[stats,setStats]=useState(null);
+
+  const[mode,setMode]=useState("create");
+  const[sz,setSz]=useState(2);
+
+  // Per-card independent state
+  const[createPhase,setCreatePhase]=useState("select");
+  const createTimeoutRef=useRef(null);
+  const joinTimeoutRef=useRef(null);
+  const[createErr,setCreateErr]=useState(null);
+  const[createPaid,setCreatePaid]=useState(false);
+  const[roomFullInfo,setRoomFullInfo]=useState(null);
+  const[paymentProgress,setPaymentProgress]=useState({paidCount:0,total:0});
+  const[roomCode,setRoomCode]=useState("");
+  const[openRoom,setOpenRoom]=useState(null);
+  const[room,setRoom]=useState({current:0,total:0,players:[]});
+  const[copied,setCopied]=useState(false);
+
+  // Room expiry countdown
+  const[roomExpiresAt,setRoomExpiresAt]=useState(null);
+  const[roomCountdown,setRoomCountdown]=useState(null);
+
+  // Payment countdown (60s after room full)
+  const[paymentStartedAt,setPaymentStartedAt]=useState(null);
+  const[paymentCountdown,setPaymentCountdown]=useState(null);
+
+  // Join room expiry countdown
+  const[joinExpiresAt,setJoinExpiresAt]=useState(null);
+  const[joinCountdown,setJoinCountdown]=useState(null);
+
+  const[joinPhase,setJoinPhase]=useState("select");
+  const[joinErr,setJoinErr]=useState(null);
+  const[joinPaid,setJoinPaid]=useState(false);
+  const[joinCode,setJoinCode]=useState("");
+  const[joinRoom,setJoinRoom]=useState({current:0,total:0,players:[]});
+  const[joinValidInfo,setJoinValidInfo]=useState(null);
+
+  const[matchPhase,setMatchPhase]=useState("select");
+  const[matchErr,setMatchErr]=useState(null);
+  const[matchInfo,setMatchInfo]=useState({current:0});
+  const[cd,setCd]=useState(15);
+  const[pending,setPending]=useState(null);
+
+  // Refs to track latest state values inside socket handlers (avoids stale closures & dep churn)
+  const createPhaseRef=useRef(createPhase); createPhaseRef.current=createPhase;
+  const joinPhaseRef=useRef(joinPhase); joinPhaseRef.current=joinPhase;
+  const createPaidRef=useRef(createPaid); createPaidRef.current=createPaid;
+  const joinPaidRef=useRef(joinPaid); joinPaidRef.current=joinPaid;
+  const joinCodeRef=useRef(joinCode); joinCodeRef.current=joinCode;
+  const walletRef=useRef(wallet); walletRef.current=wallet;
+  const szRef=useRef(sz); szRef.current=sz;
+  const roomCodeRef=useRef(roomCode); roomCodeRef.current=roomCode;
+
+  // Carousel state
+  const scrollRef=useRef(null);
+  const[activeCard,setActiveCard]=useState(0);
+  const CARDS=["create","join","match"];
+
+  const scrollToCard=(idx)=>{
+    const el=scrollRef.current;
+    if(!el||!el.children[0])return;
+    const cardWidth=el.children[0].offsetWidth;
+    const gap=16;
+    el.scrollTo({left:idx*(cardWidth+gap),behavior:"smooth"});
+  };
+
+  const scrollPosRef=useRef(0);
+  const handleScroll=()=>{
+    const el=scrollRef.current;
+    if(!el)return;
+    const cardWidth=el.children[0]?.offsetWidth||1;
+    const gap=16;
+    const pos=Math.round(el.scrollLeft/(cardWidth+gap));
+    scrollPosRef.current=pos;
+  };
+
+  const goCard=(idx)=>{
+    setActiveCard(idx);
+    setMode(CARDS[idx]);
+    if(idx>=2) scrollToCard(1);
+    else scrollToCard(0);
+  };
+
+  const scrollRight=()=>{scrollToCard(1);};
+  const scrollLeft=()=>{scrollToCard(0);};
+
+  // Room expiry countdown timer
+  useEffect(()=>{
+    if(!roomExpiresAt||createPhase!=="waiting"){setRoomCountdown(null);return;}
+    const tick=()=>{
+      const rem=Math.max(0,Math.ceil((roomExpiresAt-Date.now())/1000));
+      setRoomCountdown(rem);
+      if(rem<=0)clearInterval(iv);
+    };
+    tick();
+    const iv=setInterval(tick,1000);
+    return()=>clearInterval(iv);
+  },[roomExpiresAt,createPhase]);
+
+  // Join room expiry countdown timer
+  useEffect(()=>{
+    if(!joinExpiresAt||joinPhase!=="waiting"){setJoinCountdown(null);return;}
+    const tick=()=>{
+      const rem=Math.max(0,Math.ceil((joinExpiresAt-Date.now())/1000));
+      setJoinCountdown(rem);
+      if(rem<=0)clearInterval(iv);
+    };
+    tick();
+    const iv=setInterval(tick,1000);
+    return()=>clearInterval(iv);
+  },[joinExpiresAt,joinPhase]);
+
+  // Payment countdown timer (60s after room full)
+  useEffect(()=>{
+    if(!paymentStartedAt){setPaymentCountdown(null);return;}
+    const tick=()=>{
+      const rem=Math.max(0,Math.ceil((paymentStartedAt+PAYMENT_TIMEOUT*1000-Date.now())/1000));
+      setPaymentCountdown(rem);
+      if(rem<=0)clearInterval(iv);
+    };
+    tick();
+    const iv=setInterval(tick,1000);
+    return()=>clearInterval(iv);
+  },[paymentStartedAt]);
+
+  useEffect(()=>{
+    // Reset ALL state on wallet disconnect or switch
+    setHistory([]);setStats(null);
+    setCreatePhase("select");setCreateErr(null);setCreatePaid(false);setRoomCode("");setRoom({current:0,total:0,players:[]});setOpenRoom(null);setRoomExpiresAt(null);setRoomCountdown(null);
+    setJoinPhase("select");setJoinErr(null);setJoinPaid(false);setJoinCode("");setJoinRoom({current:0,total:0,players:[]});setJoinExpiresAt(null);setJoinCountdown(null);setJoinValidInfo(null);
+    setMatchPhase("select");setMatchErr(null);setMatchInfo({current:0});setPending(null);
+    setPaymentStartedAt(null);setPaymentCountdown(null);setRoomFullInfo(null);setPaymentProgress({paidCount:0,total:0});
+    if(!wallet) return;
+    fetch(`http://localhost:3001/api/users/${wallet}/games?limit=20`).then(r=>r.json()).then(d=>{setHistory(d.games||[]);setHistoryPage(1);}).catch(()=>{});
+    fetch(`http://localhost:3001/api/users/${wallet}`).then(r=>r.json()).then(setStats).catch(()=>{});
+    fetch(`http://localhost:3001/api/users/${wallet}/open-room`).then(r=>r.json()).then(d=>{
+      setOpenRoom(d.room||null);
+      if(d.room?.invite_code){
+        const code=d.room.invite_code;
+        const players=Array.from({length:d.room.current_players||1},(_,i)=> i===0 ? wallet : `player-${i}`);
+        // Calculate expiresAt from created_at + 5 minutes
+        const expiresAt=new Date(d.room.created_at).getTime()+300000;
+        const isExpired=expiresAt<=Date.now();
+        if(d.room.is_owner){
+          setRoomCode(code);
+          setRoom({current:d.room.current_players||1,total:d.room.max_players,players});
+          if(isExpired){
+            setCreatePhase("expired");
+          } else {
+            setRoomExpiresAt(expiresAt);
+            setCreatePhase("waiting");
+          }
+        } else {
+          setJoinCode(code);
+          setJoinRoom({current:d.room.current_players||1,total:d.room.max_players,players});
+          if(isExpired){
+            setJoinErr("Room expired — team not filled in time");
+            setJoinPhase("select");
+          } else {
+            setJoinExpiresAt(expiresAt);
+            setJoinPhase("waiting");
+          }
+          setTimeout(()=>{setActiveCard(1);setMode("join");scrollToCard(0);},100);
+        }
+      }
+    }).catch(()=>{});
+  },[wallet]);
+
+  // ===== SOCKET EVENT LISTENERS =====
+  // Uses refs to read latest state — deps are only stable references, so listeners are never torn down mid-flight
+  useEffect(()=>{
+    const refreshHistory=()=>{const w=walletRef.current;if(w)fetch(`http://localhost:3001/api/users/${w}/games?limit=20`).then(r=>r.json()).then(res=>setHistory(res.games||[])).catch(()=>{});};
+    const u=[
+      on("room:created",d=>{
+        if(createTimeoutRef.current){clearTimeout(createTimeoutRef.current);createTimeoutRef.current=null;}
+        setCreateErr(null);
+        setRoomCode(d.inviteCode);
+        setRoom({current:1,total:szRef.current,players:[walletRef.current]});
+        setRoomExpiresAt(d.expiresAt);
+        setCreatePhase("waiting");
+      }),
+      on("room:update",d=>{
+        if(createPhaseRef.current==="waiting"||createPhaseRef.current==="paid_waiting"){
+          setRoom({current:d.current,total:d.total||szRef.current,players:d.players});
+          if(d.expiresAt)setRoomExpiresAt(d.expiresAt);
+        }
+        if(joinPhaseRef.current==="waiting"||joinPhaseRef.current==="paid_waiting"){
+          setJoinRoom({current:d.current,total:d.total||szRef.current,players:d.players});
+          if(d.expiresAt)setJoinExpiresAt(d.expiresAt);
+        }
+      }),
+      on("room:full",d=>{
+        setRoomFullInfo(d);
+        setPaymentProgress({paidCount:0,total:d.players.length});
+        setPaymentStartedAt(Date.now());
+        setRoomExpiresAt(null);setRoomCountdown(null);
+        setJoinExpiresAt(null);setJoinCountdown(null);
+        if(createPhaseRef.current==="waiting"||createPhaseRef.current==="creating") setTimeout(()=>setCreatePhase("payment"),700);
+        if(joinPhaseRef.current==="waiting"||joinPhaseRef.current==="joining") setTimeout(()=>setJoinPhase("payment"),700);
+      }),
+      on("room:error",d=>{
+        if(createPhaseRef.current==="creating"||createPhaseRef.current==="waiting") setCreateErr(d.message);
+        if(joinPhaseRef.current==="select"||joinPhaseRef.current==="waiting"||joinPhaseRef.current==="joining") {setJoinErr(d.message);setJoinPhase("select");}
+        setCreatePhase(prev=>prev==="creating"?"select":prev);
+      }),
+      on("room:dissolved",d=>{
+        const wasJoinFlow = joinPhaseRef.current!=="select" || !!joinCodeRef.current;
+        if(createPaidRef.current){refund(ENTRY_FEE);setCreatePaid(false);}
+        if(joinPaidRef.current){refund(ENTRY_FEE);setJoinPaid(false);}
+        setOpenRoom(null);setRoomCode("");setRoom({current:0,total:0,players:[]});
+        setRoomExpiresAt(null);setJoinExpiresAt(null);setPaymentStartedAt(null);
+        setCreatePhase("select");setJoinPhase("select");
+        if(wasJoinFlow && d&&d.reason)setJoinErr(d.reason);
+        refreshHistory();
+      }),
+      on("room:expired",d=>{
+        setRoomExpiresAt(null);setRoomCountdown(null);
+        setJoinExpiresAt(null);setJoinCountdown(null);
+        setPaymentStartedAt(null);
+        if(createPhaseRef.current==="waiting"||createPhaseRef.current==="creating"){
+          setCreatePhase("expired");
+          setCreateErr(null);
+        }
+        if(joinPhaseRef.current==="waiting"){
+          setJoinPhase("select");
+          setJoinErr("Room expired — team not filled in time");
+        }
+        refreshHistory();
+      }),
+      on("room:valid",d=>{
+        if(joinTimeoutRef.current){clearTimeout(joinTimeoutRef.current);joinTimeoutRef.current=null;}
+        setJoinValidInfo(d);
+        setJoinPhase("confirm");
+      }),
+      on("room:invalid",d=>{
+        if(joinTimeoutRef.current){clearTimeout(joinTimeoutRef.current);joinTimeoutRef.current=null;}
+        setJoinErr(d?.message||"Room not found or expired");setJoinPhase("select");
+      }),
+      on("room:payment:update",d=>{setPaymentProgress({paidCount:d.paidCount,total:d.total});}),
+      on("room:payment:failed",d=>{
+        if(createPaidRef.current){refund(ENTRY_FEE);setCreatePaid(false);}
+        if(joinPaidRef.current){refund(ENTRY_FEE);setJoinPaid(false);}
+        setPaymentStartedAt(null);setRoomFullInfo(null);
+        setCreatePhase("select");setJoinPhase("select");
+        setRoomCode("");setRoom({current:0,total:0,players:[]});setOpenRoom(null);
+        const reason=d?.reason||"Payment timeout — team disbanded";
+        setCreateErr(reason);setJoinErr(reason);
+        refreshHistory();
+      }),
+      on("room:joined",d=>{
+        if(d.error){setJoinErr(d.error);if(joinPaidRef.current){refund(ENTRY_FEE);setJoinPaid(false);}setJoinPhase("select");return;}
+        setJoinRoom({current:d.current,total:d.total,players:d.players});
+        if(d.expiresAt)setJoinExpiresAt(d.expiresAt);
+        setJoinPhase("waiting");
+      }),
+      on("game:start",d=>{
+        updateGame({gameId:d.gameId,mode:"room",teamSize:d.players.length,players:d.players,phase:"predicting"});
+        setPaymentStartedAt(null);
+        setTimeout(()=>nav("/game"),500);
+      }),
+    ];
+    return()=>u.forEach(f=>f());
+  },[on,updateGame,nav,refund]);
+
+  // Check if any mode is currently active (not in idle "select" state)
+  const isCreateBusy=createPhase!=="select";
+  const isJoinBusy=joinPhase!=="select";
+  const isMatchBusy=matchPhase!=="select";
+  const anyBusy=isCreateBusy||isJoinBusy||isMatchBusy;
+
+  const createRoom=()=>{if(isJoinBusy||isMatchBusy){setCreateErr("Finish or cancel current action first");return;}if(isCreateBusy){setCreateErr("Already creating a room");return;}if(!mockMode && (!wallet || !provider || !signer)){connect({type:"create-room"});return;}setCreateErr(null);setCreatePhase("creating");if(createTimeoutRef.current)clearTimeout(createTimeoutRef.current);createTimeoutRef.current=setTimeout(()=>{setCreateErr("Create room failed. Please retry.");setCreatePhase("select");},8000);emit("room:create",{teamSize:sz});};
+  const payCreate=useCallback(async()=>{try{await mockPay();setCreatePaid(true);setCreateErr(null);if(roomFullInfo){emit("room:payment:confirm",{gameId:roomFullInfo.gameId,inviteCode:roomCode}); setCreatePhase("paid_waiting");}}catch{setCreateErr("Payment failed");}},[mockPay,roomFullInfo,roomCode,emit]);
+  const cancelCreate=()=>{emit("room:dissolve",{inviteCode:roomCode});setCreatePhase("select");setRoomExpiresAt(null);setPaymentStartedAt(null);};
+  const dissolveRoom=()=>{emit("room:dissolve",{inviteCode:roomCode});if(createPaid){refund(ENTRY_FEE);setCreatePaid(false);}setOpenRoom(null);setRoomCode("");setRoom({current:0,total:0,players:[]});setCreatePhase("select");setRoomExpiresAt(null);setPaymentStartedAt(null);fetch(`http://localhost:3001/api/users/${wallet}/games?limit=20`).then(r=>r.json()).then(d=>setHistory(d.games||[])).catch(()=>{});};
+  const clearExpired=()=>{setCreatePhase("select");setRoomCode("");setRoom({current:0,total:0,players:[]});setOpenRoom(null);setCreateErr(null);if(wallet){fetch(`http://localhost:3001/api/users/${wallet}/games?limit=20`).then(r=>r.json()).then(d=>setHistory(d.games||[])).catch(()=>{});}};
+  const copyCode=()=>{navigator.clipboard.writeText(roomCode);setCopied(true);setTimeout(()=>setCopied(false),2000);};
+
+  // Join flow: confirm dialog (no payment), then join directly
+  const submitJoin=()=>{if(isCreateBusy||isMatchBusy){setJoinErr("Finish or cancel current action first");return;}if(isJoinBusy){setJoinErr("Already in join flow");return;}if(!mockMode && (!wallet || !provider || !signer)){connect({type:"join-room",code:joinCode});return;}if(joinCode.length<6)return setJoinErr("Enter complete 6-digit code");setJoinErr(null);setJoinPhase("validating");if(joinTimeoutRef.current)clearTimeout(joinTimeoutRef.current);joinTimeoutRef.current=setTimeout(()=>{setJoinErr("Invalid room code or server not responding");setJoinPhase("select");},4000);emit("room:validate",{inviteCode:joinCode.toUpperCase()});};
+  const confirmJoin=()=>{emit("room:join",{inviteCode:joinCode.toUpperCase()});setJoinPhase("joining");};
+  const payJoin=useCallback(async()=>{try{await mockPay();setJoinPaid(true);setJoinErr(null);if(roomFullInfo){emit("room:payment:confirm",{gameId:roomFullInfo.gameId,inviteCode:roomFullInfo.inviteCode||joinCode}); setJoinPhase("paid_waiting");}}catch{setJoinErr("Payment failed");}},[joinCode,mockPay,emit,roomFullInfo]);
+  const leaveRoom=()=>{emit("room:leave");if(joinPaid){refund(ENTRY_FEE);setJoinPaid(false);}setJoinPhase("select");setJoinExpiresAt(null);};
+
+  // ===== QUICK MATCH =====
+  useEffect(()=>{if(matchPhase!=="matching")return;setCd(15);const t=setInterval(()=>setCd(c=>{if(c<=1){clearInterval(t);return 0;}return c-1;}),1000);return()=>clearInterval(t);},[matchPhase]);
+
+  useEffect(()=>{
+    const u=[
+      on("match:update",d=>setMatchInfo({current:d.current})),
+      on("match:found",d=>{setPending(d);if(mockMode){mockPay().then(()=>{updateGame({gameId:d.gameId,chainGameId:d.chainGameId,mode:"random",teamSize:sz,players:d.players,phase:"predicting"});nav("/game");});}else setMatchPhase("payment");}),
+      on("match:failed",()=>{setMatchErr("No opponents found. Try again.");setMatchPhase("select");}),
+      on("match:error",d=>{setMatchErr(d.message);setMatchPhase("select");}),
+    ];
+    return()=>u.forEach(f=>f());
+  },[on,mockMode,mockPay,updateGame,sz,nav]);
+
+  const startMatch=()=>{if(isCreateBusy||isJoinBusy){setMatchErr("Finish or cancel current action first");return;}if(isMatchBusy){setMatchErr("Already matching");return;}if(!mockMode && (!wallet || !provider || !signer)){connect({type:"random-match"});return;}setMatchErr(null);setMatchPhase("matching");setMatchInfo({current:1});emit("match:join",{teamSize:sz});};
+  const cancelMatch=()=>{emit("match:cancel");setMatchPhase("select");};
+  const payMatch=useCallback(async()=>{if(!pending)return;try{await mockPay();updateGame({gameId:pending.gameId,chainGameId:pending.chainGameId,mode:"random",teamSize:sz,players:pending.players,phase:"predicting"});nav("/game");}catch{setMatchErr("Payment failed");setMatchPhase("select");}},[pending,mockPay,updateGame,sz,nav]);
+
+  // Payment modal — only for room full payment and quick match
+  const showPayment=(createPhase==="payment")||(joinPhase==="payment")||(matchPhase==="payment");
+  const onPayConfirm=createPhase==="payment"?payCreate:joinPhase==="payment"?payJoin:payMatch;
+  const onPayCancel=()=>{
+    if(createPhase==="payment")cancelCreate();
+    else if(joinPhase==="payment")leaveRoom();
+    else{setMatchPhase("select");setPending(null);}
+  };
+
+  useEffect(()=>{
+    if(!pendingAction) return;
+    if(!mockMode && (!wallet || !provider || !signer)) return;
+    const action = pendingAction;
+    setPendingAction(null);
+    if(action.type === "create-room") createRoom();
+    if(action.type === "random-match") startMatch();
+    if(action.type === "join-room"){ if(action.code) setJoinCode(action.code); setTimeout(()=>submitJoin(),0); }
+  },[pendingAction,wallet,provider,signer,mockMode]);
+
+  // Team size selector component
+  const SizeSelector=({onAction,actionLabel,disabled})=>(
+    <div>
+      <p className="text-white/30 text-[11px] mb-3 font-medium">Team Size</p>
+      <div className="grid grid-cols-4 gap-2 mb-4">
+        {TEAM_SIZES.map(s=>(
+          <button key={s} onClick={()=>setSz(s)} disabled={disabled}
+            className={`py-3 rounded-xl font-black text-base transition-all
+              ${sz===s
+                ?"bg-gradient-to-br from-amber-500 to-orange-600 text-white shadow-lg shadow-orange-500/20 -translate-y-0.5"
+                :"bg-white/[0.03] border border-white/[0.06] text-white/20 hover:bg-white/[0.06] hover:text-white/40"}
+              ${disabled?"!opacity-30 cursor-not-allowed":""}`}
+          >{s}P</button>
+        ))}
+      </div>
+      <button onClick={onAction} disabled={disabled} className={`btn-primary w-full py-3 font-bold text-sm ${disabled?"!opacity-30 cursor-not-allowed":""}`}>{actionLabel}</button>
+    </div>
+  );
+
+  // Format countdown as mm:ss
+  const fmtCountdown=(s)=>{if(s===null||s===undefined)return"";return`${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`;};
+
+  return(
+    <div className="max-w-5xl mx-auto px-6 py-8 min-h-screen">
+
+      {/* Top section */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+        <div className="lg:col-span-2">
+          <h1 className="text-2xl sm:text-3xl font-black tracking-tight mb-2">
+            Choose Your <span className="text-gradient">Battle Mode</span>
+          </h1>
+          <p className="text-white/50 text-sm leading-relaxed max-w-lg">
+            Predict BTC price direction, beat your opponent, settle on-chain in 30 seconds. Entry: {ENTRY_FEE} USDC per round.
+          </p>
+          {mockMode&&<div className="inline-flex items-center gap-1.5 bg-amber-500/10 border border-amber-500/15 rounded-full px-3 py-1 mt-3">
+            <span className="text-amber-400/80 text-[10px] font-bold">DEMO MODE · Virtual Balance · Zero Risk</span>
+          </div>}
+          {!wallet&&!mockMode&&<p className="text-white/30 text-xs mt-3">
+            {window.ethereum?"Connect wallet to start playing":"No wallet detected — demo mode available"}
+          </p>}
+        </div>
+        <div className="card glow-orange flex flex-col items-center justify-center">
+          <BtcTicker price={price} size="lg" label="BTC / USD Live"/>
+          <div className="flex items-center justify-center gap-1.5 mt-2.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"/>
+            <span className="text-white/30 text-[9px] uppercase tracking-[0.2em]">Live Market</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Stats bar */}
+      {stats&&(stats.wins>0||stats.losses>0)&&<div className="grid grid-cols-3 gap-3 mb-6">
+        <div className="stat-card"><p className="text-[10px] text-white/35 uppercase tracking-wider">Wins</p><p className="text-xl font-black text-emerald-400">{stats.wins}</p></div>
+        <div className="stat-card"><p className="text-[10px] text-white/35 uppercase tracking-wider">Losses</p><p className="text-xl font-black text-rose-400">{stats.losses}</p></div>
+        <div className="stat-card"><p className="text-[10px] text-white/35 uppercase tracking-wider">Profit</p><p className={`text-xl font-black ${parseFloat(stats.total_earned)-parseFloat(stats.total_lost)>=0?"text-emerald-400":"text-rose-400"}`}>{(parseFloat(stats.total_earned)-parseFloat(stats.total_lost)).toFixed(2)}</p></div>
+      </div>}
+
+      {/* ===== Card Carousel ===== */}
+      <div className="relative mb-8">
+        <button onClick={scrollLeft}
+          className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-3 z-10 w-8 h-8 rounded-full bg-white/[0.06] border border-white/[0.08] flex items-center justify-center text-white/40 hover:text-white/70 hover:bg-white/[0.1] transition backdrop-blur-sm">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
+        <button onClick={scrollRight}
+          className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-3 z-10 w-8 h-8 rounded-full bg-white/[0.06] border border-white/[0.08] flex items-center justify-center text-white/40 hover:text-white/70 hover:bg-white/[0.1] transition backdrop-blur-sm">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="9 18 15 12 9 6"/></svg>
+        </button>
+
+        <div ref={scrollRef} onScroll={handleScroll}
+          className="flex gap-4 overflow-x-auto scroll-smooth pb-2 hide-scrollbar"
+          style={{scrollbarWidth:"none",msOverflowStyle:"none"}}
+        >
+          {/* Card 1: Create Room */}
+          <div className="flex-shrink-0 w-[calc(50%-8px)] min-w-[280px]">
+            <div className={`rounded-2xl border p-5 h-full transition-all duration-300
+              ${activeCard===0
+                ?"border-amber-500/25 bg-gradient-to-br from-amber-500/[0.08] to-orange-500/[0.06] shadow-lg shadow-amber-500/[0.05]"
+                :"border-white/[0.06] bg-white/[0.02] opacity-70 hover:opacity-90"}`}
+              onClick={()=>{if(activeCard!==0){setActiveCard(0);setMode("create");}}}
+            >
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 rounded-xl bg-amber-500/15 flex items-center justify-center text-xl">🏟️</div>
+                <div>
+                  <h3 className="text-sm font-bold">Create Room</h3>
+                  <p className="text-[10px] text-white/30">Invite friends to battle</p>
+                </div>
+              </div>
+
+              {createErr&&<div className="bg-rose-500/10 border border-rose-500/15 text-rose-400 px-3 py-2 rounded-lg mb-3 text-[10px]">⚠️ {createErr}</div>}
+
+              {createPhase==="select"&& !openRoom&&(
+                <SizeSelector onAction={createRoom} actionLabel={`Create Arena · ${sz}P`} disabled={isJoinBusy||isMatchBusy}/>
+              )}
+              {createPhase==="creating"&&(<div className="text-center py-10"><div className="w-8 h-8 mx-auto rounded-full border-2 border-orange-400/30 border-t-orange-400 animate-spin mb-3"/><p className="text-white/40 text-xs">Creating arena...</p></div>)}
+              {(createPhase==="waiting"||createPhase==="paid_waiting")&&(
+                <div className="text-center">
+                  <p className="text-white/20 text-[8px] uppercase tracking-[0.3em] mb-2">Arena Code</p>
+                  <div className="bg-white/[0.04] border border-white/[0.06] rounded-xl px-4 py-3 mb-3">
+                    <span className="text-2xl font-mono font-black tracking-[0.4em] text-gradient">{roomCode}</span>
+                  </div>
+                  <button onClick={copyCode} className={`text-[9px] px-3 py-1 rounded-full transition mb-3 ${copied?"bg-emerald-500/15 text-emerald-400":"bg-white/[0.04] text-white/25 hover:text-white/40"}`}>
+                    {copied?"✓ Copied":"📋 Copy Code"}
+                  </button>
+                  <TeamSlots total={sz} players={room.players} current={room.current}/>
+                  <div className="mt-2 inline-flex items-center gap-1.5 text-[10px]">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"/>
+                    <span className="text-white/30 font-mono">{createPaid && paymentProgress.total ? `${paymentProgress.paidCount}/${paymentProgress.total} paid` : `${room.current}/${room.total||sz} ready`}</span>
+                  </div>
+                  {/* Room expiry countdown — only when not full */}
+                  {roomCountdown!==null&&roomCountdown>0&&room.current<(room.total||sz)&&(
+                    <div className={`mt-2 flex items-center justify-center gap-1.5 ${roomCountdown<=30?"text-rose-400":"text-amber-400"}`}>
+                      <span className="text-sm">⏱️</span>
+                      <span className="text-sm font-mono font-bold">{fmtCountdown(roomCountdown)}</span>
+                      <span className="text-[9px] text-white/25 ml-1">remaining</span>
+                    </div>
+                  )}
+                  {/* Payment countdown (after full, 60s) */}
+                  {paymentCountdown!==null&&paymentCountdown>0&&createPhase==="paid_waiting"&&(
+                    <div className={`mt-2 flex items-center justify-center gap-1.5 ${paymentCountdown<=10?"text-rose-400":"text-amber-400"}`}>
+                      <span className="text-sm">💰</span>
+                      <span className="text-sm font-mono font-bold">{paymentCountdown}s</span>
+                      <span className="text-[9px] text-white/25 ml-1">payment countdown</span>
+                    </div>
+                  )}
+                  <button onClick={dissolveRoom} className="mt-3 w-full py-2 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:bg-rose-500/[0.06] hover:text-rose-400 transition text-[10px] text-white/20">Cancel</button>
+                </div>
+              )}
+              {/* Expired state — highlighted Expired button */}
+              {createPhase==="expired"&&(
+                <div className="text-center">
+                  <p className="text-white/20 text-[8px] uppercase tracking-[0.3em] mb-2">Arena Code</p>
+                  <div className="bg-white/[0.04] border border-white/[0.06] rounded-xl px-4 py-3 mb-3">
+                    <span className="text-2xl font-mono font-black tracking-[0.4em] text-white/15 line-through">{roomCode}</span>
+                  </div>
+                  <p className="text-rose-400 text-xs mb-3">Room expired — team not filled in time</p>
+                  <button onClick={clearExpired} className="w-full py-2.5 rounded-xl bg-gradient-to-br from-rose-500 to-rose-600 text-white font-bold text-sm shadow-lg shadow-rose-500/20 hover:shadow-rose-500/30 transition">
+                    Expired
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Card 2: Join Room */}
+          <div className="flex-shrink-0 w-[calc(50%-8px)] min-w-[280px]">
+            <div className={`rounded-2xl border p-5 h-full transition-all duration-300
+              ${activeCard===1
+                ?"border-amber-500/25 bg-gradient-to-br from-amber-500/[0.08] to-orange-500/[0.06] shadow-lg shadow-amber-500/[0.05]"
+                :"border-white/[0.06] bg-white/[0.02] opacity-70 hover:opacity-90"}`}
+              onClick={()=>{if(activeCard!==1){setActiveCard(1);setMode("join");}}}
+            >
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 rounded-xl bg-amber-500/15 flex items-center justify-center text-xl">🎯</div>
+                <div>
+                  <h3 className="text-sm font-bold">Join Room</h3>
+                  <p className="text-[10px] text-white/30">Enter code to join a battle</p>
+                </div>
+              </div>
+
+              {joinErr&&<div className="bg-rose-500/10 border border-rose-500/15 text-rose-400 px-3 py-2 rounded-lg mb-3 text-[10px]">⚠️ {joinErr}</div>}
+
+              {joinPhase==="validating"&&(<div className="text-center py-10"><div className="w-8 h-8 mx-auto rounded-full border-2 border-orange-400/30 border-t-orange-400 animate-spin mb-3"/><p className="text-white/40 text-xs">Validating code...</p></div>)}
+              {joinPhase==="joining"&&(<div className="text-center py-10"><div className="w-8 h-8 mx-auto rounded-full border-2 border-orange-400/30 border-t-orange-400 animate-spin mb-3"/><p className="text-white/40 text-xs">Joining arena...</p></div>)}
+              {joinPhase==="select"&&(
+                <div>
+                  <p className="text-white/30 text-[11px] mb-3 font-medium">Arena Code</p>
+                  <input type="text" value={joinCode}
+                    onChange={e=>setJoinCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g,""))}
+                    placeholder="6-digit code"
+                    maxLength={6}
+                    className="w-full bg-white/[0.03] border border-white/[0.06] rounded-xl px-4 py-3 text-center text-xl font-mono font-black tracking-[0.4em] text-orange-400 placeholder:text-white/[0.08] placeholder:tracking-normal placeholder:text-xs placeholder:font-normal focus:outline-none focus:border-orange-500/25 transition mb-3"
+                  />
+                  <button onClick={submitJoin} disabled={joinCode.length<6||isCreateBusy||isMatchBusy} className="btn-primary w-full py-3 font-bold text-sm disabled:!opacity-15">Join Arena</button>
+                </div>
+              )}
+              {/* Confirm dialog: no payment, just confirm joining */}
+              {joinPhase==="confirm"&&(
+                <div className="text-center">
+                  <p className="text-white/40 text-xs mb-3">Join arena with code</p>
+                  <div className="bg-white/[0.04] border border-white/[0.06] rounded-xl px-4 py-3 mb-4">
+                    <span className="text-xl font-mono font-black tracking-[0.4em] text-gradient">{joinCode}</span>
+                  </div>
+                  <p className="text-white/25 text-[10px] mb-4">{joinValidInfo?`${joinValidInfo.current}/${joinValidInfo.total} players in room`:""}</p>
+                  <div className="flex gap-2">
+                    <button onClick={()=>{setJoinPhase("select");setJoinValidInfo(null);}} className="flex-1 py-2.5 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:bg-white/[0.04] text-white/30 text-xs transition">Cancel</button>
+                    <button onClick={confirmJoin} className="flex-1 btn-primary !py-2.5 !text-sm font-bold">Join</button>
+                  </div>
+                </div>
+              )}
+              {(joinPhase==="waiting"||joinPhase==="paid_waiting")&&(
+                <div className="text-center">
+                  <p className="text-white/20 text-[8px] uppercase tracking-[0.3em] mb-2">Joined Arena</p>
+                  <div className="bg-white/[0.04] border border-white/[0.06] rounded-xl px-4 py-3 mb-3">
+                    <span className="text-xl font-mono font-black tracking-[0.4em] text-gradient">{joinCode}</span>
+                  </div>
+                  <TeamSlots total={joinRoom.total} players={joinRoom.players}/>
+                  <div className="mt-2 inline-flex items-center gap-1.5 text-[10px]">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"/>
+                    <span className="text-white/30 font-mono">{joinPaid && paymentProgress.total ? `${paymentProgress.paidCount}/${paymentProgress.total} paid` : `${joinRoom.current}/${joinRoom.total} waiting`}</span>
+                  </div>
+                  {/* Join room expiry countdown */}
+                  {joinCountdown!==null&&joinCountdown>0&&joinRoom.current<joinRoom.total&&(
+                    <div className={`mt-2 flex items-center justify-center gap-1.5 ${joinCountdown<=30?"text-rose-400":"text-amber-400"}`}>
+                      <span className="text-sm">⏱️</span>
+                      <span className="text-sm font-mono font-bold">{fmtCountdown(joinCountdown)}</span>
+                      <span className="text-[9px] text-white/25 ml-1">remaining</span>
+                    </div>
+                  )}
+                  {/* Payment countdown (after full, 60s) */}
+                  {paymentCountdown!==null&&paymentCountdown>0&&joinPhase==="paid_waiting"&&(
+                    <div className={`mt-2 flex items-center justify-center gap-1.5 ${paymentCountdown<=10?"text-rose-400":"text-amber-400"}`}>
+                      <span className="text-sm">💰</span>
+                      <span className="text-sm font-mono font-bold">{paymentCountdown}s</span>
+                      <span className="text-[9px] text-white/25 ml-1">payment countdown</span>
+                    </div>
+                  )}
+                  <button onClick={leaveRoom} className="mt-3 w-full py-2 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:bg-rose-500/[0.06] hover:text-rose-400 transition text-[10px] text-white/20">Leave</button>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Card 3: Quick Match */}
+          <div className="flex-shrink-0 w-[calc(50%-8px)] min-w-[280px]">
+            <div className={`rounded-2xl border p-5 h-full transition-all duration-300
+              ${activeCard===2
+                ?"border-amber-500/25 bg-gradient-to-br from-amber-500/[0.08] to-orange-500/[0.06] shadow-lg shadow-amber-500/[0.05]"
+                :"border-white/[0.06] bg-white/[0.02] opacity-70 hover:opacity-90"}`}
+              onClick={()=>activeCard!==2&&goCard(2)}
+            >
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 rounded-xl bg-amber-500/15 flex items-center justify-center text-xl">⚔️</div>
+                <div>
+                  <h3 className="text-sm font-bold">Quick Match</h3>
+                  <p className="text-[10px] text-white/30">Auto-match in 15 seconds</p>
+                </div>
+              </div>
+
+              {matchErr&&<div className="bg-rose-500/10 border border-rose-500/15 text-rose-400 px-3 py-2 rounded-lg mb-3 text-[10px]">⚠️ {matchErr}</div>}
+
+              {matchPhase==="select"&&(
+                <SizeSelector onAction={startMatch} actionLabel={`Find Match · ${sz}P`} disabled={isCreateBusy||isJoinBusy}/>
+              )}
+              {matchPhase==="matching"&&(
+                <div>
+                  <MatchAnimation teamSize={sz} current={matchInfo.current} countdown={cd}/>
+                  <button onClick={cancelMatch} className="w-full mt-3 py-2 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:bg-white/[0.04] transition text-[10px] text-white/20">Cancel</button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Dot indicators + swipe hint */}
+        <div className="flex items-center justify-center gap-3 mt-4">
+          {activeCard>0&&<span className="text-white/15 text-[10px] mr-1">← swipe</span>}
+          {CARDS.map((_,i)=>(
+            <button key={i} onClick={()=>{goCard(i);if(i>=2)scrollToCard(1);else scrollToCard(0);}}
+              className={`rounded-full transition-all duration-300
+                ${activeCard===i?"w-6 h-2 bg-gradient-to-r from-amber-500 to-orange-500":"w-2 h-2 bg-white/15 hover:bg-white/25"}`}
+            />
+          ))}
+          {activeCard<2&&<span className="text-white/15 text-[10px] ml-1">swipe →</span>}
+        </div>
+      </div>
+
+      {/* Payment modal — shown when room is full (both creator and joiner) or quick match */}
+      <PaymentModal
+        visible={showPayment}
+        onConfirm={onPayConfirm}
+        onCancel={onPayCancel}
+        loading={loading}
+        title={createPhase==="payment"||joinPhase==="payment"?"Room Full — Pay to Start":"Enter Match"}
+        subtitle={createPhase==="payment"||joinPhase==="payment"?`All ${paymentProgress.total} players joined! Pay 1 USDC within ${paymentCountdown||PAYMENT_TIMEOUT}s to start the prediction.`:"Pay entry fee to enter this match"}
+        actionLabel="Pay 1 USDC"
+        amount="1 USDC"
+        hint={createPhase==="payment"||joinPhase==="payment"?`${paymentProgress.paidCount}/${paymentProgress.total} paid`:"You'll confirm this payment in your wallet."}
+        countdown={(createPhase==="payment"||joinPhase==="payment")?paymentCountdown:null}
+      />
+
+      {/* Bottom row */}
+      <div className="card !p-4 mb-4">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-xs font-bold text-white/40 uppercase tracking-widest">History</h3>
+          <div className="flex gap-1">
+            {[["all","All"],["create","Create"],["join","Join"],["random","Random"]].map(([k,l])=><button key={k} onClick={()=>setHistoryFilter(k)} className={`px-2 py-1 rounded-lg text-[10px] ${historyFilter===k?"bg-amber-500/15 text-amber-300 border border-amber-500/20":"bg-white/[0.03] text-white/25 border border-white/[0.04]"}`}>{l}</button>)}
+          </div>
+        </div>
+        {!wallet ? (
+          <p className="text-white/20 text-xs">Connect wallet to view history</p>
+        ) : history.length===0 ? (
+          <p className="text-white/20 text-xs">No battle history yet</p>
+        ) : (()=>{
+          const filtered = history.filter(g=>historyFilter==="all"?true:historyFilter==="create"?(g.mode==="room"&&g.is_owner):historyFilter==="join"?(g.mode==="room"&&!g.is_owner):g.mode==="random");
+          const pageSize = 6;
+          const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+          const page = Math.min(historyPage, totalPages);
+          const pageItems = filtered.slice((page-1)*pageSize, page*pageSize);
+          return <div className="space-y-2">
+            {pageItems.map(g=>{
+              const isRoom = g.mode === "room";
+              const title = isRoom ? (g.is_owner ? "Create Room" : "Join Room") : "Random Match";
+              const result = g.state !== "settled"
+                ? (g.state === "expired" ? "Expired"
+                  : g.state === "failed" ? "Failed"
+                  : g.state === "cancelled" ? "Cancelled"
+                  : g.state === "waiting" ? "Waiting"
+                  : g.state === "active" ? "Playing"
+                  : g.state)
+                : (g.is_correct === null || g.is_correct === undefined ? "—" : (g.is_correct ? "Win" : "Lose"));
+              const time = new Date(g.settled_at || g.started_at || g.created_at).toLocaleString();
+              return (
+                <div key={g.id} className="bg-white/[0.02] border border-white/[0.05] rounded-xl px-3 py-2.5">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-bold leading-none">{title}</p>
+                      <p className="text-[10px] text-white/25 mt-1">{time}</p>
+                    </div>
+                    <div className="flex-1 text-center min-w-0 px-2">
+                      <p className="text-[10px] text-white/30">Arena Code</p>
+                      <p className="text-[11px] font-mono text-amber-300 truncate">{isRoom && g.invite_code ? g.invite_code : "—"}</p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className="text-[10px] text-white/35">{g.max_players}P</p>
+                      <p className={`text-xs font-bold mt-1 ${result==="Win"?"text-emerald-400":result==="Lose"?"text-rose-400":result==="Expired"?"text-orange-400":result==="Failed"?"text-rose-400":result==="Cancelled"?"text-white/30":result==="Waiting"?"text-amber-300":result==="Playing"?"text-sky-300":"text-white/35"}`}>{result}</p>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+            {totalPages > 1 && <div className="flex items-center justify-center gap-2 pt-2">
+              <button onClick={()=>setHistoryPage(p=>Math.max(1,p-1))} disabled={page===1} className="px-2 py-1 rounded-lg text-[10px] bg-white/[0.03] border border-white/[0.04] text-white/35 disabled:opacity-30">Prev</button>
+              <span className="text-[10px] text-white/35">{page} / {totalPages}</span>
+              <button onClick={()=>setHistoryPage(p=>Math.min(totalPages,p+1))} disabled={page===totalPages} className="px-2 py-1 rounded-lg text-[10px] bg-white/[0.03] border border-white/[0.04] text-white/35 disabled:opacity-30">Next</button>
+            </div>}
+          </div>;
+        })()}
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="card !p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-xs font-bold text-white/40 uppercase tracking-widest">Quick Rules</h3>
+            <button onClick={()=>nav("/how-to-play")} className="text-[10px] text-orange-400/60 hover:text-orange-400 transition font-semibold">Learn more →</button>
+          </div>
+          <div className="grid grid-cols-2 gap-2 text-xs text-white/45">
+            <div className="bg-white/[0.02] rounded-lg px-3 py-2.5 flex items-center gap-2"><span>💰</span>{ENTRY_FEE} USDC entry</div>
+            <div className="bg-white/[0.02] rounded-lg px-3 py-2.5 flex items-center gap-2"><span>⏱️</span>20s to predict</div>
+            <div className="bg-white/[0.02] rounded-lg px-3 py-2.5 flex items-center gap-2"><span>📊</span>10s settlement</div>
+            <div className="bg-white/[0.02] rounded-lg px-3 py-2.5 flex items-center gap-2"><span>🏆</span>Winner takes all</div>
+          </div>
+        </div>
+        <div className="card !p-4">
+          <h3 className="text-xs font-bold text-white/40 uppercase tracking-widest mb-3">Recent Battles</h3>
+          {history.length>0
+            ?<div className="space-y-2">{history.map((g,i)=>{
+              const dir=parseFloat(g.settlement_price)>parseFloat(g.base_price)?"up":"down";
+              const won=g.is_correct;
+              return<div key={i} className={`flex items-center justify-between px-3 py-2.5 rounded-lg ${won?"bg-emerald-500/[0.06] border border-emerald-500/[0.08]":"bg-rose-500/[0.06] border border-rose-500/[0.08]"}`}>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm">{won?"🏆":"💀"}</span>
+                  <div><p className="text-[11px] font-mono text-white/50">#{g.id} · {g.mode==="random"?"Quick":"Room"} · {g.max_players}P</p>
+                  <p className="text-[10px] text-white/30">{g.prediction==="up"?"LONG":"SHORT"} → BTC {dir==="up"?"📈":"📉"}</p></div>
+                </div>
+                <span className={`text-xs font-mono font-bold ${won?"text-emerald-400":"text-rose-400"}`}>{parseFloat(g.reward)>0?`+${parseFloat(g.reward).toFixed(2)}`:"-1.00"}</span>
+              </div>;
+            })}</div>
+            :<div className="flex flex-col items-center justify-center py-6 text-center">
+              <span className="text-2xl mb-2 opacity-30">⚔️</span>
+              <p className="text-white/25 text-xs">No battles yet</p>
+              <p className="text-white/15 text-[10px] mt-0.5">Start a match to see your history</p>
+            </div>
+          }
+        </div>
+      </div>
+
+      <p className="text-center text-white/10 text-[10px] mt-6 mb-2">Built on Base · USDC Settlements</p>
+    </div>
+  );
+}

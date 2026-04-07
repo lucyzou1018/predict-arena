@@ -1,0 +1,22 @@
+{
+  "name": "btc-predict-arena-server",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/index.js",
+    "start": "node src/index.js",
+    "db:migrate": "node src/config/migrate.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "ethers": "^6.13.0",
+    "express": "^4.21.0",
+    "https-proxy-agent": "^8.0.0",
+    "ioredis": "^5.4.1",
+    "node-fetch": "^3.3.2",
+    "pg": "^8.13.0",
+    "socket.io": "^4.7.5",
+    "ws": "^8.17.0"
+  }
+}

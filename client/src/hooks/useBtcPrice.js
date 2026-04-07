@@ -1,0 +1,28 @@
+import{useState,useEffect,useRef}from"react";import{useSocket}from"./useSocket";
+export function useBtcPrice(){
+  const[price,setPrice]=useState(0);const{on,emit,socket}=useSocket();
+  const gotPrice=useRef(false);
+
+  useEffect(()=>{
+    const sub=()=>{emit("price:subscribe");};
+    // Subscribe immediately if already connected
+    if(socket.connected)sub();
+    // Re-subscribe on every connect/reconnect — registered directly on socket instance
+    // to avoid React lifecycle timing issues
+    socket.on("connect",sub);
+    const unPrice=on("price:update",d=>{if(d.price>0){setPrice(d.price);gotPrice.current=true;}});
+    // Fallback: retry subscribe after short delay in case connect event was missed
+    const retryTimer=setTimeout(()=>{if(!gotPrice.current)sub();},1000);
+    return()=>{socket.off("connect",sub);unPrice();clearTimeout(retryTimer);};
+  },[on,emit,socket]);
+
+  // REST fallback: poll until we get a price from either socket or REST
+  useEffect(()=>{
+    const poll=()=>{fetch("http://localhost:3001/api/price").then(r=>r.json()).then(d=>{if(d.price>0){setPrice(d.price);gotPrice.current=true;}}).catch(()=>{});};
+    poll();
+    const iv=setInterval(()=>{if(!gotPrice.current)poll();else clearInterval(iv);},10000);
+    return()=>clearInterval(iv);
+  },[]);
+
+  return price;
+}

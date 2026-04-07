@@ -1,0 +1,13 @@
+export const SERVER_URL = "http://localhost:3001";
+export const BASE_SEPOLIA = { chainId: "0x14A34", chainName: "Base Sepolia", rpcUrls: ["https://sepolia.base.org"], blockExplorerUrls: ["https://sepolia.basescan.org"], nativeCurrency: { name: "ETH", symbol: "ETH", decimals: 18 } };
+export const CHAIN = BASE_SEPOLIA;
+export const USDC_ADDRESS = import.meta.env.VITE_USDC_ADDRESS || "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+export const CONTRACT_ADDRESS = import.meta.env.VITE_CONTRACT_ADDRESS || "";
+export const ENTRY_FEE = 1;
+export const FEE_RATE = 0.05;
+export const TEAM_SIZES = [2, 3, 4, 5];
+export const MATCH_TIMEOUT = 15;
+export const PREDICT_TIMEOUT = 20;
+export const SETTLE_DELAY = 10;
+export const ROOM_EXPIRY = 300; // 5 minutes in seconds
+export const PAYMENT_TIMEOUT = 60; // 60 seconds
