@@ -10,7 +10,7 @@ contract BtcPredictArena {
     uint256 public entryFee = 1e6;
     uint256 public totalFees;
 
-    enum GameState { Created, Active, Settled, Cancelled }
+    enum GameState { Created, Payment, Active, Settled, Cancelled }
     enum Prediction { None, Up, Down }
 
     struct Game {
@@ -39,9 +39,10 @@ contract BtcPredictArena {
     mapping(uint256 => address[]) public gamePlayers;
     mapping(string => uint256) public inviteCodeToGame;
 
-    event GameCreated(uint256 indexed gameId, uint8 maxPlayers, bool isRoom, string inviteCode);
+    event GameCreated(uint256 indexed gameId, uint8 maxPlayers, bool isRoom, string inviteCode, address creator);
     event PlayerJoined(uint256 indexed gameId, address indexed player);
-    event PlayerLeft(uint256 indexed gameId, address indexed player);
+    event PaymentOpened(uint256 indexed gameId);
+    event PlayerPaid(uint256 indexed gameId, address indexed player);
     event GameStarted(uint256 indexed gameId, uint256 basePrice);
     event PredictionMade(uint256 indexed gameId, address indexed player, Prediction prediction);
     event GameSettled(uint256 indexed gameId, uint256 settlementPrice);
@@ -56,37 +57,38 @@ contract BtcPredictArena {
 
     function createGame(uint8 _maxPlayers) external returns (uint256) {
         require(_maxPlayers >= 2 && _maxPlayers <= 5, "Invalid team size");
-        return _createGame(_maxPlayers, false, "");
+        uint256 gid = _createGame(_maxPlayers, false, "", msg.sender);
+        _joinWithoutPayment(gid, msg.sender);
+        if (games[gid].players.length == games[gid].maxPlayers) {
+            games[gid].state = GameState.Payment;
+            emit PaymentOpened(gid);
+        }
+        return gid;
     }
 
     function createRoom(uint8 _maxPlayers, string calldata _inviteCode) external returns (uint256) {
         require(_maxPlayers >= 2 && _maxPlayers <= 5, "Invalid team size");
         require(bytes(_inviteCode).length > 0, "Empty invite code");
         require(inviteCodeToGame[_inviteCode] == 0, "Invite code taken");
-        uint256 gid = _createGame(_maxPlayers, true, _inviteCode);
+        uint256 gid = _createGame(_maxPlayers, true, _inviteCode, msg.sender);
         inviteCodeToGame[_inviteCode] = gid;
-        return gid;
-    }
-
-    function _createGame(uint8 _maxPlayers, bool _isRoom, string memory _inviteCode) internal returns (uint256) {
-        uint256 gid = nextGameId++;
-        Game storage g = games[gid];
-        g.gameId = gid; g.maxPlayers = _maxPlayers; g.state = GameState.Created;
-        g.createdAt = block.timestamp; g.isRoom = _isRoom; g.inviteCode = _inviteCode;
-        emit GameCreated(gid, _maxPlayers, _isRoom, _inviteCode);
+        _joinWithoutPayment(gid, msg.sender);
+        if (games[gid].players.length == games[gid].maxPlayers) {
+            games[gid].state = GameState.Payment;
+            emit PaymentOpened(gid);
+        }
         return gid;
     }
 
     function joinGame(uint256 _gameId) external gameExists(_gameId) {
         Game storage g = games[_gameId];
+        require(!g.isRoom, "Use joinRoom");
         require(g.state == GameState.Created, "Game not joinable");
-        require(g.players.length < g.maxPlayers, "Game full");
-        require(!_isPlayer(_gameId, msg.sender), "Already joined");
-        require(usdc.transferFrom(msg.sender, address(this), entryFee), "Payment failed");
-        g.players.push(msg.sender);
-        gamePlayers[_gameId].push(msg.sender);
-        playerPredictions[_gameId][msg.sender].hasPaid = true;
-        emit PlayerJoined(_gameId, msg.sender);
+        _joinWithoutPayment(_gameId, msg.sender);
+        if (g.players.length == g.maxPlayers) {
+            g.state = GameState.Payment;
+            emit PaymentOpened(_gameId);
+        }
     }
 
     function joinRoom(string calldata _inviteCode) external {
@@ -94,21 +96,32 @@ contract BtcPredictArena {
         require(gid > 0, "Room not found");
         Game storage g = games[gid];
         require(g.state == GameState.Created, "Room not joinable");
-        require(g.players.length < g.maxPlayers, "Room full");
-        require(!_isPlayer(gid, msg.sender), "Already joined");
+        _joinWithoutPayment(gid, msg.sender);
+        if (g.players.length == g.maxPlayers) {
+            g.state = GameState.Payment;
+            emit PaymentOpened(gid);
+        }
+    }
+
+    function payForGame(uint256 _gameId) external gameExists(_gameId) {
+        Game storage g = games[_gameId];
+        require(g.state == GameState.Payment, "Payment not open");
+        require(_isPlayer(_gameId, msg.sender), "Not a player");
+        PlayerPrediction storage pp = playerPredictions[_gameId][msg.sender];
+        require(!pp.hasPaid, "Already paid");
         require(usdc.transferFrom(msg.sender, address(this), entryFee), "Payment failed");
-        g.players.push(msg.sender);
-        gamePlayers[gid].push(msg.sender);
-        playerPredictions[gid][msg.sender].hasPaid = true;
-        emit PlayerJoined(gid, msg.sender);
+        pp.hasPaid = true;
+        emit PlayerPaid(_gameId, msg.sender);
     }
 
     function startGame(uint256 _gameId, uint256 _basePrice) external onlyOwner gameExists(_gameId) {
         Game storage g = games[_gameId];
-        require(g.state == GameState.Created, "Not in created state");
+        require(g.state == GameState.Payment, "Not in payment state");
         require(g.players.length == g.maxPlayers, "Not enough players");
+        require(allPlayersPaid(_gameId), "Players not fully paid");
         require(_basePrice > 0, "Invalid price");
-        g.state = GameState.Active; g.basePrice = _basePrice;
+        g.state = GameState.Active;
+        g.basePrice = _basePrice;
         emit GameStarted(_gameId, _basePrice);
     }
 
@@ -118,6 +131,7 @@ contract BtcPredictArena {
         require(_isPlayer(_gameId, msg.sender), "Not a player");
         require(_prediction == Prediction.Up || _prediction == Prediction.Down, "Invalid prediction");
         PlayerPrediction storage pp = playerPredictions[_gameId][msg.sender];
+        require(pp.hasPaid, "Payment required");
         require(pp.prediction == Prediction.None, "Already predicted");
         pp.prediction = _prediction;
         emit PredictionMade(_gameId, msg.sender, _prediction);
@@ -127,22 +141,31 @@ contract BtcPredictArena {
         Game storage g = games[_gameId];
         require(g.state == GameState.Active, "Game not active");
         require(_settlementPrice > 0, "Invalid price");
-        g.state = GameState.Settled; g.settlementPrice = _settlementPrice; g.settledAt = block.timestamp;
+        g.state = GameState.Settled;
+        g.settlementPrice = _settlementPrice;
+        g.settledAt = block.timestamp;
 
         bool isUp = _settlementPrice > g.basePrice;
         bool isFlat = _settlementPrice == g.basePrice;
 
-        uint256 winnerCount = 0; uint256 loserCount = 0;
+        uint256 winnerCount = 0;
+        uint256 loserCount = 0;
         address[] memory winners = new address[](g.players.length);
-        address[] memory losers = new address[](g.players.length);
 
-        for (uint i = 0; i < g.players.length; i++) {
+        for (uint256 i = 0; i < g.players.length; i++) {
             address p = g.players[i];
             PlayerPrediction storage pp = playerPredictions[_gameId][p];
-            if (isFlat) { winners[winnerCount++] = p; continue; }
-            if (pp.prediction == Prediction.None) { losers[loserCount++] = p; continue; }
+            if (isFlat) {
+                winners[winnerCount++] = p;
+                continue;
+            }
+            if (pp.prediction == Prediction.None) {
+                loserCount++;
+                continue;
+            }
             bool correct = (isUp && pp.prediction == Prediction.Up) || (!isUp && pp.prediction == Prediction.Down);
-            if (correct) { winners[winnerCount++] = p; } else { losers[loserCount++] = p; }
+            if (correct) winners[winnerCount++] = p;
+            else loserCount++;
         }
 
         uint256 feePerPlayer = (entryFee * feeRate) / 10000;
@@ -150,18 +173,19 @@ contract BtcPredictArena {
         totalFees += feePerPlayer * g.players.length;
 
         if (isFlat || winnerCount == g.players.length || winnerCount == 0) {
-            for (uint i = 0; i < g.players.length; i++) {
+            for (uint256 i = 0; i < g.players.length; i++) {
                 playerPredictions[_gameId][g.players[i]].reward = netPerPlayer;
             }
         } else {
             uint256 loserPool = loserCount * netPerPlayer;
             uint256 winnerBonus = loserPool / winnerCount;
-            for (uint i = 0; i < winnerCount; i++) {
+            for (uint256 i = 0; i < winnerCount; i++) {
                 playerPredictions[_gameId][winners[i]].reward = netPerPlayer + winnerBonus;
             }
             uint256 remainder = loserPool - (winnerBonus * winnerCount);
-            if (remainder > 0) { totalFees += remainder; }
+            if (remainder > 0) totalFees += remainder;
         }
+
         emit GameSettled(_gameId, _settlementPrice);
     }
 
@@ -169,7 +193,8 @@ contract BtcPredictArena {
         Game storage g = games[_gameId];
         require(g.state == GameState.Settled, "Not settled");
         PlayerPrediction storage pp = playerPredictions[_gameId][msg.sender];
-        require(pp.hasPaid, "Not a participant"); require(!pp.claimed, "Already claimed");
+        require(pp.hasPaid, "Not a participant");
+        require(!pp.claimed, "Already claimed");
         require(pp.reward > 0, "No reward");
         pp.claimed = true;
         require(usdc.transfer(msg.sender, pp.reward), "Transfer failed");
@@ -178,19 +203,32 @@ contract BtcPredictArena {
 
     function cancelGame(uint256 _gameId) external onlyOwner gameExists(_gameId) {
         Game storage g = games[_gameId];
-        require(g.state == GameState.Created, "Can only cancel created games");
+        require(g.state == GameState.Created || g.state == GameState.Payment, "Cannot cancel now");
         g.state = GameState.Cancelled;
-        for (uint i = 0; i < g.players.length; i++) {
+        for (uint256 i = 0; i < g.players.length; i++) {
             address p = g.players[i];
-            if (playerPredictions[_gameId][p].hasPaid) { usdc.transfer(p, entryFee); }
+            if (playerPredictions[_gameId][p].hasPaid) {
+                usdc.transfer(p, entryFee);
+            }
         }
-        if (bytes(g.inviteCode).length > 0) { delete inviteCodeToGame[g.inviteCode]; }
+        if (bytes(g.inviteCode).length > 0) delete inviteCodeToGame[g.inviteCode];
         emit GameCancelled(_gameId);
     }
 
+    function allPlayersPaid(uint256 _gameId) public view returns (bool) {
+        Game storage g = games[_gameId];
+        if (g.players.length != g.maxPlayers) return false;
+        for (uint256 i = 0; i < g.players.length; i++) {
+            if (!playerPredictions[_gameId][g.players[i]].hasPaid) return false;
+        }
+        return true;
+    }
+
     function withdrawFees(address _to) external onlyOwner {
-        uint256 amount = totalFees; require(amount > 0, "No fees");
-        totalFees = 0; require(usdc.transfer(_to, amount), "Transfer failed");
+        uint256 amount = totalFees;
+        require(amount > 0, "No fees");
+        totalFees = 0;
+        require(usdc.transfer(_to, amount), "Transfer failed");
         emit FeeWithdrawn(_to, amount);
     }
 
@@ -214,9 +252,33 @@ contract BtcPredictArena {
         return (pp.prediction, pp.hasPaid, pp.reward, pp.claimed);
     }
 
+    function _createGame(uint8 _maxPlayers, bool _isRoom, string memory _inviteCode, address creator) internal returns (uint256) {
+        uint256 gid = nextGameId++;
+        Game storage g = games[gid];
+        g.gameId = gid;
+        g.maxPlayers = _maxPlayers;
+        g.state = GameState.Created;
+        g.createdAt = block.timestamp;
+        g.isRoom = _isRoom;
+        g.inviteCode = _inviteCode;
+        emit GameCreated(gid, _maxPlayers, _isRoom, _inviteCode, creator);
+        return gid;
+    }
+
+    function _joinWithoutPayment(uint256 _gameId, address player) internal {
+        Game storage g = games[_gameId];
+        require(g.players.length < g.maxPlayers, "Game full");
+        require(!_isPlayer(_gameId, player), "Already joined");
+        g.players.push(player);
+        gamePlayers[_gameId].push(player);
+        emit PlayerJoined(_gameId, player);
+    }
+
     function _isPlayer(uint256 _gameId, address _addr) internal view returns (bool) {
         address[] storage players = games[_gameId].players;
-        for (uint i = 0; i < players.length; i++) { if (players[i] == _addr) return true; }
+        for (uint256 i = 0; i < players.length; i++) {
+            if (players[i] == _addr) return true;
+        }
         return false;
     }
 }
