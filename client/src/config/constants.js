@@ -1,4 +1,4 @@
-export const SERVER_URL = "http://localhost:3001";
+export const SERVER_URL = import.meta.env.VITE_API_BASE || "http://localhost:3001";
 export const BASE_SEPOLIA = { chainId: "0x14A34", chainName: "Base Sepolia", rpcUrls: ["https://sepolia.base.org"], blockExplorerUrls: ["https://sepolia.basescan.org"], nativeCurrency: { name: "ETH", symbol: "ETH", decimals: 18 } };
 export const CHAIN = BASE_SEPOLIA;
 export const USDC_ADDRESS = import.meta.env.VITE_USDC_ADDRESS || "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";

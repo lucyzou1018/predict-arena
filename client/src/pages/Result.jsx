@@ -1,7 +1,7 @@
-import{useEffect,useState}from"react";import{useNavigate,useParams}from"react-router-dom";
+import{useEffect,useState}from"react";import{useNavigate,useParams}from"react-router-dom";import{SERVER_URL}from"../config/constants";
 export default function Result(){
   const nav=useNavigate();const{id}=useParams();const[data,setData]=useState(null);const[loading,setLoading]=useState(true);
-  useEffect(()=>{if(id)fetch(`http://localhost:3001/api/games/${id}`).then(r=>r.json()).then(setData).catch(console.error).finally(()=>setLoading(false))},[id]);
+  useEffect(()=>{if(id)fetch(`${SERVER_URL}/api/games/${id}`).then(r=>r.json()).then(setData).catch(console.error).finally(()=>setLoading(false))},[id]);
   if(loading)return<div className="page-container text-center pt-20 text-white/20">Loading...</div>;
   if(!data?.game)return<div className="page-container text-center pt-20 text-white/20">Game not found</div>;
   const{game}=data;const dir=parseFloat(game.settlement_price)>parseFloat(game.base_price)?"up":"down";

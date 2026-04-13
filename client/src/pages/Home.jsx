@@ -2,6 +2,7 @@ import{useState,useEffect,useCallback,useRef}from"react";
 import{useNavigate}from"react-router-dom";
 import{useWallet}from"../context/WalletContext";
 import{useSocket}from"../hooks/useSocket";
+import{SERVER_URL}from"../config/constants";
 import{useGame}from"../context/GameContext";
 import{useContract}from"../hooks/useContract";
 import{useBtcPrice}from"../hooks/useBtcPrice";
@@ -152,9 +153,9 @@ export default function Home(){
     setMatchPhase("select");setMatchErr(null);setMatchInfo({current:0});setPending(null);
     setPaymentStartedAt(null);setPaymentCountdown(null);setRoomFullInfo(null);setPaymentProgress({paidCount:0,total:0});
     if(!wallet) return;
-    fetch(`http://localhost:3001/api/users/${wallet}/games?limit=20`).then(r=>r.json()).then(d=>{setHistory(d.games||[]);setHistoryPage(1);}).catch(()=>{});
-    fetch(`http://localhost:3001/api/users/${wallet}`).then(r=>r.json()).then(setStats).catch(()=>{});
-    fetch(`http://localhost:3001/api/users/${wallet}/open-room`).then(r=>r.json()).then(d=>{
+    fetch(`${SERVER_URL}/api/users/${wallet}/games?limit=20`).then(r=>r.json()).then(d=>{setHistory(d.games||[]);setHistoryPage(1);}).catch(()=>{});
+    fetch(`${SERVER_URL}/api/users/${wallet}`).then(r=>r.json()).then(setStats).catch(()=>{});
+    fetch(`${SERVER_URL}/api/users/${wallet}/open-room`).then(r=>r.json()).then(d=>{
       setOpenRoom(d.room||null);
       if(d.room?.invite_code){
         const code=d.room.invite_code;
@@ -190,7 +191,7 @@ export default function Home(){
   // ===== SOCKET EVENT LISTENERS =====
   // Uses refs to read latest state — deps are only stable references, so listeners are never torn down mid-flight
   useEffect(()=>{
-    const refreshHistory=()=>{const w=walletRef.current;if(w)fetch(`http://localhost:3001/api/users/${w}/games?limit=20`).then(r=>r.json()).then(res=>setHistory(res.games||[])).catch(()=>{});};
+    const refreshHistory=()=>{const w=walletRef.current;if(w)fetch(`${SERVER_URL}/api/users/${w}/games?limit=20`).then(r=>r.json()).then(res=>setHistory(res.games||[])).catch(()=>{});};
     const u=[
       on("room:created",d=>{
         if(createTimeoutRef.current){clearTimeout(createTimeoutRef.current);createTimeoutRef.current=null;}
@@ -292,8 +293,8 @@ export default function Home(){
   const createRoom=()=>{if(isJoinBusy||isMatchBusy){setCreateErr("Finish or cancel current action first");return;}if(isCreateBusy){setCreateErr("Already creating a room");return;}if(!mockMode && (!wallet || !provider || !signer)){connect({type:"create-room"});return;}setCreateErr(null);setCreatePhase("creating");if(createTimeoutRef.current)clearTimeout(createTimeoutRef.current);createTimeoutRef.current=setTimeout(()=>{setCreateErr("Create room failed. Please retry.");setCreatePhase("select");},8000);emit("room:create",{teamSize:sz});};
   const payCreate=useCallback(async()=>{try{await mockPay();setCreatePaid(true);setCreateErr(null);if(roomFullInfo){emit("room:payment:confirm",{gameId:roomFullInfo.gameId,inviteCode:roomCode}); setCreatePhase("paid_waiting");}}catch{setCreateErr("Payment failed");}},[mockPay,roomFullInfo,roomCode,emit]);
   const cancelCreate=()=>{emit("room:dissolve",{inviteCode:roomCode});setCreatePhase("select");setRoomExpiresAt(null);setPaymentStartedAt(null);};
-  const dissolveRoom=()=>{emit("room:dissolve",{inviteCode:roomCode});if(createPaid){refund(ENTRY_FEE);setCreatePaid(false);}setOpenRoom(null);setRoomCode("");setRoom({current:0,total:0,players:[]});setCreatePhase("select");setRoomExpiresAt(null);setPaymentStartedAt(null);fetch(`http://localhost:3001/api/users/${wallet}/games?limit=20`).then(r=>r.json()).then(d=>setHistory(d.games||[])).catch(()=>{});};
-  const clearExpired=()=>{setCreatePhase("select");setRoomCode("");setRoom({current:0,total:0,players:[]});setOpenRoom(null);setCreateErr(null);if(wallet){fetch(`http://localhost:3001/api/users/${wallet}/games?limit=20`).then(r=>r.json()).then(d=>setHistory(d.games||[])).catch(()=>{});}};
+  const dissolveRoom=()=>{emit("room:dissolve",{inviteCode:roomCode});if(createPaid){refund(ENTRY_FEE);setCreatePaid(false);}setOpenRoom(null);setRoomCode("");setRoom({current:0,total:0,players:[]});setCreatePhase("select");setRoomExpiresAt(null);setPaymentStartedAt(null);fetch(`${SERVER_URL}/api/users/${wallet}/games?limit=20`).then(r=>r.json()).then(d=>setHistory(d.games||[])).catch(()=>{});};
+  const clearExpired=()=>{setCreatePhase("select");setRoomCode("");setRoom({current:0,total:0,players:[]});setOpenRoom(null);setCreateErr(null);if(wallet){fetch(`${SERVER_URL}/api/users/${wallet}/games?limit=20`).then(r=>r.json()).then(d=>setHistory(d.games||[])).catch(()=>{});}};
   const copyCode=()=>{navigator.clipboard.writeText(roomCode);setCopied(true);setTimeout(()=>setCopied(false),2000);};
 
   // Join flow: confirm dialog (no payment), then join directly

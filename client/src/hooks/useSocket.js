@@ -1,6 +1,6 @@
-import{useEffect,useRef,useCallback}from"react";import{io}from"socket.io-client";import{useWallet}from"../context/WalletContext";
+import{useEffect,useRef,useCallback}from"react";import{io}from"socket.io-client";import{useWallet}from"../context/WalletContext";import{SERVER_URL}from"../config/constants";
 let inst=null;
-function getSocket(){if(!inst)inst=io("http://localhost:3001",{autoConnect:false,transports:["polling","websocket"]});return inst;}
+function getSocket(){if(!inst)inst=io(SERVER_URL,{autoConnect:false,transports:["polling","websocket"]});return inst;}
 export function useSocket(){
   const{wallet}=useWallet();const socket=useRef(getSocket());
   const walletRef=useRef(wallet);walletRef.current=wallet;

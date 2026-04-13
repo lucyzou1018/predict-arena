@@ -1,4 +1,4 @@
-import{useState,useEffect,useRef}from"react";import{useSocket}from"./useSocket";
+import{useState,useEffect,useRef}from"react";import{useSocket}from"./useSocket";import{SERVER_URL}from"../config/constants";
 export function useBtcPrice(){
   const[price,setPrice]=useState(0);const{on,emit,socket}=useSocket();
   const gotPrice=useRef(false);
@@ -18,7 +18,7 @@ export function useBtcPrice(){
 
   // REST fallback: poll until we get a price from either socket or REST
   useEffect(()=>{
-    const poll=()=>{fetch("http://localhost:3001/api/price").then(r=>r.json()).then(d=>{if(d.price>0){setPrice(d.price);gotPrice.current=true;}}).catch(()=>{});};
+    const poll=()=>{fetch(`${SERVER_URL}/api/price`).then(r=>r.json()).then(d=>{if(d.price>0){setPrice(d.price);gotPrice.current=true;}}).catch(()=>{});};
     poll();
     const iv=setInterval(()=>{if(!gotPrice.current)poll();else clearInterval(iv);},10000);
     return()=>clearInterval(iv);
