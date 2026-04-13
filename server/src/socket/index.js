@@ -98,18 +98,22 @@ export function initSocket(httpServer) {
 
     socket.on("room:payment:confirm", async d => {
       if (!wallet) return socket.emit("room:error", { message: "Connect wallet first" });
-      const pay = await gameService.confirmRoomPayment(d.gameId, wallet);
-      const rm = roomService.getRoom(d.inviteCode);
-      if (rm) {
-        for (const p of rm.players) io.to(p.socketId).emit("room:payment:update", { ...pay, timeoutMs: config.game.paymentTimeout });
-        if (pay.allPaid) {
-          const session = gameService.getRoomPayment(d.gameId);
-          if (session?.timer) clearTimeout(session.timer);
-          const players = [...rm.players];
-          delete roomService.rooms[d.inviteCode];
-          gameService.clearRoomPayment(d.gameId);
-          setTimeout(async () => { await gameService.startGame(rm.gameId, rm.chainGameId, players); }, 500);
+      try {
+        const pay = await gameService.confirmRoomPayment(d.gameId, wallet);
+        const rm = roomService.getRoom(d.inviteCode);
+        if (rm) {
+          for (const p of rm.players) io.to(p.socketId).emit("room:payment:update", { ...pay, timeoutMs: config.game.paymentTimeout });
+          if (pay.allPaid) {
+            const session = gameService.getRoomPayment(d.gameId);
+            if (session?.timer) clearTimeout(session.timer);
+            const players = [...rm.players];
+            delete roomService.rooms[d.inviteCode];
+            gameService.clearRoomPayment(d.gameId);
+            setTimeout(async () => { await gameService.startGame(rm.gameId, rm.chainGameId, players); }, 500);
+          }
         }
+      } catch (e) {
+        socket.emit("room:error", { message: e.message || "Payment confirmation failed" });
       }
     });
 

@@ -1,6 +1,5 @@
 import config from "../config/index.js";
 import { query } from "../config/database.js";
-import contractService from "./contract.js";
 import { generateInviteCode } from "../utils/inviteCode.js";
 
 class RoomService {
@@ -12,12 +11,11 @@ class RoomService {
     const code = generateInviteCode();
     const res = await query(`INSERT INTO games (mode, max_players, invite_code, state) VALUES ('room', $1, $2, 'waiting') RETURNING id`, [maxPlayers, code]);
     const gameId = res.rows[0].id;
-    const chain = await contractService.createRoom(maxPlayers, code);
-    await query(`UPDATE games SET chain_game_id = $1 WHERE id = $2`, [chain.gameId, gameId]);
+    await query(`UPDATE games SET chain_game_id = $1 WHERE id = $2`, [gameId, gameId]);
     await query(`INSERT INTO game_players (game_id, wallet_address, paid, is_owner) VALUES ($1, $2, false, true) ON CONFLICT DO NOTHING`, [gameId, wallet]);
     const expiresAt = Date.now() + config.game.roomExpiry;
-    this.rooms[code] = { gameId, chainGameId: chain.gameId, maxPlayers, players: [{ wallet, socketId }], owner: wallet, createdAt: Date.now(), expiresAt, timer: setTimeout(() => this._expire(code), config.game.roomExpiry), paid: {} };
-    return { inviteCode: code, gameId, chainGameId: chain.gameId, maxPlayers, expiresAt };
+    this.rooms[code] = { gameId, chainGameId: gameId, maxPlayers, players: [{ wallet, socketId }], owner: wallet, createdAt: Date.now(), expiresAt, timer: setTimeout(() => this._expire(code), config.game.roomExpiry), paid: {} };
+    return { inviteCode: code, gameId, chainGameId: gameId, maxPlayers, expiresAt };
   }
 
   async joinRoom(code, wallet, socketId) {

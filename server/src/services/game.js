@@ -2,6 +2,7 @@ import config from "../config/index.js";
 import { query } from "../config/database.js";
 import priceService from "./price.js";
 import settlementService from "./settlement.js";
+import contractService from "./contract.js";
 
 class GameService {
   constructor() { this.activeGames = {}; this.io = null; this.roomPayments = {}; }
@@ -23,14 +24,20 @@ class GameService {
   }
 
   async confirmRoomPayment(gameId, wallet) {
+    const paidOnChain = await contractService.isPlayerPaid(gameId, wallet);
+    if (!paidOnChain) throw new Error("On-chain payment not confirmed");
     await query("UPDATE game_players SET paid=true, paid_at=NOW() WHERE game_id=$1 AND wallet_address=$2", [gameId, wallet]);
     const r = await query("SELECT wallet_address, paid FROM game_players WHERE game_id=$1", [gameId]);
-    const allPaid = r.rows.length > 0 && r.rows.every(x => x.paid === true);
+    const allPaidDb = r.rows.length > 0 && r.rows.every(x => x.paid === true);
+    const allPaidChain = await contractService.allPlayersPaid(gameId);
+    const allPaid = allPaidDb && allPaidChain;
+    if (allPaid) await query("UPDATE games SET state='payment' WHERE id=$1", [gameId]);
     return { allPaid, paidCount: r.rows.filter(x => x.paid).length, total: r.rows.length };
   }
 
   async startGame(gameId, chainGameId, players) {
     const basePrice = priceService.getPrice();
+    await contractService.startGame(chainGameId, Math.round(basePrice * 100));
     if (!basePrice || basePrice <= 0) {
       for (const p of players) this.io?.to(p.socketId).emit("game:error", { message: "BTC price unavailable" });
       return;

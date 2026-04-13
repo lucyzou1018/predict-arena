@@ -2,15 +2,13 @@ import { ethers } from "ethers";
 import config from "../config/index.js";
 
 const ABI = [
-  "function createGame(uint8) external returns (uint256)",
-  "function createRoom(uint8, string) external returns (uint256)",
   "function startGame(uint256, uint256) external",
   "function settleGame(uint256, uint256) external",
   "function cancelGame(uint256) external",
-  "event GameCreated(uint256 indexed gameId, uint8 maxPlayers, bool isRoom, string inviteCode)",
+  "function allPlayersPaid(uint256) external view returns (bool)",
+  "function getPlayerPrediction(uint256, address) external view returns (uint8,bool,uint256,bool)",
+  "event GameCreated(uint256 indexed gameId, uint8 maxPlayers, bool isRoom, string inviteCode, address creator)",
 ];
-
-let mockId = 1;
 
 class ContractService {
   constructor() { this.initialized = false; }
@@ -27,18 +25,15 @@ class ContractService {
     console.log("[Contract] Initialized");
   }
 
-  async createGame(n) {
-    if (!this.initialized) return { gameId: mockId++ };
-    const tx = await this.contract.createGame(n);
-    const r = await tx.wait();
-    return { gameId: mockId++, txHash: r.hash };
+  async isPlayerPaid(gameId, wallet) {
+    if (!this.initialized) return false;
+    const [, hasPaid] = await this.contract.getPlayerPrediction(gameId, wallet);
+    return !!hasPaid;
   }
 
-  async createRoom(n, code) {
-    if (!this.initialized) return { gameId: mockId++ };
-    const tx = await this.contract.createRoom(n, code);
-    const r = await tx.wait();
-    return { gameId: mockId++, txHash: r.hash };
+  async allPlayersPaid(gameId) {
+    if (!this.initialized) return false;
+    return !!(await this.contract.allPlayersPaid(gameId));
   }
 
   async startGame(id, price) { if (!this.initialized) return; await (await this.contract.startGame(id, price)).wait(); }
