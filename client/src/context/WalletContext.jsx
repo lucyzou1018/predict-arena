@@ -225,7 +225,28 @@ export function WalletProvider({children}){
   useEffect(()=>{
     const eth=activeEthRef.current;
     if(!eth)return;
-    const onAccounts=(accs)=>{if(!accs.length)disconnect();else setWallet(accs[0]);};
+    const onAccounts=async(accs)=>{
+      if(!accs.length){disconnect();return;}
+      try{
+        const bp=new ethers.BrowserProvider(eth);
+        const nextWallet=accs[0];
+        const nextSigner=await bp.getSigner(nextWallet);
+        setProvider(bp);
+        setSigner(nextSigner);
+        setWallet(nextWallet);
+        try{
+          const saved=localStorage.getItem(STORAGE_KEY);
+          const parsed=saved?JSON.parse(saved):{};
+          localStorage.setItem(STORAGE_KEY,JSON.stringify({
+            mode:"wallet",
+            wallet:nextWallet,
+            walletName:parsed?.walletName||walletName,
+          }));
+        }catch{}
+      }catch{
+        setWallet(accs[0]);
+      }
+    };
     const onChain=()=>checkChain(eth);
     eth.on("accountsChanged",onAccounts);
     eth.on("chainChanged",onChain);

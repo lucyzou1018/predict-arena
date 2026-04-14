@@ -45,18 +45,24 @@ class GameService {
 
   async startGame(gameId, chainGameId, players) {
     const basePrice = priceService.getPrice();
-    await contractService.startGame(chainGameId, Math.round(basePrice * 100));
     if (!basePrice || basePrice <= 0) {
-      for (const p of players) this.io?.to(p.socketId).emit("game:error", { message: "BTC price unavailable" });
+      for (const p of players) {
+        if (p.socketId) this.io?.to(p.socketId).emit("game:error", { message: "BTC price unavailable" });
+      }
       return;
     }
+    await contractService.startGame(chainGameId, Math.round(basePrice * 100));
     const game = { gameId, chainGameId, players, predictions: {}, basePrice, phase: "predicting", startedAt: Date.now() };
     this.activeGames[gameId] = game;
     await query("UPDATE games SET state='active',base_price=$1,started_at=NOW() WHERE id=$2", [basePrice, gameId]);
     for (const p of players) await query("INSERT INTO game_players(game_id,wallet_address,paid)VALUES($1,$2,true)ON CONFLICT DO NOTHING", [gameId, p.wallet]);
 
     const room = `game:${gameId}`;
-    for (const p of players) { const s = this.io?.sockets.sockets.get(p.socketId); if (s) s.join(room); }
+    for (const p of players) {
+      if (!p.socketId) continue;
+      const s = this.io?.sockets.sockets.get(p.socketId);
+      if (s) s.join(room);
+    }
     console.log(`[Game] #${gameId} started base=$${basePrice} players=${players.length}`);
     this.io?.to(room).emit("game:start", { gameId, basePrice, players: players.map(p => p.wallet), predictTimeout: config.game.predictTimeout });
 

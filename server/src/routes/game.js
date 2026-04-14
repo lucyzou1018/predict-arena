@@ -33,6 +33,14 @@ router.get("/users/:wallet/open-room", async (req, res) => {
        AND created_at < NOW() - ($1 * INTERVAL '1 millisecond')`,
     [config.game.roomExpiry]
   );
+  await query(
+    `UPDATE games
+     SET state = 'failed'
+     WHERE mode = 'room'
+       AND state = 'payment'
+       AND created_at < NOW() - ($1 * INTERVAL '1 millisecond')`,
+    [config.game.paymentTimeout]
+  );
   for (const [inviteCode, room] of Object.entries(roomService.rooms)) {
     const inRoom = room.players.find((p) => norm(p.wallet) === wallet);
     if (!inRoom) continue;
@@ -69,7 +77,21 @@ router.get("/users/:wallet/open-room", async (req, res) => {
   const r = await query(
     `SELECT g.id, g.invite_code, g.max_players, g.state, g.created_at, g.chain_game_id,
             gp2.is_owner, gp2.paid,
-            COALESCE((SELECT COUNT(*) FROM game_players x WHERE x.game_id=g.id),0)::int as current_players
+            COALESCE((SELECT COUNT(*) FROM game_players x WHERE x.game_id=g.id),0)::int as current_players,
+            COALESCE((SELECT COUNT(*) FROM game_players x WHERE x.game_id=g.id AND x.paid=true),0)::int as paid_count,
+            COALESCE(
+              (
+                SELECT json_agg(x.wallet_address ORDER BY x.is_owner DESC, x.wallet_address ASC)
+                FROM game_players x
+                WHERE x.game_id = g.id
+              ),
+              '[]'::json
+            ) as players,
+            (
+              SELECT MAX(x.paid_at)
+              FROM game_players x
+              WHERE x.game_id = g.id AND x.paid = true
+            ) as payment_started_at
      FROM games g
      JOIN game_players gp2 ON g.id = gp2.game_id AND LOWER(gp2.wallet_address)=LOWER($1)
      WHERE g.mode='room'
@@ -88,7 +110,24 @@ router.get("/users/:wallet/open-room", async (req, res) => {
      LIMIT 1`,
     [wallet, config.game.roomExpiry]
   );
-  res.json({ room: r.rows[0] || null });
+  const row = r.rows[0];
+  if (!row) return res.json({ room: null });
+  if (row.state === "payment") {
+    const paymentStartedAt = row.payment_started_at ? new Date(row.payment_started_at).getTime() : new Date(row.created_at).getTime();
+    if (Date.now() - paymentStartedAt >= config.game.paymentTimeout) {
+      await query(`UPDATE games SET state = 'failed' WHERE id = $1`, [row.id]);
+      return res.json({ room: null });
+    }
+  }
+  const room = {
+    ...row,
+    game_id: row.id,
+    total_players: row.current_players,
+    payment_timeout_ms: config.game.paymentTimeout,
+    phase: row.state === "payment" ? (row.paid ? "paid_waiting" : "payment") : "waiting",
+    players: Array.isArray(row.players) ? row.players : [],
+  };
+  res.json({ room });
 });
 
 router.get("/users/:wallet/games", async (req, res) => {

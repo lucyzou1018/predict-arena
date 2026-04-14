@@ -16,7 +16,34 @@ export function initSocket(httpServer) {
   io.on("connection", (socket) => {
     console.log("[Socket] Connected:", socket.id);
     let wallet = null;
-    socket.on("auth", d => { wallet = d.wallet?.toLowerCase?.() || null; console.log("[Socket] Auth:", wallet); });
+    const resolvePlayersForGame = async (gameId, fallbackPlayers = []) => {
+      const dbPlayers = await query(
+        `SELECT wallet_address
+         FROM game_players
+         WHERE game_id = $1
+         ORDER BY is_owner DESC, wallet_address ASC`,
+        [gameId]
+      );
+      const fallbackByWallet = new Map(
+        fallbackPlayers
+          .filter((player) => player?.wallet)
+          .map((player) => [player.wallet.toLowerCase(), player])
+      );
+      return dbPlayers.rows.map((row) => {
+        const walletAddress = row.wallet_address.toLowerCase();
+        let socketId = fallbackByWallet.get(walletAddress)?.socketId || null;
+        if (!socketId) {
+          const matchedSocket = [...io.sockets.sockets.values()].find((candidate) => candidate.data?.wallet === walletAddress);
+          socketId = matchedSocket?.id || null;
+        }
+        return { wallet: walletAddress, socketId };
+      });
+    };
+    socket.on("auth", d => {
+      wallet = d.wallet?.toLowerCase?.() || null;
+      socket.data.wallet = wallet;
+      console.log("[Socket] Auth:", wallet);
+    });
     socket.on("price:subscribe", () => {
       let lastSent = 0;
       let pending = null;
@@ -121,21 +148,34 @@ export function initSocket(httpServer) {
     socket.on("room:dissolve", async d => { if (wallet) await roomService.dissolveRoom(d.inviteCode, wallet); });
 
     socket.on("room:payment:confirm", async d => {
-      if (!wallet) return socket.emit("room:error", { message: "Connect wallet first" });
+      const confirmedWallet = d?.wallet?.toLowerCase?.() || wallet;
+      if (!confirmedWallet) return socket.emit("room:error", { message: "Connect wallet first" });
       try {
-        const pay = await gameService.confirmRoomPayment(d.gameId, d.chainGameId, wallet);
+        const pay = await gameService.confirmRoomPayment(d.gameId, d.chainGameId, confirmedWallet);
         const rm = roomService.getRoom(d.inviteCode);
         const session = gameService.getRoomPayment(d.gameId);
-        const players = rm ? [...rm.players] : session?.players ? [...session.players] : [];
+        const fallbackPlayers = rm ? [...rm.players] : session?.players ? [...session.players] : [];
+        const players = await resolvePlayersForGame(d.gameId, fallbackPlayers);
         if (players.length > 0) {
-          for (const p of players) io.to(p.socketId).emit("room:payment:update", { ...pay, timeoutMs: config.game.paymentTimeout });
+          for (const p of players) {
+            if (p.socketId) io.to(p.socketId).emit("room:payment:update", { ...pay, timeoutMs: config.game.paymentTimeout });
+          }
         }
         if (pay.allPaid && players.length > 0) {
           if (session?.timer) clearTimeout(session.timer);
           if (rm && d.inviteCode) delete roomService.rooms[d.inviteCode];
           gameService.clearRoomPayment(d.gameId);
           const chainGameId = d.chainGameId || rm?.chainGameId || d.gameId;
-          setTimeout(async () => { await gameService.startGame(d.gameId, chainGameId, players); }, 500);
+          setTimeout(async () => {
+            try {
+              await gameService.startGame(d.gameId, chainGameId, players);
+            } catch (error) {
+              console.error("[Game] start failed", { gameId: d.gameId, chainGameId, error: error?.message || error });
+              for (const p of players) {
+                if (p.socketId) io.to(p.socketId).emit("room:error", { message: error?.message || "Game start failed" });
+              }
+            }
+          }, 500);
         }
       } catch (e) {
         socket.emit("room:error", { message: e.message || "Payment confirmation failed" });

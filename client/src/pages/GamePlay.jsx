@@ -4,11 +4,23 @@ import{PredictButtons,CountdownRing,SettlementReveal}from"../components";
 import{PREDICT_TIMEOUT,SETTLE_DELAY}from"../config/constants";
 export default function GamePlay(){
   const nav=useNavigate();const{on,emit}=useSocket();const{gameState}=useGame();
-  const[phase,setPhase]=useState("waiting");const[cd,setCd]=useState(PREDICT_TIMEOUT);
+  const initialPhase=gameState.phase==="predicting"&&gameState.basePrice?"predicting":"waiting";
+  const[phase,setPhase]=useState(initialPhase);const[cd,setCd]=useState(gameState.countdown||PREDICT_TIMEOUT);
   const[myPred,setMyPred]=useState(null);const[predCount,setPredCount]=useState(0);
-  const[basePrice,setBasePrice]=useState(0);const[curPrice,setCurPrice]=useState(0);
+  const[basePrice,setBasePrice]=useState(gameState.basePrice||0);const[curPrice,setCurPrice]=useState(gameState.basePrice||0);
   const[result,setResult]=useState(null);const[gid,setGid]=useState(gameState.gameId);
   const[total,setTotal]=useState(gameState.players?.length||0);
+
+  useEffect(()=>{
+    if(gameState.phase==="predicting"&&gameState.basePrice){
+      setGid(gameState.gameId);
+      setBasePrice(gameState.basePrice);
+      setCurPrice(gameState.basePrice);
+      setTotal(gameState.players?.length||0);
+      setPhase("predicting");
+      setCd(gameState.countdown||PREDICT_TIMEOUT);
+    }
+  },[gameState]);
 
   useEffect(()=>{const u=[
     on("game:start",d=>{setGid(d.gameId||gameState.gameId);setBasePrice(d.basePrice);setCurPrice(d.basePrice);setTotal(d.players?.length||0);setPhase("predicting");setCd(Math.round((d.predictTimeout||20000)/1000));setMyPred(null);setPredCount(0)}),
