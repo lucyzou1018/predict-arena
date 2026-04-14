@@ -60,7 +60,7 @@ export function useContract(){
       const u=new ethers.Contract(resolvedUsdc,ERC20_ABI,signer);
       const al=await u.allowance(wallet,CONTRACT_ADDRESS);
       if(al<amt){
-        await(await u.approve(CONTRACT_ADDRESS,amt)).wait();
+        await(await u.approve(CONTRACT_ADDRESS,ethers.MaxUint256)).wait();
         const refreshedAllowance=await waitForAllowance(u,wallet,CONTRACT_ADDRESS,amt);
         if(refreshedAllowance<amt)throw new Error("Token approval has not finished syncing yet. Please wait a moment and try again.");
       }
