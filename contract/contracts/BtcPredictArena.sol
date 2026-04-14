@@ -59,10 +59,7 @@ contract BtcPredictArena {
         require(_maxPlayers >= 2 && _maxPlayers <= 5, "Invalid team size");
         uint256 gid = _createGame(_maxPlayers, false, "", msg.sender);
         _joinWithoutPayment(gid, msg.sender);
-        if (games[gid].players.length == games[gid].maxPlayers) {
-            games[gid].state = GameState.Payment;
-            emit PaymentOpened(gid);
-        }
+        _openPaymentIfFull(gid);
         return gid;
     }
 
@@ -73,10 +70,28 @@ contract BtcPredictArena {
         uint256 gid = _createGame(_maxPlayers, true, _inviteCode, msg.sender);
         inviteCodeToGame[_inviteCode] = gid;
         _joinWithoutPayment(gid, msg.sender);
-        if (games[gid].players.length == games[gid].maxPlayers) {
-            games[gid].state = GameState.Payment;
-            emit PaymentOpened(gid);
-        }
+        _openPaymentIfFull(gid);
+        return gid;
+    }
+
+    function ownerCreateGame(uint8 _maxPlayers, address _creator) external onlyOwner returns (uint256) {
+        require(_creator != address(0), "Invalid creator");
+        require(_maxPlayers >= 2 && _maxPlayers <= 5, "Invalid team size");
+        uint256 gid = _createGame(_maxPlayers, false, "", _creator);
+        _joinWithoutPayment(gid, _creator);
+        _openPaymentIfFull(gid);
+        return gid;
+    }
+
+    function ownerCreateRoom(uint8 _maxPlayers, string calldata _inviteCode, address _creator) external onlyOwner returns (uint256) {
+        require(_creator != address(0), "Invalid creator");
+        require(_maxPlayers >= 2 && _maxPlayers <= 5, "Invalid team size");
+        require(bytes(_inviteCode).length > 0, "Empty invite code");
+        require(inviteCodeToGame[_inviteCode] == 0, "Invite code taken");
+        uint256 gid = _createGame(_maxPlayers, true, _inviteCode, _creator);
+        inviteCodeToGame[_inviteCode] = gid;
+        _joinWithoutPayment(gid, _creator);
+        _openPaymentIfFull(gid);
         return gid;
     }
 
@@ -85,10 +100,7 @@ contract BtcPredictArena {
         require(!g.isRoom, "Use joinRoom");
         require(g.state == GameState.Created, "Game not joinable");
         _joinWithoutPayment(_gameId, msg.sender);
-        if (g.players.length == g.maxPlayers) {
-            g.state = GameState.Payment;
-            emit PaymentOpened(_gameId);
-        }
+        _openPaymentIfFull(_gameId);
     }
 
     function joinRoom(string calldata _inviteCode) external {
@@ -97,10 +109,26 @@ contract BtcPredictArena {
         Game storage g = games[gid];
         require(g.state == GameState.Created, "Room not joinable");
         _joinWithoutPayment(gid, msg.sender);
-        if (g.players.length == g.maxPlayers) {
-            g.state = GameState.Payment;
-            emit PaymentOpened(gid);
-        }
+        _openPaymentIfFull(gid);
+    }
+
+    function ownerJoinGame(uint256 _gameId, address _player) external onlyOwner gameExists(_gameId) {
+        require(_player != address(0), "Invalid player");
+        Game storage g = games[_gameId];
+        require(!g.isRoom, "Use ownerJoinRoom");
+        require(g.state == GameState.Created, "Game not joinable");
+        _joinWithoutPayment(_gameId, _player);
+        _openPaymentIfFull(_gameId);
+    }
+
+    function ownerJoinRoom(string calldata _inviteCode, address _player) external onlyOwner {
+        require(_player != address(0), "Invalid player");
+        uint256 gid = inviteCodeToGame[_inviteCode];
+        require(gid > 0, "Room not found");
+        Game storage g = games[gid];
+        require(g.state == GameState.Created, "Room not joinable");
+        _joinWithoutPayment(gid, _player);
+        _openPaymentIfFull(gid);
     }
 
     function payForGame(uint256 _gameId) external gameExists(_gameId) {
@@ -272,6 +300,14 @@ contract BtcPredictArena {
         g.players.push(player);
         gamePlayers[_gameId].push(player);
         emit PlayerJoined(_gameId, player);
+    }
+
+    function _openPaymentIfFull(uint256 _gameId) internal {
+        Game storage g = games[_gameId];
+        if (g.players.length == g.maxPlayers) {
+            g.state = GameState.Payment;
+            emit PaymentOpened(_gameId);
+        }
     }
 
     function _isPlayer(uint256 _gameId, address _addr) internal view returns (bool) {

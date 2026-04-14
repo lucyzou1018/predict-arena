@@ -3,7 +3,7 @@ import{useSocket}from"../hooks/useSocket";import{useGame}from"../context/GameCon
 import{MatchAnimation,PaymentModal}from"../components";import{TEAM_SIZES}from"../config/constants";
 export default function RandomMatch(){
   const nav=useNavigate();const{emit,on}=useSocket();const{updateGame}=useGame();
-  const{mockMode,wallet,connect}=useWallet();const{mockPay,loading}=useContract();
+  const{mockMode,wallet,connect}=useWallet();const{payForGame,mockPay,loading,shouldUseMockPayment}=useContract();
   const[phase,setPhase]=useState("select");const[sz,setSz]=useState(2);
   const[match,setMatch]=useState({current:0});const[cd,setCd]=useState(15);
   const[pending,setPending]=useState(null);const[err,setErr]=useState(null);
@@ -12,14 +12,14 @@ export default function RandomMatch(){
 
   useEffect(()=>{const u=[
     on("match:update",d=>setMatch({current:d.current})),
-    on("match:found",d=>{setPending(d);if(mockMode){mockPay().then(()=>{updateGame({gameId:d.gameId,chainGameId:d.chainGameId,mode:"random",teamSize:sz,players:d.players,phase:"predicting"});nav("/game");})}else setPhase("payment")}),
+    on("match:found",d=>{setPending(d);if(shouldUseMockPayment){mockPay().then(()=>{updateGame({gameId:d.gameId,chainGameId:d.chainGameId,mode:"random",teamSize:sz,players:d.players,phase:"predicting"});nav("/game");})}else setPhase("payment")}),
     on("match:failed",()=>{setErr("No opponents found. Try again.");setPhase("select")}),
     on("match:error",d=>{setErr(d.message);setPhase("select")}),
-  ];return()=>u.forEach(f=>f())},[on,mockMode,mockPay,updateGame,sz,nav]);
+  ];return()=>u.forEach(f=>f())},[on,shouldUseMockPayment,mockPay,updateGame,sz,nav]);
 
   const start=()=>{if(!wallet){connect();return}setErr(null);setPhase("matching");setMatch({current:1});emit("match:join",{teamSize:sz})};
   const cancel=()=>{emit("match:cancel");setPhase("select")};
-  const pay=useCallback(async()=>{if(!pending)return;try{await mockPay();updateGame({gameId:pending.gameId,chainGameId:pending.chainGameId,mode:"random",teamSize:sz,players:pending.players,phase:"predicting"});nav("/game")}catch{setErr("Payment failed");setPhase("select")}},[pending,mockPay,updateGame,sz,nav]);
+  const pay=useCallback(async()=>{if(!pending)return;try{await payForGame(pending.gameId);updateGame({gameId:pending.gameId,chainGameId:pending.chainGameId,mode:"random",teamSize:sz,players:pending.players,phase:"predicting"});nav("/game")}catch(e){setErr(e?.message||"Payment failed");setPhase("select")}},[pending,payForGame,updateGame,sz,nav]);
 
   return<div className="page-container">
     <button onClick={()=>{if(phase==="matching")emit("match:cancel");nav("/")}} className="text-white/15 hover:text-white/30 text-xs mb-4 transition">← Back</button>

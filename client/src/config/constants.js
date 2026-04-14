@@ -1,7 +1,7 @@
 export const SERVER_URL = import.meta.env.VITE_API_BASE || "http://localhost:3001";
 export const BASE_SEPOLIA = { chainId: "0x14A34", chainName: "Base Sepolia", rpcUrls: ["https://sepolia.base.org"], blockExplorerUrls: ["https://sepolia.basescan.org"], nativeCurrency: { name: "ETH", symbol: "ETH", decimals: 18 } };
 export const CHAIN = BASE_SEPOLIA;
-export const USDC_ADDRESS = import.meta.env.VITE_USDC_ADDRESS || "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+export const USDC_ADDRESS = import.meta.env.VITE_USDC_ADDRESS || "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
 export const CONTRACT_ADDRESS = import.meta.env.VITE_CONTRACT_ADDRESS || "";
 export const ENTRY_FEE = 1;
 export const FEE_RATE = 0.05;

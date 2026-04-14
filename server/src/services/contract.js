@@ -2,6 +2,10 @@ import { ethers } from "ethers";
 import config from "../config/index.js";
 
 const ABI = [
+  "function ownerCreateGame(uint8, address) external returns (uint256)",
+  "function ownerCreateRoom(uint8, string, address) external returns (uint256)",
+  "function ownerJoinGame(uint256, address) external",
+  "function ownerJoinRoom(string, address) external",
   "function startGame(uint256, uint256) external",
   "function settleGame(uint256, uint256) external",
   "function cancelGame(uint256) external",
@@ -23,6 +27,30 @@ class ContractService {
     this.contract = new ethers.Contract(config.contract.address, ABI, this.wallet);
     this.initialized = true;
     console.log("[Contract] Initialized");
+  }
+
+  async ownerCreateGame(maxPlayers, creator) {
+    if (!this.initialized) return null;
+    const gameId = await this.contract.ownerCreateGame.staticCall(maxPlayers, creator);
+    await (await this.contract.ownerCreateGame(maxPlayers, creator)).wait();
+    return Number(gameId);
+  }
+
+  async ownerCreateRoom(maxPlayers, inviteCode, creator) {
+    if (!this.initialized) return null;
+    const gameId = await this.contract.ownerCreateRoom.staticCall(maxPlayers, inviteCode, creator);
+    await (await this.contract.ownerCreateRoom(maxPlayers, inviteCode, creator)).wait();
+    return Number(gameId);
+  }
+
+  async ownerJoinGame(gameId, player) {
+    if (!this.initialized) return;
+    await (await this.contract.ownerJoinGame(gameId, player)).wait();
+  }
+
+  async ownerJoinRoom(inviteCode, player) {
+    if (!this.initialized) return;
+    await (await this.contract.ownerJoinRoom(inviteCode, player)).wait();
   }
 
   async isPlayerPaid(gameId, wallet) {

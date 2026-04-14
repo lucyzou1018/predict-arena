@@ -32,11 +32,26 @@ class MatchmakingService {
     if (this.timers[teamSize]) { clearTimeout(this.timers[teamSize]); delete this.timers[teamSize]; }
     const res = await query(`INSERT INTO games (mode, max_players, state) VALUES ('random', $1, 'matching') RETURNING id`, [teamSize]);
     const gameId = res.rows[0].id;
-    const chain = await contractService.createGame(teamSize);
-    await query(`UPDATE games SET chain_game_id = $1 WHERE id = $2`, [chain.gameId, gameId]);
-    const list = players.map(p => ({ wallet: p.wallet, socketId: p.socketId }));
-    for (const p of players) { this.io?.to(p.socketId).emit("match:found", { gameId, chainGameId: chain.gameId, players: list.map(pl => pl.wallet), teamSize }); }
-    return { status: "matched", gameId, players: list };
+    try {
+      for (const p of players) {
+        await query(
+          `INSERT INTO game_players (game_id, wallet_address, paid)
+           VALUES ($1, $2, false)
+           ON CONFLICT DO NOTHING`,
+          [gameId, p.wallet]
+        );
+      }
+      const chainGameId = await contractService.ownerCreateGame(teamSize, players[0].wallet) || gameId;
+      for (const p of players.slice(1)) await contractService.ownerJoinGame(chainGameId, p.wallet);
+      await query(`UPDATE games SET chain_game_id = $1 WHERE id = $2`, [chainGameId, gameId]);
+      const list = players.map(p => ({ wallet: p.wallet, socketId: p.socketId }));
+      for (const p of players) { this.io?.to(p.socketId).emit("match:found", { gameId, chainGameId, players: list.map(pl => pl.wallet), teamSize }); }
+      return { status: "matched", gameId, chainGameId, players: list };
+    } catch (error) {
+      await query(`DELETE FROM game_players WHERE game_id = $1`, [gameId]);
+      await query(`DELETE FROM games WHERE id = $1`, [gameId]);
+      throw error;
+    }
   }
 
   _timeout(teamSize) {

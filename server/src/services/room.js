@@ -1,6 +1,7 @@
 import config from "../config/index.js";
 import { query } from "../config/database.js";
 import { generateInviteCode } from "../utils/inviteCode.js";
+import contractService from "./contract.js";
 
 class RoomService {
   constructor() { this.rooms = {}; this.io = null; }
@@ -11,17 +12,25 @@ class RoomService {
     const code = generateInviteCode();
     const res = await query(`INSERT INTO games (mode, max_players, invite_code, state) VALUES ('room', $1, $2, 'waiting') RETURNING id`, [maxPlayers, code]);
     const gameId = res.rows[0].id;
-    await query(`UPDATE games SET chain_game_id = $1 WHERE id = $2`, [gameId, gameId]);
-    await query(`INSERT INTO game_players (game_id, wallet_address, paid, is_owner) VALUES ($1, $2, false, true) ON CONFLICT DO NOTHING`, [gameId, wallet]);
-    const expiresAt = Date.now() + config.game.roomExpiry;
-    this.rooms[code] = { gameId, chainGameId: gameId, maxPlayers, players: [{ wallet, socketId }], owner: wallet, createdAt: Date.now(), expiresAt, timer: setTimeout(() => this._expire(code), config.game.roomExpiry), paid: {} };
-    return { inviteCode: code, gameId, chainGameId: gameId, maxPlayers, expiresAt };
+    try {
+      const chainGameId = await contractService.ownerCreateRoom(maxPlayers, code, wallet) || gameId;
+      await query(`UPDATE games SET chain_game_id = $1 WHERE id = $2`, [chainGameId, gameId]);
+      await query(`INSERT INTO game_players (game_id, wallet_address, paid, is_owner) VALUES ($1, $2, false, true) ON CONFLICT DO NOTHING`, [gameId, wallet]);
+      const expiresAt = Date.now() + config.game.roomExpiry;
+      this.rooms[code] = { gameId, chainGameId, maxPlayers, players: [{ wallet, socketId }], owner: wallet, createdAt: Date.now(), expiresAt, timer: setTimeout(() => this._expire(code), config.game.roomExpiry), paid: {} };
+      return { inviteCode: code, gameId, chainGameId, maxPlayers, expiresAt };
+    } catch (error) {
+      await query(`DELETE FROM game_players WHERE game_id = $1`, [gameId]);
+      await query(`DELETE FROM games WHERE id = $1`, [gameId]);
+      throw error;
+    }
   }
 
   async joinRoom(code, wallet, socketId) {
     const r = this.rooms[code]; if (!r) return { error: "房间不存在" }; if (r.players.length >= r.maxPlayers) return { error: "房间已满" };
     if (r.players.find(p => p.wallet === wallet)) return { error: "已在房间中" };
     for (const c in this.rooms) { if (c !== code && this.rooms[c].players.find(p => p.wallet === wallet)) return { error: "已在其他房间中" }; }
+    await contractService.ownerJoinRoom(code, wallet);
     r.players.push({ wallet, socketId });
     await query(`INSERT INTO game_players (game_id, wallet_address, paid) VALUES ($1, $2, false) ON CONFLICT DO NOTHING`, [r.gameId, wallet]);
     this._broadcast(code);

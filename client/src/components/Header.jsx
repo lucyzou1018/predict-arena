@@ -1,7 +1,7 @@
 import{useNavigate,useLocation}from"react-router-dom";import{useWallet}from"../context/WalletContext";
 import WalletMenu from"./WalletMenu";
 export function Header(){
-  const{wallet,connect,connecting,mockMode,balance,showWalletMenu,setShowWalletMenu}=useWallet();
+  const{wallet,connect,connecting,mockMode,chainOk,switchChain,balance,showWalletMenu,setShowWalletMenu}=useWallet();
   const nav=useNavigate();const loc=useLocation();
   const short=wallet?`${wallet.slice(0,6)}...${wallet.slice(-4)}`:"";
   return(
@@ -18,6 +18,11 @@ export function Header(){
         <div className="flex items-center gap-1.5 bg-white/[0.04] border border-white/[0.08] rounded-xl px-2 py-1.5">
           <button onClick={()=>nav("/arena")} className={`text-xs px-4 py-1.5 rounded-lg transition font-semibold ${loc.pathname==="/arena"?"bg-gradient-to-r from-amber-500 to-orange-500 text-white shadow-lg shadow-orange-500/20":"text-white/40 hover:text-white/60 hover:bg-white/[0.06]"}`}>Battle</button>
           <button onClick={()=>nav("/how-to-play")} className={`text-xs px-4 py-1.5 rounded-lg transition font-semibold ${loc.pathname==="/how-to-play"?"bg-gradient-to-r from-amber-500 to-orange-500 text-white shadow-lg shadow-orange-500/20":"text-white/40 hover:text-white/60 hover:bg-white/[0.06]"}`}>How to Play</button>
+          {wallet&&!mockMode&&!chainOk&&(
+            <button onClick={()=>switchChain()} className="text-xs px-4 py-1.5 rounded-lg transition font-semibold bg-rose-500/10 border border-rose-500/20 text-rose-300 hover:bg-rose-500/15">
+              Switch Base Sepolia
+            </button>
+          )}
           <div className="relative">
             {wallet?(
               <button onClick={()=>setShowWalletMenu(!showWalletMenu)} className="text-xs px-4 py-1.5 rounded-lg transition font-semibold text-white/40 hover:text-white/60 hover:bg-white/[0.06] flex items-center gap-1.5">

@@ -1,7 +1,11 @@
 import { Router } from "express";
 import { query } from "../config/database.js";
 import priceService from "../services/price.js";
+import config from "../config/index.js";
+import roomService from "../services/room.js";
+import gameService from "../services/game.js";
 const router = Router();
+const norm = (wallet = "") => wallet.toLowerCase();
 
 router.get("/price", (_, res) => res.json({ price: priceService.getPrice() }));
 
@@ -13,21 +17,55 @@ router.get("/games/:id", async (req, res) => {
 });
 
 router.get("/users/:wallet", async (req, res) => {
-  const u = await query("SELECT * FROM users WHERE wallet_address=$1", [req.params.wallet]);
+  const u = await query("SELECT * FROM users WHERE LOWER(wallet_address)=LOWER($1)", [norm(req.params.wallet)]);
   if (!u.rows[0]) return res.json({ wallet: req.params.wallet, wins: 0, losses: 0, total_earned: 0, total_lost: 0 });
   res.json(u.rows[0]);
 });
 
 
 router.get("/users/:wallet/open-room", async (req, res) => {
+  const wallet = norm(req.params.wallet);
+  for (const [inviteCode, room] of Object.entries(roomService.rooms)) {
+    const inRoom = room.players.find((p) => norm(p.wallet) === wallet);
+    if (!inRoom) continue;
+    const gp = await query(
+      `SELECT wallet_address, paid, is_owner
+       FROM game_players
+       WHERE game_id = $1`,
+      [room.gameId]
+    );
+    const me = gp.rows.find((row) => norm(row.wallet_address) === wallet);
+    const payment = gameService.getRoomPayment(room.gameId);
+    const paidCount = gp.rows.filter((row) => row.paid === true).length;
+    return res.json({
+      room: {
+        id: room.gameId,
+        game_id: room.gameId,
+        chain_game_id: room.chainGameId,
+        invite_code: inviteCode,
+        max_players: room.maxPlayers,
+        current_players: room.players.length,
+        state: payment ? "payment" : "waiting",
+        created_at: new Date(room.createdAt).toISOString(),
+        expires_at: room.expiresAt,
+        is_owner: !!me?.is_owner,
+        players: room.players.map((p) => p.wallet),
+        phase: payment ? (me?.paid ? "paid_waiting" : "payment") : "waiting",
+        payment_started_at: payment?.startedAt || null,
+        payment_timeout_ms: config.game.paymentTimeout,
+        paid_count: paidCount,
+        total_players: room.players.length,
+      },
+    });
+  }
   const r = await query(
-    `SELECT g.id, g.invite_code, g.max_players, g.state, g.created_at,
-            gp2.is_owner,
+    `SELECT g.id, g.invite_code, g.max_players, g.state, g.created_at, g.chain_game_id,
+            gp2.is_owner, gp2.paid,
             COALESCE((SELECT COUNT(*) FROM game_players x WHERE x.game_id=g.id),0)::int as current_players
      FROM games g
-     JOIN game_players gp2 ON g.id = gp2.game_id AND gp2.wallet_address=$1
+     JOIN game_players gp2 ON g.id = gp2.game_id AND LOWER(gp2.wallet_address)=LOWER($1)
      WHERE g.mode='room'
-       AND g.state='waiting'
+       AND g.state IN ('waiting', 'payment')
        AND NOT EXISTS (
          SELECT 1 FROM games g2
          WHERE g2.invite_code = g.invite_code
@@ -36,7 +74,7 @@ router.get("/users/:wallet/open-room", async (req, res) => {
        )
      ORDER BY g.created_at DESC
      LIMIT 1`,
-    [req.params.wallet]
+    [wallet]
   );
   res.json({ room: r.rows[0] || null });
 });
@@ -48,9 +86,9 @@ router.get("/users/:wallet/games", async (req, res) => {
     `SELECT g.id, g.mode, g.invite_code, g.max_players, g.state, g.base_price, g.settlement_price, g.created_at, g.started_at, g.settled_at,
             gp.prediction, gp.is_correct, gp.reward, gp.is_owner
      FROM games g JOIN game_players gp ON g.id=gp.game_id
-     WHERE gp.wallet_address=$1
+     WHERE LOWER(gp.wallet_address)=LOWER($1)
      ORDER BY COALESCE(g.settled_at, g.started_at, g.created_at) DESC LIMIT $2 OFFSET $3`,
-    [req.params.wallet, limit, offset]
+    [norm(req.params.wallet), limit, offset]
   );
   res.json({ games: r.rows });
 });

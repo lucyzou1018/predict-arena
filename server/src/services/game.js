@@ -23,13 +23,14 @@ class GameService {
     delete this.roomPayments[gameId];
   }
 
-  async confirmRoomPayment(gameId, wallet) {
-    const paidOnChain = await contractService.isPlayerPaid(gameId, wallet);
+  async confirmRoomPayment(gameId, chainGameId, wallet) {
+    const targetChainGameId = chainGameId || gameId;
+    const paidOnChain = await contractService.isPlayerPaid(targetChainGameId, wallet);
     if (!paidOnChain) throw new Error("On-chain payment not confirmed");
     await query("UPDATE game_players SET paid=true, paid_at=NOW() WHERE game_id=$1 AND wallet_address=$2", [gameId, wallet]);
     const r = await query("SELECT wallet_address, paid FROM game_players WHERE game_id=$1", [gameId]);
     const allPaidDb = r.rows.length > 0 && r.rows.every(x => x.paid === true);
-    const allPaidChain = await contractService.allPlayersPaid(gameId);
+    const allPaidChain = await contractService.allPlayersPaid(targetChainGameId);
     const allPaid = allPaidDb && allPaidChain;
     if (allPaid) await query("UPDATE games SET state='payment' WHERE id=$1", [gameId]);
     return { allPaid, paidCount: r.rows.filter(x => x.paid).length, total: r.rows.length };

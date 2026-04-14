@@ -120,11 +120,11 @@ export function WalletProvider({children}){
     }catch{return false;}
   },[]);
 
-  const switchChain=useCallback(async(eth)=>{
+  const switchChain=useCallback(async(eth=activeEthRef.current)=>{
     if(!eth)return;
     try{await eth.request({method:"wallet_switchEthereumChain",params:[{chainId:CHAIN.chainId}]})}
     catch(e){if(e.code===4902)await eth.request({method:"wallet_addEthereumChain",params:[CHAIN]})}
-    await checkChain(eth);
+    return await checkChain(eth);
   },[checkChain]);
 
   /* ---- Connect flow ---- */
