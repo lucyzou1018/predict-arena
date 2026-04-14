@@ -29,13 +29,14 @@ export default function Home(){
   const{wallet,provider,signer,connect,mockMode,refund,pendingAction,setPendingAction}=useWallet();
   const{emit,on}=useSocket();
   const{updateGame}=useGame();
-  const{payForGame,loading,mockPay,shouldUseMockPayment}=useContract();
+  const{payForGame,claimReward,loading,claiming,mockPay,shouldUseMockPayment}=useContract();
   const price=useBtcPrice();
 
   const[history,setHistory]=useState([]);
   const[historyFilter,setHistoryFilter]=useState("all");
   const[historyPage,setHistoryPage]=useState(1);
   const[stats,setStats]=useState(null);
+  const[claimingHistoryId,setClaimingHistoryId]=useState(null);
 
   const[mode,setMode]=useState("create");
   const[sz,setSz]=useState(2);
@@ -88,6 +89,14 @@ export default function Home(){
   const walletRef=useRef(wallet); walletRef.current=wallet;
   const szRef=useRef(sz); szRef.current=sz;
   const roomCodeRef=useRef(roomCode); roomCodeRef.current=roomCode;
+
+  const reloadHistory=useCallback((targetWallet=walletRef.current)=>{
+    if(!targetWallet)return;
+    fetch(`${SERVER_URL}/api/users/${targetWallet}/games?limit=20`)
+      .then(r=>r.json())
+      .then(d=>{setHistory(d.games||[]);setHistoryPage(1);})
+      .catch(()=>{});
+  },[]);
 
   // Carousel state
   const scrollRef=useRef(null);
@@ -169,7 +178,7 @@ export default function Home(){
     setMatchPhase("select");setMatchErr(null);setMatchInfo({current:0});setPending(null);
     setPaymentStartedAt(null);setPaymentCountdown(null);setRoomFullInfo(null);setPaymentProgress({paidCount:0,total:0});setPaymentErr(null);
     if(!wallet) return;
-    fetch(`${SERVER_URL}/api/users/${wallet}/games?limit=20`).then(r=>r.json()).then(d=>{setHistory(d.games||[]);setHistoryPage(1);}).catch(()=>{});
+    reloadHistory(wallet);
     fetch(`${SERVER_URL}/api/users/${wallet}`).then(r=>r.json()).then(setStats).catch(()=>{});
     fetch(`${SERVER_URL}/api/users/${wallet}/open-room`).then(r=>r.json()).then(d=>{
       setOpenRoom(d.room||null);
@@ -223,7 +232,7 @@ export default function Home(){
   // ===== SOCKET EVENT LISTENERS =====
   // Uses refs to read latest state — deps are only stable references, so listeners are never torn down mid-flight
   useEffect(()=>{
-    const refreshHistory=()=>{const w=walletRef.current;if(w)fetch(`${SERVER_URL}/api/users/${w}/games?limit=20`).then(r=>r.json()).then(res=>setHistory(res.games||[])).catch(()=>{});};
+    const refreshHistory=()=>reloadHistory(walletRef.current);
     const u=[
       on("room:created",d=>{
         if(createTimeoutRef.current){clearTimeout(createTimeoutRef.current);createTimeoutRef.current=null;}
@@ -322,7 +331,7 @@ export default function Home(){
         setJoinPhase("waiting");
       }),
       on("game:start",d=>{
-        updateGame({gameId:d.gameId,mode:"room",teamSize:d.players.length,players:d.players,phase:"predicting",basePrice:d.basePrice,countdown:Math.round((d.predictTimeout||20000)/1000)});
+        updateGame({gameId:d.gameId,chainGameId:d.chainGameId||d.gameId,mode:"room",teamSize:d.players.length,players:d.players,phase:"predicting",basePrice:d.basePrice,countdown:Math.round((d.predictTimeout||20000)/1000)});
         setPaymentStartedAt(null);
         setTimeout(()=>nav("/game"),500);
       }),
@@ -345,8 +354,8 @@ export default function Home(){
   const createRoom=()=>{if(isJoinBusy||isMatchBusy){setCreateErr("Finish or cancel current action first");return;}if(isCreateBusy){setCreateErr("Already creating a room");return;}if(!mockMode && (!wallet || !provider || !signer)){connect({type:"create-room"});return;}setCreateErr(null);setCreatePhase("creating");if(createTimeoutRef.current)clearTimeout(createTimeoutRef.current);createTimeoutRef.current=setTimeout(()=>{setCreateErr("Create room failed. Please retry.");setCreatePhase("select");},8000);emit("room:create",{teamSize:sz});};
   const payCreate=useCallback(async()=>{try{setPaymentErr(null);if(!roomFullInfo?.chainGameId||!roomFullInfo?.gameId||!wallet)throw new Error("Missing game id");await payForGame(roomFullInfo.chainGameId);setCreatePaid(true);setCreateErr(null);emit("room:payment:confirm",{gameId:roomFullInfo.gameId,chainGameId:roomFullInfo.chainGameId,inviteCode:roomCode,wallet});setCreatePhase("paid_waiting");}catch(e){const msg=formatPaymentUiError(e?.message||"Payment failed");setCreateErr(msg);setPaymentErr(msg);}},[payForGame,roomFullInfo,roomCode,emit,wallet]);
   const cancelCreate=()=>{emit("room:dissolve",{inviteCode:roomCode});setCreatePhase("select");setRoomExpiresAt(null);setPaymentStartedAt(null);};
-  const dissolveRoom=()=>{emit("room:dissolve",{inviteCode:roomCode});if(createPaid){refund(ENTRY_FEE);setCreatePaid(false);}setOpenRoom(null);setRoomCode("");setRoom({current:0,total:0,players:[]});setCreatePhase("select");setRoomExpiresAt(null);setPaymentStartedAt(null);fetch(`${SERVER_URL}/api/users/${wallet}/games?limit=20`).then(r=>r.json()).then(d=>setHistory(d.games||[])).catch(()=>{});};
-  const clearExpired=()=>{setCreatePhase("select");setRoomCode("");setRoom({current:0,total:0,players:[]});setOpenRoom(null);setCreateErr(null);if(wallet){fetch(`${SERVER_URL}/api/users/${wallet}/games?limit=20`).then(r=>r.json()).then(d=>setHistory(d.games||[])).catch(()=>{});}};
+  const dissolveRoom=()=>{emit("room:dissolve",{inviteCode:roomCode});if(createPaid){refund(ENTRY_FEE);setCreatePaid(false);}setOpenRoom(null);setRoomCode("");setRoom({current:0,total:0,players:[]});setCreatePhase("select");setRoomExpiresAt(null);setPaymentStartedAt(null);reloadHistory(wallet);};
+  const clearExpired=()=>{setCreatePhase("select");setRoomCode("");setRoom({current:0,total:0,players:[]});setOpenRoom(null);setCreateErr(null);reloadHistory(wallet);};
   const copyCode=()=>{navigator.clipboard.writeText(roomCode);setCopied(true);setTimeout(()=>setCopied(false),2000);};
 
   // Join flow: confirm dialog (no payment), then join directly
@@ -371,6 +380,20 @@ export default function Home(){
   const startMatch=()=>{if(isCreateBusy||isJoinBusy){setMatchErr("Finish or cancel current action first");return;}if(isMatchBusy){setMatchErr("Already matching");return;}if(!mockMode && (!wallet || !provider || !signer)){connect({type:"random-match"});return;}setMatchErr(null);setMatchPhase("matching");setMatchInfo({current:1});emit("match:join",{teamSize:sz});};
   const cancelMatch=()=>{emit("match:cancel");setMatchPhase("select");};
   const payMatch=useCallback(async()=>{if(!pending)return;try{setPaymentErr(null);if(!pending.gameId||!pending.chainGameId||!wallet)throw new Error("Missing game id");await payForGame(pending.chainGameId);emit("room:payment:confirm",{gameId:pending.gameId,chainGameId:pending.chainGameId,wallet});setMatchPhase("paid_waiting");}catch(e){const msg=formatPaymentUiError(e?.message||"Payment failed");setMatchErr(msg);setPaymentErr(msg);setMatchPhase("select");}},[pending,payForGame,emit,wallet]);
+  const claimHistoryReward=useCallback(async(game)=>{
+    if(!game?.claimable||!game?.chain_game_id)return;
+    try{
+      setClaimingHistoryId(game.id);
+      await claimReward(game.chain_game_id);
+      setHistory(prev=>prev.map(item=>item.id===game.id?{...item,claimed:true,claimable:false}:item));
+      reloadHistory(walletRef.current);
+    }catch(e){
+      const msg=e?.message||"Claim failed";
+      alert(msg);
+    }finally{
+      setClaimingHistoryId(null);
+    }
+  },[claimReward,reloadHistory]);
 
   // Payment modal — room payment keeps the modal open while waiting for everyone
   const isRoomPaymentPhase=(createPhase==="payment")||(joinPhase==="payment");
@@ -730,6 +753,9 @@ export default function Home(){
                   : g.state)
                 : (g.is_correct === null || g.is_correct === undefined ? "—" : (g.is_correct ? "Win" : "Lose"));
               const time = new Date(g.settled_at || g.started_at || g.created_at).toLocaleString();
+              const canClaim = !!g.claimable;
+              const isClaiming = claimingHistoryId === g.id && claiming;
+              const isClaimed = !!g.claimed;
               return (
                 <div key={g.id} className="bg-white/[0.02] border border-white/[0.05] rounded-xl px-3 py-2.5">
                   <div className="flex items-start justify-between gap-3">
@@ -746,6 +772,21 @@ export default function Home(){
                       <p className={`text-xs font-bold mt-1 ${result==="Win"?"text-emerald-400":result==="Lose"?"text-rose-400":result==="Expired"?"text-orange-400":result==="Failed"?"text-rose-400":result==="Cancelled"?"text-white/30":result==="Waiting"?"text-amber-300":result==="Playing"?"text-sky-300":"text-white/35"}`}>{result}</p>
                     </div>
                   </div>
+                  {(canClaim||isClaimed||isClaiming) && <div className="mt-3 flex justify-end">
+                    <button
+                      onClick={()=>claimHistoryReward(g)}
+                      disabled={!canClaim||isClaiming}
+                      className={`px-3 py-1.5 rounded-lg text-[10px] font-bold transition ${
+                        isClaimed
+                          ?"bg-emerald-500/10 border border-emerald-500/15 text-emerald-300 cursor-default"
+                          : canClaim
+                            ?"bg-gradient-to-r from-emerald-500 to-teal-500 text-white shadow shadow-emerald-500/20 disabled:opacity-60"
+                            :"bg-white/[0.03] border border-white/[0.05] text-white/35 cursor-default"
+                      }`}
+                    >
+                      {isClaiming ? "Claiming..." : isClaimed ? "Claimed" : "Claim"}
+                    </button>
+                  </div>}
                 </div>
               );
             })}
@@ -777,13 +818,31 @@ export default function Home(){
             ?<div className="space-y-2">{history.map((g,i)=>{
               const dir=parseFloat(g.settlement_price)>parseFloat(g.base_price)?"up":"down";
               const won=g.is_correct;
+              const canClaim=!!g.claimable;
+              const isClaiming=claimingHistoryId===g.id&&claiming;
+              const isClaimed=!!g.claimed;
               return<div key={i} className={`flex items-center justify-between px-3 py-2.5 rounded-lg ${won?"bg-emerald-500/[0.06] border border-emerald-500/[0.08]":"bg-rose-500/[0.06] border border-rose-500/[0.08]"}`}>
                 <div className="flex items-center gap-2">
                   <span className="text-sm">{won?"🏆":"💀"}</span>
                   <div><p className="text-[11px] font-mono text-white/50">#{g.id} · {g.mode==="random"?"Quick":"Room"} · {g.max_players}P</p>
                   <p className="text-[10px] text-white/30">{g.prediction==="up"?"LONG":"SHORT"} → BTC {dir==="up"?"📈":"📉"}</p></div>
                 </div>
-                <span className={`text-xs font-mono font-bold ${won?"text-emerald-400":"text-rose-400"}`}>{parseFloat(g.reward)>0?`+${parseFloat(g.reward).toFixed(2)}`:"-1.00"}</span>
+                <div className="flex items-center gap-2">
+                  <span className={`text-xs font-mono font-bold ${won?"text-emerald-400":"text-rose-400"}`}>{parseFloat(g.reward)>0?`+${parseFloat(g.reward).toFixed(2)}`:"-1.00"}</span>
+                  {(canClaim||isClaimed||isClaiming)&&<button
+                    onClick={()=>claimHistoryReward(g)}
+                    disabled={!canClaim||isClaiming}
+                    className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition ${
+                      isClaimed
+                        ?"bg-emerald-500/10 border border-emerald-500/15 text-emerald-300 cursor-default"
+                        : canClaim
+                          ?"bg-gradient-to-r from-emerald-500 to-teal-500 text-white disabled:opacity-60"
+                          :"bg-white/[0.03] border border-white/[0.05] text-white/35 cursor-default"
+                    }`}
+                  >
+                    {isClaiming?"Claiming...":isClaimed?"Claimed":"Claim"}
+                  </button>}
+                </div>
               </div>;
             })}</div>
             :<div className="flex flex-col items-center justify-center py-6 text-center">

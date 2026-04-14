@@ -4,6 +4,7 @@ import priceService from "../services/price.js";
 import config from "../config/index.js";
 import roomService from "../services/room.js";
 import gameService from "../services/game.js";
+import contractService from "../services/contract.js";
 const router = Router();
 const norm = (wallet = "") => wallet.toLowerCase();
 
@@ -134,14 +135,31 @@ router.get("/users/:wallet/games", async (req, res) => {
   const limit = parseInt(req.query.limit) || 20;
   const offset = parseInt(req.query.offset) || 0;
   const r = await query(
-    `SELECT g.id, g.mode, g.invite_code, g.max_players, g.state, g.base_price, g.settlement_price, g.created_at, g.started_at, g.settled_at,
+    `SELECT g.id, g.chain_game_id, g.mode, g.invite_code, g.max_players, g.state, g.base_price, g.settlement_price, g.created_at, g.started_at, g.settled_at,
             gp.prediction, gp.is_correct, gp.reward, gp.is_owner
      FROM games g JOIN game_players gp ON g.id=gp.game_id
      WHERE LOWER(gp.wallet_address)=LOWER($1)
      ORDER BY COALESCE(g.settled_at, g.started_at, g.created_at) DESC LIMIT $2 OFFSET $3`,
     [norm(req.params.wallet), limit, offset]
   );
-  res.json({ games: r.rows });
+  const games = await Promise.all(r.rows.map(async (row) => {
+    const chainGameId = row.chain_game_id;
+    let claimed = false;
+    if (chainGameId && Number(row.reward) > 0 && row.state === "settled") {
+      try {
+        const onchain = await contractService.getPlayerPrediction(chainGameId, norm(req.params.wallet));
+        claimed = !!onchain?.claimed;
+      } catch {
+        claimed = false;
+      }
+    }
+    return {
+      ...row,
+      claimed,
+      claimable: row.state === "settled" && Number(row.reward) > 0 && !claimed,
+    };
+  }));
+  res.json({ games });
 });
 
 // Recent games (global)

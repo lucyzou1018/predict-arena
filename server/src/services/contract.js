@@ -11,6 +11,7 @@ const ABI = [
   "function cancelGame(uint256) external",
   "function allPlayersPaid(uint256) external view returns (bool)",
   "function getPlayerPrediction(uint256, address) external view returns (uint8,bool,uint256,bool)",
+  "function getGameInfo(uint256) external view returns (uint256,uint8,uint8,uint256,uint256,uint256,bool,string)",
   "event GameCreated(uint256 indexed gameId, uint8 maxPlayers, bool isRoom, string inviteCode, address creator)",
 ];
 
@@ -62,6 +63,23 @@ class ContractService {
   async allPlayersPaid(gameId) {
     if (!this.initialized) return false;
     return !!(await this.contract.allPlayersPaid(gameId));
+  }
+
+  async getGameState(gameId) {
+    if (!this.initialized) return null;
+    const [, , state] = await this.contract.getGameInfo(gameId);
+    return Number(state);
+  }
+
+  async getPlayerPrediction(gameId, wallet) {
+    if (!this.initialized) return null;
+    const [prediction, hasPaid, reward, claimed] = await this.contract.getPlayerPrediction(gameId, wallet);
+    return {
+      prediction: Number(prediction),
+      hasPaid: !!hasPaid,
+      reward: Number(reward),
+      claimed: !!claimed,
+    };
   }
 
   async startGame(id, price) { if (!this.initialized) return; await (await this.contract.startGame(id, price)).wait(); }

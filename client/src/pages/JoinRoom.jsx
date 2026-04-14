@@ -53,7 +53,7 @@ export default function JoinRoom(){
     on("room:expired",()=>{setRoomExpiresAt(null);setRoomCountdown(null);setErr("Room expired — team not filled in time");setPhase("input");}),
     on("room:payment:update",d=>{setPaymentProgress({paidCount:d.paidCount,total:d.total});}),
     on("room:payment:failed",d=>{if(paid){refund(ENTRY_FEE);setPaid(false);}setPaymentStartedAt(null);setRoomFullInfo(null);setErr(d?.reason||"Payment timeout — team disbanded");setPhase("input");}),
-    on("game:start",d=>{updateGame({gameId:d.gameId,mode:"room",teamSize:d.players.length,players:d.players,phase:"predicting"});setPaymentStartedAt(null);setTimeout(()=>nav("/game"),500);}),
+    on("game:start",d=>{updateGame({gameId:d.gameId,chainGameId:d.chainGameId||d.gameId,mode:"room",teamSize:d.players.length,players:d.players,phase:"predicting",basePrice:d.basePrice,countdown:Math.round((d.predictTimeout||20000)/1000)});setPaymentStartedAt(null);setTimeout(()=>nav("/game"),500);}),
   ];return()=>u.forEach(f=>f());},[on,code,updateGame,nav,paid,refund]);
 
   const join=()=>{if(!wallet){connect();return;}if(code.length<6)return setErr("Enter complete 6-digit code");setErr(null);emit("room:validate",{inviteCode:code.toUpperCase()});};

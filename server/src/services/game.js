@@ -64,7 +64,7 @@ class GameService {
       if (s) s.join(room);
     }
     console.log(`[Game] #${gameId} started base=$${basePrice} players=${players.length}`);
-    this.io?.to(room).emit("game:start", { gameId, basePrice, players: players.map(p => p.wallet), predictTimeout: config.game.predictTimeout });
+    this.io?.to(room).emit("game:start", { gameId, chainGameId, basePrice, players: players.map(p => p.wallet), predictTimeout: config.game.predictTimeout });
 
     game.countdownInterval = setInterval(() => {
       const rem = Math.max(0, config.game.predictTimeout - (Date.now() - game.startedAt));
@@ -102,7 +102,17 @@ class GameService {
 
   async _settle(gameId) {
     const g = this.activeGames[gameId]; if (!g) return;
-    const sp = priceService.getPrice(); g.phase = "settled";
+    const sp = priceService.getPrice();
+    if (!sp || sp <= 0) {
+      for (const p of g.players) {
+        if (p.socketId) this.io?.to(p.socketId).emit("game:error", { message: "Settlement price unavailable" });
+      }
+      return;
+    }
+    if (g.chainGameId) {
+      await contractService.settleGame(g.chainGameId, Math.round(sp * 100));
+    }
+    g.phase = "settled";
     const result = settlementService.calculate(g.players.map(p => p.wallet), g.predictions, g.basePrice, sp);
     await query("UPDATE games SET state='settled',settlement_price=$1,settled_at=NOW() WHERE id=$2", [sp, gameId]);
     for (const r of result.playerResults) {
@@ -114,7 +124,7 @@ class GameService {
     for (const p of g.players) {
       const my = result.playerResults.find(r => r.wallet === p.wallet);
       this.io?.to(p.socketId).emit("game:result", {
-        gameId, basePrice: g.basePrice, settlementPrice: sp,
+        gameId, chainGameId: g.chainGameId, basePrice: g.basePrice, settlementPrice: sp,
         direction: sp > g.basePrice ? "up" : sp < g.basePrice ? "down" : "flat",
         myResult: my, platformFee: result.platformFee,
       });
