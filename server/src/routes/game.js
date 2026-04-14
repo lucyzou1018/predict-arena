@@ -25,6 +25,14 @@ router.get("/users/:wallet", async (req, res) => {
 
 router.get("/users/:wallet/open-room", async (req, res) => {
   const wallet = norm(req.params.wallet);
+  await query(
+    `UPDATE games
+     SET state = 'expired'
+     WHERE mode = 'room'
+       AND state = 'waiting'
+       AND created_at < NOW() - ($1 * INTERVAL '1 millisecond')`,
+    [config.game.roomExpiry]
+  );
   for (const [inviteCode, room] of Object.entries(roomService.rooms)) {
     const inRoom = room.players.find((p) => norm(p.wallet) === wallet);
     if (!inRoom) continue;
@@ -66,6 +74,10 @@ router.get("/users/:wallet/open-room", async (req, res) => {
      JOIN game_players gp2 ON g.id = gp2.game_id AND LOWER(gp2.wallet_address)=LOWER($1)
      WHERE g.mode='room'
        AND g.state IN ('waiting', 'payment')
+       AND (
+         g.state <> 'waiting'
+         OR g.created_at >= NOW() - ($2 * INTERVAL '1 millisecond')
+       )
        AND NOT EXISTS (
          SELECT 1 FROM games g2
          WHERE g2.invite_code = g.invite_code
@@ -74,7 +86,7 @@ router.get("/users/:wallet/open-room", async (req, res) => {
        )
      ORDER BY g.created_at DESC
      LIMIT 1`,
-    [wallet]
+    [wallet, config.game.roomExpiry]
   );
   res.json({ room: r.rows[0] || null });
 });
