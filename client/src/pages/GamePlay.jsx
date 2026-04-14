@@ -7,6 +7,26 @@ import { useWallet } from "../context/WalletContext";
 import { PredictButtons, CountdownRing, SettlementReveal } from "../components";
 import { PREDICT_TIMEOUT, PREDICT_SAFE_BUFFER, SETTLE_DELAY } from "../config/constants";
 
+const SHARE_TEXT = "Think you know where BTC goes next? 📈📉 Battle me on PredictArena. ⚔️ https://predict-arena-test.vercel.app/arena";
+const predictionStorageKey = (gameId, wallet) => `predict-arena:prediction:${gameId}:${wallet?.toLowerCase?.()}`;
+
+function readStoredPrediction(gameId, wallet) {
+  if (typeof window === "undefined" || !gameId || !wallet) return null;
+  try {
+    const value = window.sessionStorage.getItem(predictionStorageKey(gameId, wallet));
+    return value === "up" || value === "down" ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredPrediction(gameId, wallet, prediction) {
+  if (typeof window === "undefined" || !gameId || !wallet || !prediction) return;
+  try {
+    window.sessionStorage.setItem(predictionStorageKey(gameId, wallet), prediction);
+  } catch {}
+}
+
 export default function GamePlay() {
   const nav = useNavigate();
   const { on, emit } = useSocket();
@@ -19,6 +39,7 @@ export default function GamePlay() {
   const [phase, setPhase] = useState(initialPhase);
   const [countdown, setCountdown] = useState(gameState.countdown || PREDICT_TIMEOUT);
   const [myPrediction, setMyPrediction] = useState(null);
+  const [pendingPrediction, setPendingPrediction] = useState(null);
   const [predictedCount, setPredictedCount] = useState(0);
   const [basePrice, setBasePrice] = useState(gameState.basePrice || 0);
   const [currentPrice, setCurrentPrice] = useState(gameState.basePrice || 0);
@@ -41,31 +62,44 @@ export default function GamePlay() {
       setCountdown(gameState.countdown || PREDICT_TIMEOUT);
       setPredictSafeBuffer(gameState.predictSafeBuffer || PREDICT_SAFE_BUFFER);
       setPredictionDeadline(gameState.predictionDeadline || null);
+      setPendingPrediction(null);
     }
     if (gameState.phase === "result" && gameState.result) {
       setPhase("result");
       setResult(gameState.result);
       setChainGameId(gameState.chainGameId || gameState.result.chainGameId || gameState.gameId);
+      setPendingPrediction(null);
     }
   }, [gameState]);
+
+  useEffect(() => {
+    setPendingPrediction(null);
+  }, [wallet, chainGameId, gameId]);
 
   useEffect(() => {
     let cancelled = false;
 
     const syncPredictionForWallet = async () => {
       const targetChainGameId = chainGameId || gameState.chainGameId || gameId || gameState.gameId;
-      if (!wallet || !targetChainGameId || phase !== "predicting") {
+      const shouldTrackPrediction = phase === "predicting" || phase === "settling" || phase === "result";
+      if (!wallet || !targetChainGameId || !shouldTrackPrediction) {
         setMyPrediction(null);
         return;
       }
       try {
         const state = await getPlayerState(targetChainGameId, wallet);
         if (cancelled) return;
-        if (state?.prediction === 1) setMyPrediction("up");
-        else if (state?.prediction === 2) setMyPrediction("down");
-        else setMyPrediction(null);
+        if (state?.prediction === 1) {
+          writeStoredPrediction(targetChainGameId, wallet, "up");
+          setMyPrediction("up");
+        } else if (state?.prediction === 2) {
+          writeStoredPrediction(targetChainGameId, wallet, "down");
+          setMyPrediction("down");
+        } else {
+          setMyPrediction(readStoredPrediction(targetChainGameId, wallet));
+        }
       } catch {
-        if (!cancelled) setMyPrediction(null);
+        if (!cancelled) setMyPrediction(readStoredPrediction(targetChainGameId, wallet));
       }
     };
 
@@ -86,6 +120,7 @@ export default function GamePlay() {
         setPredictSafeBuffer(Math.round((data.predictSafeBuffer || PREDICT_SAFE_BUFFER * 1000) / 1000));
         setPredictionDeadline(data.predictionDeadline || null);
         setMyPrediction(null);
+        setPendingPrediction(null);
         setPredictedCount(0);
         setResult(null);
         setClaimState({ claimed: false, error: null, success: null });
@@ -96,7 +131,13 @@ export default function GamePlay() {
         if (data.phase === "settling" && phase !== "settling" && phase !== "result") setPhase("settling");
       }),
       on("game:prediction", (data) => setPredictedCount(data.totalPredicted)),
-      on("game:predicted", (data) => setMyPrediction(data.prediction)),
+      on("game:predicted", (data) => {
+        const targetChainGameId = chainGameId || gameState.chainGameId || gameId || gameState.gameId;
+        if (wallet && targetChainGameId) writeStoredPrediction(targetChainGameId, wallet, data.prediction);
+        setPendingPrediction(null);
+        setMyPrediction(data.prediction);
+        updateGame({ myPrediction: data.prediction });
+      }),
       on("game:phase", (data) => {
         if (data.phase === "settling") {
           setPhase("settling");
@@ -117,6 +158,7 @@ export default function GamePlay() {
         });
       }),
       on("game:error", (data) => {
+        setPendingPrediction(null);
         alert(data.message);
         nav("/");
       }),
@@ -135,8 +177,11 @@ export default function GamePlay() {
       }
       const targetChainGameId = chainGameId || gameState.chainGameId || gameId || gameState.gameId;
       const signed = await submitPrediction(targetChainGameId, prediction);
+      writeStoredPrediction(targetChainGameId, wallet, prediction);
+      setPendingPrediction(prediction);
       emit("game:predict", { gameId: gameId || gameState.gameId, prediction, signature: signed.signature, deadline: signed.deadline });
     } catch (error) {
+      setPendingPrediction(null);
       setPredictionError(error?.message || "Prediction failed. Please try again.");
     }
   };
@@ -159,17 +204,44 @@ export default function GamePlay() {
     }
   };
 
+  const handleShareToX = () => {
+    if (typeof window === "undefined") return;
+    const shareUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(SHARE_TEXT)}`;
+    window.open(shareUrl, "_blank", "noopener,noreferrer");
+  };
+
   const rewardAmount = Number(result?.myResult?.reward || 0);
   const canClaimReward = phase === "result" && rewardAmount > 0 && !claimState.claimed && !result?.myResult?.claimed;
 
   const diff = currentPrice && basePrice ? currentPrice - basePrice : 0;
   const percent = basePrice ? ((diff / basePrice) * 100).toFixed(3) : "0";
   const priceColor = diff > 0 ? "text-emerald-400" : diff < 0 ? "text-rose-400" : "text-white/30";
+  const formatPredictionLabel = (prediction) => {
+    if (prediction === "up") return "LONG";
+    if (prediction === "down") return "SHORT";
+    return null;
+  };
   const currentChainGameId = useMemo(
     () => chainGameId || result?.chainGameId || gameState.chainGameId || gameId,
     [chainGameId, result, gameState.chainGameId, gameId],
   );
-  const predictionBufferActive = phase === "predicting" && !myPrediction && countdown <= predictSafeBuffer;
+  const displayedPrediction = myPrediction || pendingPrediction;
+  const normalizedPlayers = useMemo(
+    () => (Array.isArray(gameState.players) ? gameState.players.map((player) => player?.toLowerCase?.()).filter(Boolean) : []),
+    [gameState.players],
+  );
+  const currentWallet = wallet?.toLowerCase?.() || null;
+  const hostWallet = normalizedPlayers[0] || null;
+  const viewerRole = !currentWallet || normalizedPlayers.length === 0
+    ? null
+    : currentWallet === hostWallet
+      ? "Host"
+      : normalizedPlayers.includes(currentWallet)
+        ? "Challenger"
+        : "Viewer";
+  const predictionBufferActive = phase === "predicting" && !displayedPrediction && countdown <= predictSafeBuffer;
+  const resultPrediction = result?.myResult?.prediction || displayedPrediction;
+  const resultPredictionLabel = formatPredictionLabel(resultPrediction);
 
   return (
     <div className="page-container flex flex-col items-center">
@@ -208,15 +280,15 @@ export default function GamePlay() {
                 <p className="text-white/25 text-xs">Players ready</p>
                 <p className="text-white/40 text-xs font-mono">{predictedCount}/{totalPlayers}</p>
               </div>
-              <PredictButtons onPredict={predict} myPrediction={myPrediction} disabled={predicting || predictionBufferActive} />
+              <PredictButtons onPredict={predict} myPrediction={displayedPrediction} disabled={predicting || predictionBufferActive} />
             </div>
             {predictionBufferActive && <div className="rounded-2xl border border-amber-500/15 bg-amber-500/10 text-amber-200 text-xs px-4 py-3 mb-4">Final {predictSafeBuffer}s are reserved for on-chain confirmation. Predictions are locked for this round.</div>}
             {predictionError && <div className="rounded-2xl border border-rose-500/15 bg-rose-500/10 text-rose-300 text-xs px-4 py-3 mb-4">{predictionError}</div>}
             {predicting && <div className="rounded-2xl border border-cyan-500/15 bg-cyan-500/10 text-cyan-200 text-xs px-4 py-3 mb-4">Waiting for wallet signature to lock your prediction...</div>}
-            {myPrediction && (
-              <div className={`rounded-2xl border p-4 text-center ${myPrediction === "up" ? "bg-emerald-500/[0.06] border-emerald-500/20" : "bg-rose-500/[0.06] border-rose-500/20"}`}>
+            {displayedPrediction && (
+              <div className={`rounded-2xl border p-4 text-center ${displayedPrediction === "up" ? "bg-emerald-500/[0.06] border-emerald-500/20" : "bg-rose-500/[0.06] border-rose-500/20"}`}>
                 <p className="text-white/25 text-[10px] uppercase tracking-[0.2em] mb-1">Your Position</p>
-                <p className={`text-2xl font-black ${myPrediction === "up" ? "text-emerald-400" : "text-rose-400"}`}>{myPrediction === "up" ? "📈 LONG" : "📉 SHORT"}</p>
+                <p className={`text-2xl font-black ${displayedPrediction === "up" ? "text-emerald-400" : "text-rose-400"}`}>{displayedPrediction === "up" ? "📈 LONG" : "📉 SHORT"}</p>
               </div>
             )}
           </div>
@@ -231,17 +303,29 @@ export default function GamePlay() {
             <div className="flex justify-center mb-4">
               <CountdownRing total={SETTLE_DELAY} remaining={countdown} label="Reveal" size="lg" />
             </div>
-            <div className="rounded-2xl border border-amber-500/15 bg-amber-500/[0.05] p-4 text-center">
-              <p className="text-white/20 text-[10px] uppercase tracking-[0.2em] mb-1">Live Price</p>
-              <p className={`text-2xl font-mono font-black ${priceColor}`}>${currentPrice.toLocaleString("en-US", { minimumFractionDigits: 2 })}</p>
-              <p className={`text-[11px] font-mono mt-1 ${priceColor}`}>{diff >= 0 ? "+" : ""}{diff.toFixed(2)} ({percent}%)</p>
-            </div>
-            {myPrediction && (
-              <div className="mt-4 rounded-2xl border border-amber-500/15 bg-amber-500/[0.04] p-3">
-                <p className="text-white/25 text-[10px] uppercase tracking-[0.2em] mb-1">Your Call</p>
-                <p className={myPrediction === "up" ? "text-emerald-400 font-black" : "text-rose-400 font-black"}>{myPrediction === "up" ? "LONG" : "SHORT"}</p>
+            {viewerRole && (
+              <div className="mt-4 rounded-2xl border border-white/[0.06] bg-white/[0.03] p-3">
+                <p className="text-white/25 text-[10px] uppercase tracking-[0.2em] mb-1">Viewing As</p>
+                <p className="text-white/75 font-semibold">{viewerRole}</p>
               </div>
             )}
+            {displayedPrediction && (
+              <div className="mt-4 rounded-2xl border border-amber-500/15 bg-amber-500/[0.04] p-3">
+                <p className="text-white/25 text-[10px] uppercase tracking-[0.2em] mb-1">Your Call</p>
+                <p className={displayedPrediction === "up" ? "text-emerald-400 font-black" : "text-rose-400 font-black"}>{displayedPrediction === "up" ? "LONG" : "SHORT"}</p>
+              </div>
+            )}
+            <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="rounded-2xl border border-amber-500/15 bg-amber-500/[0.05] p-4 text-center">
+                <p className="text-white/20 text-[10px] uppercase tracking-[0.2em] mb-1">Base Price</p>
+                <p className="text-2xl font-mono font-black text-white/80">${basePrice.toLocaleString("en-US", { minimumFractionDigits: 2 })}</p>
+              </div>
+              <div className="rounded-2xl border border-amber-500/15 bg-amber-500/[0.05] p-4 text-center">
+                <p className="text-white/20 text-[10px] uppercase tracking-[0.2em] mb-1">Current Price</p>
+                <p className={`text-2xl font-mono font-black ${priceColor}`}>${currentPrice.toLocaleString("en-US", { minimumFractionDigits: 2 })}</p>
+                <p className={`text-[11px] font-mono mt-1 ${priceColor}`}>{diff >= 0 ? "+" : ""}{diff.toFixed(2)} ({percent}%)</p>
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -265,6 +349,13 @@ export default function GamePlay() {
                 {currentChainGameId ? (
                   <p className="text-white/15 text-[10px] mt-2 font-mono">Chain Game #{currentChainGameId}</p>
                 ) : null}
+              </div>
+            )}
+
+            {resultPredictionLabel && (
+              <div className="mt-4 rounded-2xl border border-amber-500/15 bg-amber-500/[0.04] p-4 text-center">
+                <p className="text-white/25 text-[10px] uppercase tracking-[0.2em] mb-1">Your Call</p>
+                <p className={resultPrediction === "up" ? "text-emerald-400 font-black text-xl" : "text-rose-400 font-black text-xl"}>{resultPredictionLabel}</p>
               </div>
             )}
 
@@ -300,7 +391,7 @@ export default function GamePlay() {
 
             <div className="flex gap-2 mt-4">
               <button onClick={() => nav("/arena")} className="flex-1 py-2.5 rounded-xl bg-amber-500/[0.05] border border-amber-500/15 hover:bg-amber-500/[0.08] transition text-xs text-white/60">Battle</button>
-              <button onClick={() => nav("/match")} className="flex-1 btn-primary !py-2.5 font-black !text-sm">Rematch</button>
+              <button onClick={handleShareToX} className="flex-1 btn-primary !py-2.5 font-black !text-sm">Share to 𝕏</button>
             </div>
           </div>
         </div>
