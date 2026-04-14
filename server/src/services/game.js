@@ -4,6 +4,8 @@ import priceService from "./price.js";
 import settlementService from "./settlement.js";
 import contractService from "./contract.js";
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 class GameService {
   constructor() { this.activeGames = {}; this.io = null; this.roomPayments = {}; }
   setIO(io) { this.io = io; }
@@ -25,7 +27,12 @@ class GameService {
 
   async confirmRoomPayment(gameId, chainGameId, wallet) {
     const targetChainGameId = chainGameId || gameId;
-    const paidOnChain = await contractService.isPlayerPaid(targetChainGameId, wallet);
+    let paidOnChain = false;
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      paidOnChain = await contractService.isPlayerPaid(targetChainGameId, wallet);
+      if (paidOnChain) break;
+      if (attempt < 4) await sleep(800);
+    }
     if (!paidOnChain) throw new Error("On-chain payment not confirmed");
     await query("UPDATE game_players SET paid=true, paid_at=NOW() WHERE game_id=$1 AND wallet_address=$2", [gameId, wallet]);
     const r = await query("SELECT wallet_address, paid FROM game_players WHERE game_id=$1", [gameId]);
