@@ -141,26 +141,58 @@ export function useContract() {
     };
   }, [signer, wallet]);
 
+  const getPredictionDeadline = useCallback(async (gameId) => {
+    if (!gameId || !ethers.isAddress(CONTRACT_ADDRESS)) return null;
+    const reader = signer
+      ? new ethers.Contract(CONTRACT_ADDRESS, ARENA_ABI, signer)
+      : null;
+    if (!reader) return null;
+    const deadline = await reader.predictionDeadline(gameId);
+    return Number(deadline);
+  }, [signer]);
+
   const submitPrediction = useCallback(async (gameId, prediction) => {
     if (!gameId) throw new Error("Missing game id");
-    if (shouldUseMockPayment) return true;
+    if (shouldUseMockPayment) return { signature: null, deadline: null };
 
     await ensureWalletReady();
 
-    const arena = new ethers.Contract(CONTRACT_ADDRESS, ARENA_ABI, signer);
     const predictionValue = prediction === "up" ? 1 : prediction === "down" ? 2 : 0;
     if (!predictionValue) throw new Error("Invalid prediction");
 
     setPredicting(true);
     try {
-      await (await arena.predict(gameId, predictionValue)).wait();
-      return true;
+      const deadline = await getPredictionDeadline(gameId);
+      if (!deadline) throw new Error("Prediction deadline unavailable");
+      const network = await signer.provider.getNetwork();
+      const domain = {
+        name: "BtcPredictArena",
+        version: "1",
+        chainId: Number(network.chainId),
+        verifyingContract: CONTRACT_ADDRESS,
+      };
+      const types = {
+        PredictionIntent: [
+          { name: "gameId", type: "uint256" },
+          { name: "player", type: "address" },
+          { name: "prediction", type: "uint8" },
+          { name: "deadline", type: "uint256" },
+        ],
+      };
+      const value = {
+        gameId,
+        player: wallet,
+        prediction: predictionValue,
+        deadline,
+      };
+      const signature = await signer.signTypedData(domain, types, value);
+      return { signature, deadline };
     } catch (err) {
       throw new Error(mapContractError(err));
     } finally {
       setPredicting(false);
     }
-  }, [ensureWalletReady, shouldUseMockPayment, signer]);
+  }, [ensureWalletReady, getPredictionDeadline, shouldUseMockPayment, signer, wallet]);
 
-  return { payForGame, claimReward, getPlayerState, submitPrediction, loading, claiming, predicting, mockPay, shouldUseMockPayment };
+  return { payForGame, claimReward, getPlayerState, getPredictionDeadline, submitPrediction, loading, claiming, predicting, mockPay, shouldUseMockPayment };
 }

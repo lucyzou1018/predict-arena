@@ -7,9 +7,11 @@ const ABI = [
   "function ownerJoinGame(uint256, address) external",
   "function ownerJoinRoom(string, address) external",
   "function startGame(uint256, uint256) external",
+  "function submitPredictionBySig(uint256, address, uint8, uint256, bytes) external",
   "function settleGame(uint256, uint256) external",
   "function cancelGame(uint256) external",
   "function allPlayersPaid(uint256) external view returns (bool)",
+  "function predictionDeadline(uint256) external view returns (uint256)",
   "function getPlayerPrediction(uint256, address) external view returns (uint8,bool,uint256,bool)",
   "function getGameInfo(uint256) external view returns (uint256,uint8,uint8,uint256,uint256,uint256,bool,string)",
   "event GameCreated(uint256 indexed gameId, uint8 maxPlayers, bool isRoom, string inviteCode, address creator)",
@@ -71,6 +73,12 @@ class ContractService {
     return Number(state);
   }
 
+  async getPredictionDeadline(gameId) {
+    if (!this.initialized) return null;
+    const deadline = await this.contract.predictionDeadline(gameId);
+    return Number(deadline);
+  }
+
   async getPlayerPrediction(gameId, wallet) {
     if (!this.initialized) return null;
     const [prediction, hasPaid, reward, claimed] = await this.contract.getPlayerPrediction(gameId, wallet);
@@ -82,7 +90,17 @@ class ContractService {
     };
   }
 
-  async startGame(id, price) { if (!this.initialized) return; await (await this.contract.startGame(id, price)).wait(); }
+  async startGame(id, price) {
+    if (!this.initialized) return null;
+    await (await this.contract.startGame(id, price)).wait();
+    const deadline = await this.contract.predictionDeadline(id);
+    return Number(deadline);
+  }
+  async submitPredictionBySig(id, player, prediction, deadline, signature) {
+    if (!this.initialized) return;
+    const value = prediction === "up" ? 1 : prediction === "down" ? 2 : Number(prediction);
+    await (await this.contract.submitPredictionBySig(id, player, value, deadline, signature)).wait();
+  }
   async settleGame(id, price) { if (!this.initialized) return; await (await this.contract.settleGame(id, price)).wait(); }
   async cancelGame(id) { if (!this.initialized) return; await (await this.contract.cancelGame(id)).wait(); }
 }

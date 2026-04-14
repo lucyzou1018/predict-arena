@@ -8,7 +8,7 @@ import WalletMenu from "../components/WalletMenu";
 const FAQS = [
   {
     q: "What is Predict Arena?",
-    a: "A real-time PvP prediction game on Base. Two or more players enter a round, each predicts whether BTC will go up (Long) or down (Short) in the next 30 seconds. Winners split the pool.",
+    a: "A real-time PvP prediction game on Base. Two or more players enter a round, each predicts whether BTC will go up (Long) or down (Short) during a 30-second prediction window. Winners split the pool.",
   },
   {
     q: "How much does it cost to play?",
@@ -16,7 +16,7 @@ const FAQS = [
   },
   {
     q: "How are winners decided?",
-    a: "After all players predict, the game locks the current BTC price. 30 seconds later, if BTC went up — Long players win. If BTC went down — Short players win. Settlement is fully automatic and on-chain.",
+    a: "After all players predict, the game locks the current BTC price. 30 seconds after predictions close, if BTC went up — Long players win. If BTC went down — Short players win. Settlement is fully automatic and on-chain.",
   },
   {
     q: "What wallet do I need?",
@@ -24,7 +24,7 @@ const FAQS = [
   },
   {
     q: "Is it safe? Where are my funds?",
-    a: "All game logic runs through a verified smart contract on Base. Your funds are held in the contract only during a round and automatically distributed to winners. No custodial risk.",
+    a: "All game logic runs through a verified smart contract on Base. Your funds are held in the contract only during a round, and winners can claim rewards directly to wallet. No custodial risk.",
   },
 ];
 
@@ -188,7 +188,7 @@ export default function Landing() {
                 step: "02",
                 icon: "📊",
                 title: "Pick Your Side",
-                desc: "BTC going up? Go Long. Going down? Go Short. You have 20 seconds to lock in your prediction.",
+                desc: "BTC going up? Go Long. Going down? Go Short. You have 30 seconds to lock in your prediction, with the final 5 seconds reserved for on-chain confirmation.",
                 color: "from-emerald-500/10 to-cyan-500/10",
                 border: "border-emerald-500/10",
               },
@@ -196,7 +196,7 @@ export default function Landing() {
                 step: "03",
                 icon: "🏆",
                 title: "Win & Collect",
-                desc: "30 seconds later, the price is checked. Correct prediction? USDC is sent to your wallet automatically.",
+                desc: "After the prediction window closes, settlement follows. Correct prediction? Claim your USDC reward from the result screen or history.",
                 color: "from-violet-500/10 to-purple-500/10",
                 border: "border-violet-500/10",
               },

@@ -51,8 +51,18 @@ class GameService {
       }
       return;
     }
-    await contractService.startGame(chainGameId, Math.round(basePrice * 100));
-    const game = { gameId, chainGameId, players, predictions: {}, basePrice, phase: "predicting", startedAt: Date.now() };
+    const chainPredictionDeadline = await contractService.startGame(chainGameId, Math.round(basePrice * 100));
+    const startedAt = Date.now();
+    const game = {
+      gameId,
+      chainGameId,
+      players,
+      predictions: {},
+      basePrice,
+      phase: "predicting",
+      startedAt,
+      predictionDeadline: chainPredictionDeadline || Math.floor((startedAt + config.game.predictTimeout - (config.game.predictSafeBuffer || 0)) / 1000),
+    };
     this.activeGames[gameId] = game;
     await query("UPDATE games SET state='active',base_price=$1,started_at=NOW() WHERE id=$2", [basePrice, gameId]);
     for (const p of players) await query("INSERT INTO game_players(game_id,wallet_address,paid)VALUES($1,$2,true)ON CONFLICT DO NOTHING", [gameId, p.wallet]);
@@ -64,7 +74,15 @@ class GameService {
       if (s) s.join(room);
     }
     console.log(`[Game] #${gameId} started base=$${basePrice} players=${players.length}`);
-    this.io?.to(room).emit("game:start", { gameId, chainGameId, basePrice, players: players.map(p => p.wallet), predictTimeout: config.game.predictTimeout });
+    this.io?.to(room).emit("game:start", {
+      gameId,
+      chainGameId,
+      basePrice,
+      players: players.map(p => p.wallet),
+      predictTimeout: config.game.predictTimeout,
+      predictSafeBuffer: config.game.predictSafeBuffer,
+      predictionDeadline: game.predictionDeadline,
+    });
 
     game.countdownInterval = setInterval(() => {
       const rem = Math.max(0, config.game.predictTimeout - (Date.now() - game.startedAt));
@@ -74,12 +92,19 @@ class GameService {
     game.predictTimer = setTimeout(() => this._endPredict(gameId), config.game.predictTimeout);
   }
 
-  submitPrediction(gameId, wallet, prediction) {
+  async submitPrediction(gameId, wallet, prediction, signature, deadline) {
     const g = this.activeGames[gameId]; if (!g) return { error: "Game not found" };
     if (g.phase !== "predicting") return { error: "Prediction phase ended" };
     if (!g.players.find(p => p.wallet === wallet)) return { error: "Not in this game" };
     if (g.predictions[wallet]) return { error: "Already predicted" };
     if (prediction !== "up" && prediction !== "down") return { error: "Invalid prediction" };
+    if (!signature) return { error: "Missing prediction signature" };
+    const chainDeadline = await contractService.getPredictionDeadline(g.chainGameId);
+    if (!chainDeadline) return { error: "Prediction deadline unavailable" };
+    g.predictionDeadline = chainDeadline;
+    if (Number(deadline) !== Number(chainDeadline)) return { error: "Prediction deadline is out of sync. Refresh and try again." };
+    if (Math.floor(Date.now() / 1000) > Number(chainDeadline)) return { error: "Prediction signature expired" };
+    await contractService.submitPredictionBySig(g.chainGameId, wallet, prediction, chainDeadline, signature);
     g.predictions[wallet] = prediction;
     this.io?.to(`game:${gameId}`).emit("game:prediction", { wallet, predicted: true, totalPredicted: Object.keys(g.predictions).length, totalPlayers: g.players.length });
     if (Object.keys(g.predictions).length === g.players.length) { clearTimeout(g.predictTimer); clearInterval(g.countdownInterval); this._endPredict(gameId); }

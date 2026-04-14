@@ -331,7 +331,7 @@ export default function Home(){
         setJoinPhase("waiting");
       }),
       on("game:start",d=>{
-        updateGame({gameId:d.gameId,chainGameId:d.chainGameId||d.gameId,mode:"room",teamSize:d.players.length,players:d.players,phase:"predicting",basePrice:d.basePrice,countdown:Math.round((d.predictTimeout||20000)/1000)});
+        updateGame({gameId:d.gameId,chainGameId:d.chainGameId||d.gameId,mode:"room",teamSize:d.players.length,players:d.players,phase:"predicting",basePrice:d.basePrice,countdown:Math.round((d.predictTimeout||30000)/1000),predictSafeBuffer:Math.round((d.predictSafeBuffer||5000)/1000),predictionDeadline:d.predictionDeadline||null});
         setPaymentStartedAt(null);
         setTimeout(()=>nav("/game"),500);
       }),
@@ -807,8 +807,8 @@ export default function Home(){
           </div>
           <div className="grid grid-cols-2 gap-2 text-xs text-white/45">
             <div className="bg-white/[0.02] rounded-lg px-3 py-2.5 flex items-center gap-2"><span>💰</span>{ENTRY_FEE} USDC entry</div>
-            <div className="bg-white/[0.02] rounded-lg px-3 py-2.5 flex items-center gap-2"><span>⏱️</span>20s to predict</div>
-            <div className="bg-white/[0.02] rounded-lg px-3 py-2.5 flex items-center gap-2"><span>📊</span>10s settlement</div>
+            <div className="bg-white/[0.02] rounded-lg px-3 py-2.5 flex items-center gap-2"><span>⏱️</span>30s to predict</div>
+            <div className="bg-white/[0.02] rounded-lg px-3 py-2.5 flex items-center gap-2"><span>📊</span>30s settlement</div>
             <div className="bg-white/[0.02] rounded-lg px-3 py-2.5 flex items-center gap-2"><span>🏆</span>Winner takes all</div>
           </div>
         </div>

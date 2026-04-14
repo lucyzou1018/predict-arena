@@ -5,9 +5,9 @@ export default function HowToPlay(){
     {icon:"🔗",title:"Connect Wallet",desc:"Connect your wallet or try demo mode with virtual balance. No real funds needed to practice."},
     {icon:"⚔️",title:"Choose Your Battle",desc:"Pick Random Match for instant PvP, or Create Arena to challenge friends with an invite code."},
     {icon:"💰",title:"Pay Entry Fee",desc:"Each player pays 1 USDC to enter. The platform takes a 5% fee (0.05 USDC). The rest goes to the prize pool."},
-    {icon:"📈",title:"Predict BTC Price",desc:"You have 20 seconds to predict: will BTC go UP or DOWN? Watch the live price feed and make your call."},
-    {icon:"⏱️",title:"Wait for Settlement",desc:"After predictions lock, a 10-second countdown begins. The final BTC price determines the winner."},
-    {icon:"🏆",title:"Collect Rewards",desc:"Winners split the losers' stakes! If everyone predicts the same direction, all players get their entry minus fee back."},
+    {icon:"📈",title:"Predict BTC Price",desc:"You have 30 seconds to predict: will BTC go UP or DOWN? The final 5 seconds are reserved for on-chain confirmation, so lock in your call early."},
+    {icon:"⏱️",title:"Wait for Settlement",desc:"After predictions lock, a 30-second settlement countdown begins. The final BTC price determines the winner."},
+    {icon:"🏆",title:"Collect Rewards",desc:"Winners split the losers' stakes! If everyone predicts the same direction, all players get their entry minus fee back, then claim rewards to wallet."},
   ];
   const examples=[
     {title:"2 Players — Split Decision",players:"Player A: LONG ✅ | Player B: SHORT ❌",result:"A wins 1.90 USDC, B loses entry",emoji:"💰"},

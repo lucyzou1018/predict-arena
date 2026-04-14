@@ -43,7 +43,7 @@ export default function CreateRoom(){
     on("room:expired",()=>{setRoomExpiresAt(null);setRoomCountdown(null);setPhase("expired");}),
     on("room:payment:update",d=>{setPaymentProgress({paidCount:d.paidCount,total:d.total});}),
     on("room:payment:failed",d=>{if(paid){refund(ENTRY_FEE);setPaid(false);}setPaymentStartedAt(null);setRoomFullInfo(null);setErr(d?.reason||"Payment timeout — team disbanded");setPhase("select");}),
-    on("game:start",d=>{updateGame({gameId:d.gameId,chainGameId:d.chainGameId||d.gameId,mode:"room",teamSize:d.players.length,players:d.players,phase:"predicting",basePrice:d.basePrice,countdown:Math.round((d.predictTimeout||20000)/1000)});setPaymentStartedAt(null);setTimeout(()=>nav("/game"),500);}),
+    on("game:start",d=>{updateGame({gameId:d.gameId,chainGameId:d.chainGameId||d.gameId,mode:"room",teamSize:d.players.length,players:d.players,phase:"predicting",basePrice:d.basePrice,countdown:Math.round((d.predictTimeout||30000)/1000),predictSafeBuffer:Math.round((d.predictSafeBuffer||5000)/1000),predictionDeadline:d.predictionDeadline||null});setPaymentStartedAt(null);setTimeout(()=>nav("/game"),500);}),
   ];return()=>u.forEach(f=>f());},[on,sz,code,updateGame,nav,paid,refund,wallet]);
 
   const create=()=>{setErr(null);emit("room:create",{teamSize:sz});};

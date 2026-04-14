@@ -183,11 +183,15 @@ export function initSocket(httpServer) {
     });
 
     // Game
-    socket.on("game:predict", d => {
+    socket.on("game:predict", async d => {
       if (!wallet) return socket.emit("game:error", { message: "Connect wallet first" });
-      const r = gameService.submitPrediction(d.gameId, wallet, d.prediction);
-      if (r.error) return socket.emit("game:error", { message: r.error });
-      socket.emit("game:predicted", { prediction: d.prediction });
+      try {
+        const r = await gameService.submitPrediction(d.gameId, wallet, d.prediction, d.signature, d.deadline);
+        if (r.error) return socket.emit("game:error", { message: r.error });
+        socket.emit("game:predicted", { prediction: d.prediction });
+      } catch (error) {
+        socket.emit("game:error", { message: error?.message || "Prediction submission failed" });
+      }
     });
 
     socket.on("disconnect", () => {

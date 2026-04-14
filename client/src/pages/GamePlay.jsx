@@ -5,7 +5,7 @@ import { useGame } from "../context/GameContext";
 import { useContract } from "../hooks/useContract";
 import { useWallet } from "../context/WalletContext";
 import { PredictButtons, CountdownRing, SettlementReveal } from "../components";
-import { PREDICT_TIMEOUT, SETTLE_DELAY } from "../config/constants";
+import { PREDICT_TIMEOUT, PREDICT_SAFE_BUFFER, SETTLE_DELAY } from "../config/constants";
 
 export default function GamePlay() {
   const nav = useNavigate();
@@ -27,6 +27,8 @@ export default function GamePlay() {
   const [chainGameId, setChainGameId] = useState(gameState.chainGameId || gameState.gameId);
   const [totalPlayers, setTotalPlayers] = useState(gameState.players?.length || 0);
   const [claimState, setClaimState] = useState({ claimed: false, error: null, success: null });
+  const [predictSafeBuffer, setPredictSafeBuffer] = useState(PREDICT_SAFE_BUFFER);
+  const [predictionDeadline, setPredictionDeadline] = useState(gameState.predictionDeadline || null);
 
   useEffect(() => {
     if (gameState.phase === "predicting" && gameState.basePrice) {
@@ -37,6 +39,8 @@ export default function GamePlay() {
       setTotalPlayers(gameState.players?.length || 0);
       setPhase("predicting");
       setCountdown(gameState.countdown || PREDICT_TIMEOUT);
+      setPredictSafeBuffer(gameState.predictSafeBuffer || PREDICT_SAFE_BUFFER);
+      setPredictionDeadline(gameState.predictionDeadline || null);
     }
     if (gameState.phase === "result" && gameState.result) {
       setPhase("result");
@@ -78,7 +82,9 @@ export default function GamePlay() {
         setCurrentPrice(data.basePrice);
         setTotalPlayers(data.players?.length || 0);
         setPhase("predicting");
-        setCountdown(Math.round((data.predictTimeout || 20000) / 1000));
+        setCountdown(Math.round((data.predictTimeout || 30000) / 1000));
+        setPredictSafeBuffer(Math.round((data.predictSafeBuffer || PREDICT_SAFE_BUFFER * 1000) / 1000));
+        setPredictionDeadline(data.predictionDeadline || null);
         setMyPrediction(null);
         setPredictedCount(0);
         setResult(null);
@@ -124,10 +130,12 @@ export default function GamePlay() {
   const predict = async (prediction) => {
     try {
       setPredictionError(null);
+      if (countdown <= predictSafeBuffer) {
+        throw new Error(`Final ${predictSafeBuffer}s are reserved for on-chain confirmation. Please choose earlier next round.`);
+      }
       const targetChainGameId = chainGameId || gameState.chainGameId || gameId || gameState.gameId;
-      await submitPrediction(targetChainGameId, prediction);
-      emit("game:predict", { gameId: gameId || gameState.gameId, prediction });
-      setMyPrediction(prediction);
+      const signed = await submitPrediction(targetChainGameId, prediction);
+      emit("game:predict", { gameId: gameId || gameState.gameId, prediction, signature: signed.signature, deadline: signed.deadline });
     } catch (error) {
       setPredictionError(error?.message || "Prediction failed. Please try again.");
     }
@@ -161,6 +169,7 @@ export default function GamePlay() {
     () => chainGameId || result?.chainGameId || gameState.chainGameId || gameId,
     [chainGameId, result, gameState.chainGameId, gameId],
   );
+  const predictionBufferActive = phase === "predicting" && !myPrediction && countdown <= predictSafeBuffer;
 
   return (
     <div className="page-container flex flex-col items-center">
@@ -199,10 +208,11 @@ export default function GamePlay() {
                 <p className="text-white/25 text-xs">Players ready</p>
                 <p className="text-white/40 text-xs font-mono">{predictedCount}/{totalPlayers}</p>
               </div>
-              <PredictButtons onPredict={predict} myPrediction={myPrediction} disabled={predicting} />
+              <PredictButtons onPredict={predict} myPrediction={myPrediction} disabled={predicting || predictionBufferActive} />
             </div>
+            {predictionBufferActive && <div className="rounded-2xl border border-amber-500/15 bg-amber-500/10 text-amber-200 text-xs px-4 py-3 mb-4">Final {predictSafeBuffer}s are reserved for on-chain confirmation. Predictions are locked for this round.</div>}
             {predictionError && <div className="rounded-2xl border border-rose-500/15 bg-rose-500/10 text-rose-300 text-xs px-4 py-3 mb-4">{predictionError}</div>}
-            {predicting && <div className="rounded-2xl border border-cyan-500/15 bg-cyan-500/10 text-cyan-200 text-xs px-4 py-3 mb-4">Waiting for wallet confirmation to lock your prediction on-chain...</div>}
+            {predicting && <div className="rounded-2xl border border-cyan-500/15 bg-cyan-500/10 text-cyan-200 text-xs px-4 py-3 mb-4">Waiting for wallet signature to lock your prediction...</div>}
             {myPrediction && (
               <div className={`rounded-2xl border p-4 text-center ${myPrediction === "up" ? "bg-emerald-500/[0.06] border-emerald-500/20" : "bg-rose-500/[0.06] border-rose-500/20"}`}>
                 <p className="text-white/25 text-[10px] uppercase tracking-[0.2em] mb-1">Your Position</p>
