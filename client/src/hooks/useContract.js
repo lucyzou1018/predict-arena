@@ -32,8 +32,14 @@ function mapContractError(err) {
   if (reason.includes("allowance") || reason.includes("exceeds allowance")) {
     return "Token approval has not finished syncing yet. Please wait a moment and try again.";
   }
+  if (reason.includes("game not found")) {
+    return "Payment configuration is out of date. Refresh the page and try again.";
+  }
   if (reason.includes("could not decode result data") || reason.includes("bad data")) {
     return "Payment configuration is out of date. Refresh the page and try again.";
+  }
+  if (reason.includes("payment not open")) {
+    return "This room is not ready for payment yet. Refresh the page and try again.";
   }
   if (reason.includes("network") || reason.includes("chain")) {
     return "Wallet network is incorrect. Switch to Base Sepolia and try again.";
@@ -92,6 +98,17 @@ export function useContract() {
     try {
       let amount = ethers.parseUnits(ENTRY_FEE.toString(), 6);
       let resolvedUsdc = USDC_ADDRESS;
+      const gameInfo = await arena.getGameInfo(gameId);
+      const onchainGameId = Number(gameInfo?.[0] ?? 0);
+      const onchainState = Number(gameInfo?.[2] ?? -1);
+
+      if (onchainGameId !== Number(gameId)) {
+        throw new Error("Payment configuration is out of date. Refresh the page and try again.");
+      }
+      if (onchainState !== GAME_STATE.PAYMENT) {
+        throw new Error("This room is not ready for payment yet. Refresh the page and try again.");
+      }
+
       try {
         const [contractUsdc, snapshotAmount] = await Promise.all([
           arena.usdc(),

@@ -52,6 +52,7 @@ export function initSocket(httpServer) {
       wallet = d.wallet?.toLowerCase?.() || null;
       socket.data.wallet = wallet;
       console.log("[Socket] Auth:", wallet);
+      roomService.rebindPlayerSocket(wallet, socket.id);
       const resumedGame = gameService.rebindPlayerSocket(wallet, socket);
       if (resumedGame) socket.emit("game:resume", resumedGame);
     });

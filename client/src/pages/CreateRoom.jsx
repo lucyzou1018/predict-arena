@@ -19,6 +19,34 @@ export default function CreateRoom(){
   const[paymentStartedAt,setPaymentStartedAt]=useState(null);
   const[paymentCountdown,setPaymentCountdown]=useState(null);
 
+  const openPayment=(d={})=>{
+    const total=Number(d?.total||d?.players?.length||0);
+    const players=Array.isArray(d?.players)?d.players:[];
+    if(!total)return;
+    setRoomFullInfo(prev=>({
+      gameId:d?.gameId||prev?.gameId||null,
+      chainGameId:d?.chainGameId||prev?.chainGameId||null,
+      inviteCode:d?.inviteCode||prev?.inviteCode||code,
+      players:players.length?players:(prev?.players||[]),
+      paymentTimeout:d?.paymentTimeout||prev?.paymentTimeout||PAYMENT_TIMEOUT*1000,
+    }));
+    setPaymentProgress(prev=>({paidCount:prev?.paidCount||0,total}));
+    setPaymentStartedAt(prev=>prev||Date.now());
+    setRoomExpiresAt(null);
+    setRoomCountdown(null);
+    if(players.length)setRoom({current:total,players});
+    setPhase(current=>current==="waiting"||current==="creating"?"payment":current);
+  };
+
+  const handlePaymentFailure=useCallback((reason="Payment timeout — team disbanded")=>{
+    if(paid){refund(ENTRY_FEE);setPaid(false);}
+    setPaymentStartedAt(null);
+    setRoomFullInfo(null);
+    setHint(null);
+    setErr(reason);
+    setPhase("select");
+  },[paid,refund]);
+
   // Room expiry countdown
   useEffect(()=>{
     if(!roomExpiresAt||phase!=="waiting"){setRoomCountdown(null);return;}
@@ -35,19 +63,24 @@ export default function CreateRoom(){
 
   useEffect(()=>{const u=[
     on("room:created",d=>{cancelPending.current=false;phaseBeforeCancel.current="select";setHint(null);setCode(d.inviteCode);setRoomExpiresAt(d.expiresAt);setRoom({current:1,players:[wallet]});setPhase("waiting");}),
-    on("room:update",d=>{setRoom({current:d.current,players:d.players});if(d.expiresAt)setRoomExpiresAt(d.expiresAt);}),
-    on("room:full",d=>{
-      setRoomFullInfo(d);setPaymentProgress({paidCount:0,total:d.players.length});
-      setPaymentStartedAt(Date.now());setRoomExpiresAt(null);setRoomCountdown(null);
-      setPhase("payment");
-    }),
+    on("room:update",d=>{setRoom({current:d.current,players:d.players});if(d.expiresAt)setRoomExpiresAt(d.expiresAt);if(d.status==="full"||(d.total&&d.current>=d.total))openPayment(d);}),
+    on("room:full",d=>{openPayment(d);}),
     on("room:error",d=>{if(cancelPending.current){cancelPending.current=false;setPhase(phaseBeforeCancel.current==="paid_waiting"?"paid_waiting":"waiting");}setHint(null);setErr(d.message);}),
     on("room:dissolved",d=>{const selfCancelled=cancelPending.current;cancelPending.current=false;phaseBeforeCancel.current="select";setHint(null);if(paid){refund(ENTRY_FEE);setPaid(false);}setErr(selfCancelled?null:(d?.reason||null));setCode("");setRoom({current:0,players:[]});setPhase("select");setRoomExpiresAt(null);setPaymentStartedAt(null);}),
     on("room:expired",()=>{setRoomExpiresAt(null);setRoomCountdown(null);setPhase("expired");}),
     on("room:payment:update",d=>{setPaymentProgress({paidCount:d.paidCount,total:d.total});}),
-    on("room:payment:failed",d=>{if(paid){refund(ENTRY_FEE);setPaid(false);}setPaymentStartedAt(null);setRoomFullInfo(null);setErr(d?.reason||"Payment timeout — team disbanded");setPhase("select");}),
+    on("room:payment:failed",d=>{handlePaymentFailure(d?.reason||"Payment timeout — team disbanded");}),
     on("game:start",d=>{updateGame({gameId:d.gameId,chainGameId:d.chainGameId||d.gameId,mode:"room",teamSize:d.players.length,players:d.players,phase:"predicting",basePrice:d.basePrice,countdown:Math.round((d.predictTimeout||30000)/1000),predictSafeBuffer:Math.round((d.predictSafeBuffer||5000)/1000),predictionDeadline:d.predictionDeadline||null});setPaymentStartedAt(null);setTimeout(()=>nav("/game"),500);}),
-  ];return()=>u.forEach(f=>f());},[on,sz,code,updateGame,nav,paid,refund,wallet]);
+  ];return()=>u.forEach(f=>f());},[on,sz,code,updateGame,nav,handlePaymentFailure,wallet]);
+
+  useEffect(()=>{
+    if(paymentCountdown!==0)return;
+    if(phase!=="payment"&&phase!=="paid_waiting")return;
+    const timer=setTimeout(()=>{
+      if(phase==="payment"||phase==="paid_waiting")handlePaymentFailure("Payment timeout — team disbanded");
+    },1200);
+    return()=>clearTimeout(timer);
+  },[paymentCountdown,phase,handlePaymentFailure]);
 
   const create=()=>{cancelPending.current=false;phaseBeforeCancel.current="select";setErr(null);setHint(null);emit("room:create",{teamSize:sz});};
   const payRoom=useCallback(async()=>{try{await mockPay();setPaid(true);if(roomFullInfo){emit("room:payment:confirm",{gameId:roomFullInfo.gameId,inviteCode:code});setPhase("paid_waiting");}}catch{setErr("Payment failed");}},[mockPay,roomFullInfo,code,emit]);

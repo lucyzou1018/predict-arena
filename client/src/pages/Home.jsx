@@ -142,6 +142,7 @@ export default function Home(){
   // Refs to track latest state values inside socket handlers (avoids stale closures & dep churn)
   const createPhaseRef=useRef(createPhase); createPhaseRef.current=createPhase;
   const joinPhaseRef=useRef(joinPhase); joinPhaseRef.current=joinPhase;
+  const matchPhaseRef=useRef(matchPhase); matchPhaseRef.current=matchPhase;
   const createPaidRef=useRef(createPaid); createPaidRef.current=createPaid;
   const joinPaidRef=useRef(joinPaid); joinPaidRef.current=joinPaid;
   const joinCodeRef=useRef(joinCode); joinCodeRef.current=joinCode;
@@ -150,6 +151,61 @@ export default function Home(){
   const roomCodeRef=useRef(roomCode); roomCodeRef.current=roomCode;
   const createCancelPendingRef=useRef(false);
   const createPhaseBeforeCancelRef=useRef("select");
+
+  const enterRoomPayment=useCallback((d={})=>{
+    const total=Number(d?.total||d?.players?.length||0);
+    const players=Array.isArray(d?.players)?d.players:[];
+    if(!total)return;
+    setRoomFullInfo(prev=>({
+      gameId:d?.gameId||prev?.gameId||null,
+      chainGameId:d?.chainGameId||prev?.chainGameId||null,
+      inviteCode:d?.inviteCode||prev?.inviteCode||roomCodeRef.current||joinCodeRef.current||"",
+      players:players.length?players:(prev?.players||[]),
+      paymentTimeout:d?.paymentTimeout||prev?.paymentTimeout||PAYMENT_TIMEOUT*1000,
+    }));
+    setPaymentProgress(prev=>({paidCount:prev?.paidCount||0,total}));
+    setPaymentErr(null);
+    setPaymentStartedAt(prev=>prev||Date.now());
+    setRoomExpiresAt(null);setRoomCountdown(null);
+    setJoinExpiresAt(null);setJoinCountdown(null);
+    if(players.length){
+      if(createPhaseRef.current==="waiting"||createPhaseRef.current==="creating")setRoom({current:total,total:d?.total||total,players});
+      if(joinPhaseRef.current==="waiting"||joinPhaseRef.current==="joining")setJoinRoom({current:total,total:d?.total||total,players});
+    }
+    if(createPhaseRef.current==="waiting"||createPhaseRef.current==="creating")setCreatePhase("payment");
+    if(joinPhaseRef.current==="waiting"||joinPhaseRef.current==="joining")setJoinPhase("payment");
+  },[]);
+
+  const handleRoomPaymentFailure=useCallback((reason="Payment timeout — team disbanded")=>{
+    const wasCreateFlow =
+      createPhaseRef.current==="payment"||
+      createPhaseRef.current==="paid_waiting"||
+      createPhaseRef.current==="waiting"||
+      !!roomCodeRef.current;
+    const wasJoinFlow =
+      joinPhaseRef.current==="payment"||
+      joinPhaseRef.current==="paid_waiting"||
+      joinPhaseRef.current==="waiting"||
+      !!joinCodeRef.current;
+    if(createPaidRef.current){refund(ENTRY_FEE);setCreatePaid(false);}
+    if(joinPaidRef.current){refund(ENTRY_FEE);setJoinPaid(false);}
+    setPaymentStartedAt(null);
+    setRoomFullInfo(null);
+    setPaymentErr(null);
+    setCreateHint(null);
+    setCreatePhase("select");
+    setJoinPhase("select");
+    if(matchPhaseRef.current==="payment"||matchPhaseRef.current==="paid_waiting"){
+      setMatchPhase("select");
+      setPending(null);
+    }
+    setRoomCode("");
+    setRoom({current:0,total:0,players:[]});
+    setOpenRoom(null);
+    setCreateErr(wasCreateFlow?reason:null);
+    setJoinErr(wasJoinFlow?reason:null);
+    reloadHistory(walletRef.current);
+  },[refund,reloadHistory]);
 
   const reloadHistory=useCallback(async(targetWallet=walletRef.current)=>{
     if(!targetWallet)return;
@@ -323,16 +379,10 @@ export default function Home(){
           setJoinRoom({current:d.current,total:d.total||szRef.current,players:d.players});
           if(d.expiresAt)setJoinExpiresAt(d.expiresAt);
         }
+        if(d.status==="full"||(d.total&&d.current>=d.total))enterRoomPayment(d);
       }),
       on("room:full",d=>{
-        setRoomFullInfo(d);
-        setPaymentProgress({paidCount:0,total:d.players.length});
-        setPaymentErr(null);
-        setPaymentStartedAt(Date.now());
-        setRoomExpiresAt(null);setRoomCountdown(null);
-        setJoinExpiresAt(null);setJoinCountdown(null);
-        if(createPhaseRef.current==="waiting"||createPhaseRef.current==="creating") setTimeout(()=>setCreatePhase("payment"),700);
-        if(joinPhaseRef.current==="waiting"||joinPhaseRef.current==="joining") setTimeout(()=>setJoinPhase("payment"),700);
+        enterRoomPayment(d);
       }),
       on("room:error",d=>{
         if(createTimeoutRef.current){clearTimeout(createTimeoutRef.current);createTimeoutRef.current=null;}
@@ -394,30 +444,10 @@ export default function Home(){
       }),
       on("room:payment:update",d=>{setPaymentProgress({paidCount:d.paidCount,total:d.total});}),
       on("room:payment:failed",d=>{
-        const wasCreateFlow =
-          createPhaseRef.current==="payment"||
-          createPhaseRef.current==="paid_waiting"||
-          createPhaseRef.current==="waiting"||
-          !!roomCodeRef.current;
-        const wasJoinFlow =
-          joinPhaseRef.current==="payment"||
-          joinPhaseRef.current==="paid_waiting"||
-          joinPhaseRef.current==="waiting"||
-          !!joinCodeRef.current;
-        if(createPaidRef.current){refund(ENTRY_FEE);setCreatePaid(false);}
-        if(joinPaidRef.current){refund(ENTRY_FEE);setJoinPaid(false);}
         if(createTimeoutRef.current){clearTimeout(createTimeoutRef.current);createTimeoutRef.current=null;}
         createCancelPendingRef.current=false;
         createPhaseBeforeCancelRef.current="select";
-        setPaymentStartedAt(null);setRoomFullInfo(null);
-        setPaymentErr(null);
-        setCreatePhase("select");setJoinPhase("select");setMatchPhase("select");
-        setRoomCode("");setRoom({current:0,total:0,players:[]});setOpenRoom(null);
-        setCreateHint(null);
-        const reason=d?.reason||"Payment timeout — team disbanded";
-        setCreateErr(wasCreateFlow?reason:null);
-        setJoinErr(wasJoinFlow?reason:null);
-        refreshHistory();
+        handleRoomPaymentFailure(d?.reason||"Payment timeout — team disbanded");
       }),
       on("room:joined",d=>{
         if(d.error){setJoinErr(d.error);if(joinPaidRef.current){refund(ENTRY_FEE);setJoinPaid(false);}setJoinPhase("select");return;}
@@ -432,7 +462,7 @@ export default function Home(){
       }),
     ];
     return()=>u.forEach(f=>f());
-  },[on,updateGame,nav,refund]);
+  },[on,updateGame,nav,handleRoomPaymentFailure]);
 
   // Check if any mode is currently active (not in idle "select" state)
   const isCreateBusy=createPhase!=="select";
@@ -510,6 +540,29 @@ export default function Home(){
     else{setMatchPhase("select");setPending(null);}
     setPaymentErr(null);
   };
+
+  useEffect(()=>{
+    if(paymentCountdown!==0)return;
+    const stillInPayment =
+      createPhaseRef.current==="payment"||
+      createPhaseRef.current==="paid_waiting"||
+      joinPhaseRef.current==="payment"||
+      joinPhaseRef.current==="paid_waiting"||
+      matchPhaseRef.current==="payment"||
+      matchPhaseRef.current==="paid_waiting";
+    if(!stillInPayment)return;
+    const timer=setTimeout(()=>{
+      const paymentStillOpen =
+        createPhaseRef.current==="payment"||
+        createPhaseRef.current==="paid_waiting"||
+        joinPhaseRef.current==="payment"||
+        joinPhaseRef.current==="paid_waiting"||
+        matchPhaseRef.current==="payment"||
+        matchPhaseRef.current==="paid_waiting";
+      if(paymentStillOpen)handleRoomPaymentFailure("Payment timeout — team disbanded");
+    },1200);
+    return()=>clearTimeout(timer);
+  },[paymentCountdown,handleRoomPaymentFailure]);
 
   useEffect(()=>{
     if(!pendingAction) return;

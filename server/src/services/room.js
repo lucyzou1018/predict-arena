@@ -36,6 +36,24 @@ class RoomService {
     return !!this.getRoomByWallet(wallet);
   }
 
+  rebindPlayerSocket(wallet, socketId) {
+    if (!wallet || !socketId) return null;
+    const located = this.getRoomByWallet(wallet);
+    if (!located) return null;
+    located.player.socketId = socketId;
+    const payment = gameService.getRoomPayment(located.room.gameId);
+    if (payment?.players?.length) {
+      const paymentPlayer = payment.players.find((player) => player.wallet === wallet);
+      if (paymentPlayer) paymentPlayer.socketId = socketId;
+    }
+    return {
+      inviteCode: located.inviteCode,
+      gameId: located.room.gameId,
+      chainGameId: located.room.chainGameId,
+      phase: payment ? "payment" : "waiting",
+    };
+  }
+
   async createRoom(maxPlayers, wallet, socketId) {
     for (const c in this.rooms) { if (this.rooms[c].players.find(p => p.wallet === wallet)) return { error: "Already in a room" }; }
     const code = generateInviteCode();
@@ -282,11 +300,9 @@ class RoomService {
       const w = r.players[i].wallet;
       const payment = gameService.getRoomPayment(r.gameId);
       if (payment) {
-        r.players.splice(i, 1);
-        const reason = w === r.owner ? "Host disconnected during payment" : "A player disconnected during payment";
-        void this._abortPaymentRoom(c, reason).catch((error) => {
-          console.error("[Room] payment abort on disconnect failed", { inviteCode: c, error: error?.message || error });
-        });
+        r.players[i].socketId = null;
+        const paymentPlayer = payment.players.find((player) => player.wallet === w);
+        if (paymentPlayer) paymentPlayer.socketId = null;
         return;
       }
       const reason = w === r.owner ? "Host disconnected" : "A player disconnected";
@@ -309,8 +325,21 @@ class RoomService {
 
   _broadcast(code) {
     const r = this.rooms[code]; if (!r) return;
+    const isFull = r.players.length >= r.maxPlayers;
+    const payload = {
+      inviteCode: code,
+      gameId: r.gameId,
+      chainGameId: r.chainGameId,
+      current: r.players.length,
+      total: r.maxPlayers,
+      players: r.players.map(pl => pl.wallet),
+      owner: r.owner,
+      expiresAt: isFull ? null : r.expiresAt,
+      status: isFull ? "full" : "waiting",
+      paymentTimeout: config.game.paymentTimeout,
+    };
     for (const p of r.players) {
-      if (p?.socketId) this.io?.to(p.socketId).emit("room:update", { inviteCode: code, current: r.players.length, total: r.maxPlayers, players: r.players.map(pl => pl.wallet), owner: r.owner, expiresAt: r.expiresAt });
+      if (p?.socketId) this.io?.to(p.socketId).emit("room:update", payload);
     }
   }
 

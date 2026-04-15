@@ -16,6 +16,33 @@ export default function JoinRoom(){
   const[paymentStartedAt,setPaymentStartedAt]=useState(null);
   const[paymentCountdown,setPaymentCountdown]=useState(null);
 
+  const openPayment=(d={})=>{
+    const total=Number(d?.total||d?.players?.length||0);
+    const players=Array.isArray(d?.players)?d.players:[];
+    if(!total)return;
+    setRoomFullInfo(prev=>({
+      gameId:d?.gameId||prev?.gameId||null,
+      chainGameId:d?.chainGameId||prev?.chainGameId||null,
+      inviteCode:d?.inviteCode||prev?.inviteCode||code,
+      players:players.length?players:(prev?.players||[]),
+      paymentTimeout:d?.paymentTimeout||prev?.paymentTimeout||PAYMENT_TIMEOUT*1000,
+    }));
+    setPaymentProgress(prev=>({paidCount:prev?.paidCount||0,total}));
+    setPaymentStartedAt(prev=>prev||Date.now());
+    setRoomExpiresAt(null);
+    setRoomCountdown(null);
+    if(players.length)setRoom({current:total,total:d?.total||total,players});
+    setPhase(current=>current==="waiting"||current==="joining"?"payment":current);
+  };
+
+  const handlePaymentFailure=useCallback((reason="Payment timeout — team disbanded")=>{
+    if(paid){refund(ENTRY_FEE);setPaid(false);}
+    setPaymentStartedAt(null);
+    setRoomFullInfo(null);
+    setErr(reason);
+    setPhase("input");
+  },[paid,refund]);
+
   // Room expiry countdown
   useEffect(()=>{
     if(!roomExpiresAt||phase!=="waiting"){setRoomCountdown(null);return;}
@@ -42,19 +69,25 @@ export default function JoinRoom(){
     on("room:update",d=>{
       setRoom({current:d.current,total:d.total,players:d.players});
       if(d.expiresAt)setRoomExpiresAt(d.expiresAt);
+      if(d.status==="full"||(d.total&&d.current>=d.total))openPayment(d);
     }),
-    on("room:full",d=>{
-      setRoomFullInfo(d);setPaymentProgress({paidCount:0,total:d.players.length});
-      setPaymentStartedAt(Date.now());setRoomExpiresAt(null);setRoomCountdown(null);
-      setPhase("payment");
-    }),
+    on("room:full",d=>{openPayment(d);}),
     on("room:error",d=>{setErr(d.message);if(paid){refund(ENTRY_FEE);setPaid(false);}setPhase("input");}),
     on("room:dissolved",d=>{if(paid){refund(ENTRY_FEE);setPaid(false);}setErr(d.reason);setPhase("input");setRoomExpiresAt(null);setPaymentStartedAt(null);}),
     on("room:expired",()=>{setRoomExpiresAt(null);setRoomCountdown(null);setErr("Room expired — team not filled in time");setPhase("input");}),
     on("room:payment:update",d=>{setPaymentProgress({paidCount:d.paidCount,total:d.total});}),
-    on("room:payment:failed",d=>{if(paid){refund(ENTRY_FEE);setPaid(false);}setPaymentStartedAt(null);setRoomFullInfo(null);setErr(d?.reason||"Payment timeout — team disbanded");setPhase("input");}),
+    on("room:payment:failed",d=>{handlePaymentFailure(d?.reason||"Payment timeout — team disbanded");}),
     on("game:start",d=>{updateGame({gameId:d.gameId,chainGameId:d.chainGameId||d.gameId,mode:"room",teamSize:d.players.length,players:d.players,phase:"predicting",basePrice:d.basePrice,countdown:Math.round((d.predictTimeout||30000)/1000),predictSafeBuffer:Math.round((d.predictSafeBuffer||5000)/1000),predictionDeadline:d.predictionDeadline||null});setPaymentStartedAt(null);setTimeout(()=>nav("/game"),500);}),
-  ];return()=>u.forEach(f=>f());},[on,code,updateGame,nav,paid,refund]);
+  ];return()=>u.forEach(f=>f());},[on,code,updateGame,nav,handlePaymentFailure]);
+
+  useEffect(()=>{
+    if(paymentCountdown!==0)return;
+    if(phase!=="payment"&&phase!=="paid_waiting")return;
+    const timer=setTimeout(()=>{
+      if(phase==="payment"||phase==="paid_waiting")handlePaymentFailure("Payment timeout — team disbanded");
+    },1200);
+    return()=>clearTimeout(timer);
+  },[paymentCountdown,phase,handlePaymentFailure]);
 
   const join=()=>{if(!wallet){connect();return;}if(code.length<6)return setErr("Enter complete 6-digit code");setErr(null);emit("room:validate",{inviteCode:code.toUpperCase()});};
   const confirmJoin=()=>{emit("room:join",{inviteCode:code.toUpperCase()});setPhase("joining");};
