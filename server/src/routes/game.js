@@ -105,7 +105,10 @@ router.get("/users/:wallet/open-room", async (req, res) => {
          SELECT 1 FROM games g2
          WHERE g2.invite_code = g.invite_code
            AND g2.state = 'cancelled'
-           AND g2.created_at >= g.created_at
+           AND (
+             g2.created_at > g.created_at
+             OR (g2.created_at = g.created_at AND g2.id > g.id)
+           )
        )
      ORDER BY g.created_at DESC
      LIMIT 1`,
@@ -135,11 +138,12 @@ router.get("/users/:wallet/games", async (req, res) => {
   const limit = parseInt(req.query.limit) || 20;
   const offset = parseInt(req.query.offset) || 0;
   const r = await query(
-    `SELECT g.id, g.chain_game_id, g.mode, g.invite_code, g.max_players, g.state, g.base_price, g.settlement_price, g.created_at, g.started_at, g.settled_at,
+    `SELECT g.id, g.chain_game_id, g.mode, g.invite_code, g.max_players, g.state, g.base_price, g.settlement_price, g.error_message,
+            g.created_at, g.started_at, g.settled_at, g.failed_at,
             gp.prediction, gp.is_correct, gp.reward, gp.is_owner
      FROM games g JOIN game_players gp ON g.id=gp.game_id
      WHERE LOWER(gp.wallet_address)=LOWER($1)
-     ORDER BY COALESCE(g.settled_at, g.started_at, g.created_at) DESC LIMIT $2 OFFSET $3`,
+     ORDER BY COALESCE(g.settled_at, g.failed_at, g.started_at, g.created_at) DESC LIMIT $2 OFFSET $3`,
     [norm(req.params.wallet), limit, offset]
   );
   const games = await Promise.all(r.rows.map(async (row) => {

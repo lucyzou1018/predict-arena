@@ -1,4 +1,4 @@
-import{useState,useEffect,useCallback}from"react";import{useNavigate}from"react-router-dom";
+import{useState,useEffect,useCallback,useRef}from"react";import{useNavigate}from"react-router-dom";
 import{useSocket}from"../hooks/useSocket";import{useGame}from"../context/GameContext";import{useWallet}from"../context/WalletContext";import{useContract}from"../hooks/useContract";
 import{TeamSlots,PaymentModal}from"../components";import{TEAM_SIZES,ENTRY_FEE,PAYMENT_TIMEOUT}from"../config/constants";
 export default function CreateRoom(){
@@ -7,8 +7,11 @@ export default function CreateRoom(){
   const[phase,setPhase]=useState("select");const[sz,setSz]=useState(2);
   const[code,setCode]=useState("");const[room,setRoom]=useState({current:0,players:[]});
   const[err,setErr]=useState(null);const[copied,setCopied]=useState(false);const[paid,setPaid]=useState(false);
+  const[hint,setHint]=useState(null);
   const[roomFullInfo,setRoomFullInfo]=useState(null);
   const[paymentProgress,setPaymentProgress]=useState({paidCount:0,total:0});
+  const cancelPending=useRef(false);
+  const phaseBeforeCancel=useRef("select");
 
   // Countdown timers
   const[roomExpiresAt,setRoomExpiresAt]=useState(null);
@@ -31,25 +34,25 @@ export default function CreateRoom(){
   },[paymentStartedAt]);
 
   useEffect(()=>{const u=[
-    on("room:created",d=>{setCode(d.inviteCode);setRoomExpiresAt(d.expiresAt);setRoom({current:1,players:[wallet]});setPhase("waiting");}),
+    on("room:created",d=>{cancelPending.current=false;phaseBeforeCancel.current="select";setHint(null);setCode(d.inviteCode);setRoomExpiresAt(d.expiresAt);setRoom({current:1,players:[wallet]});setPhase("waiting");}),
     on("room:update",d=>{setRoom({current:d.current,players:d.players});if(d.expiresAt)setRoomExpiresAt(d.expiresAt);}),
     on("room:full",d=>{
       setRoomFullInfo(d);setPaymentProgress({paidCount:0,total:d.players.length});
       setPaymentStartedAt(Date.now());setRoomExpiresAt(null);setRoomCountdown(null);
       setPhase("payment");
     }),
-    on("room:error",d=>setErr(d.message)),
-    on("room:dissolved",d=>{if(paid){refund(ENTRY_FEE);setPaid(false);}setPhase("select");setRoomExpiresAt(null);setPaymentStartedAt(null);}),
+    on("room:error",d=>{if(cancelPending.current){cancelPending.current=false;setPhase(phaseBeforeCancel.current==="paid_waiting"?"paid_waiting":"waiting");}setHint(null);setErr(d.message);}),
+    on("room:dissolved",d=>{const selfCancelled=cancelPending.current;cancelPending.current=false;phaseBeforeCancel.current="select";setHint(null);if(paid){refund(ENTRY_FEE);setPaid(false);}setErr(selfCancelled?null:(d?.reason||null));setCode("");setRoom({current:0,players:[]});setPhase("select");setRoomExpiresAt(null);setPaymentStartedAt(null);}),
     on("room:expired",()=>{setRoomExpiresAt(null);setRoomCountdown(null);setPhase("expired");}),
     on("room:payment:update",d=>{setPaymentProgress({paidCount:d.paidCount,total:d.total});}),
     on("room:payment:failed",d=>{if(paid){refund(ENTRY_FEE);setPaid(false);}setPaymentStartedAt(null);setRoomFullInfo(null);setErr(d?.reason||"Payment timeout — team disbanded");setPhase("select");}),
     on("game:start",d=>{updateGame({gameId:d.gameId,chainGameId:d.chainGameId||d.gameId,mode:"room",teamSize:d.players.length,players:d.players,phase:"predicting",basePrice:d.basePrice,countdown:Math.round((d.predictTimeout||30000)/1000),predictSafeBuffer:Math.round((d.predictSafeBuffer||5000)/1000),predictionDeadline:d.predictionDeadline||null});setPaymentStartedAt(null);setTimeout(()=>nav("/game"),500);}),
   ];return()=>u.forEach(f=>f());},[on,sz,code,updateGame,nav,paid,refund,wallet]);
 
-  const create=()=>{setErr(null);emit("room:create",{teamSize:sz});};
+  const create=()=>{cancelPending.current=false;phaseBeforeCancel.current="select";setErr(null);setHint(null);emit("room:create",{teamSize:sz});};
   const payRoom=useCallback(async()=>{try{await mockPay();setPaid(true);if(roomFullInfo){emit("room:payment:confirm",{gameId:roomFullInfo.gameId,inviteCode:code});setPhase("paid_waiting");}}catch{setErr("Payment failed");}},[mockPay,roomFullInfo,code,emit]);
-  const cancel=()=>{emit("room:dissolve",{inviteCode:code});setPhase("select");setRoomExpiresAt(null);setPaymentStartedAt(null);};
-  const dissolve=()=>{emit("room:dissolve",{inviteCode:code});if(paid){refund(ENTRY_FEE);setPaid(false);}setPhase("select");setRoomExpiresAt(null);setPaymentStartedAt(null);};
+  const cancel=()=>{cancelPending.current=true;phaseBeforeCancel.current=phase;setErr(null);setHint("Cancelling room...");emit("room:dissolve",{inviteCode:code});setPhase("dissolving");};
+  const dissolve=()=>{cancelPending.current=true;phaseBeforeCancel.current=phase;setErr(null);setHint("Cancelling room...");emit("room:dissolve",{inviteCode:code});setPhase("dissolving");};
   const clearExpired=()=>{setPhase("select");setCode("");setRoom({current:0,players:[]});setErr(null);};
   const cp=()=>{navigator.clipboard.writeText(code);setCopied(true);setTimeout(()=>setCopied(false),2000);};
   const fmtCountdown=(s)=>`${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`;
@@ -58,8 +61,10 @@ export default function CreateRoom(){
     <button onClick={()=>nav("/")} className="text-white/15 hover:text-white/30 text-xs mb-4 transition">← Back</button>
     <h2 className="text-xl font-black mb-4 flex items-center gap-2"><span className="text-2xl">🏟️</span>Create Arena</h2>
     {err&&<div className="bg-rose-500/10 border border-rose-500/15 text-rose-400 px-3 py-2 rounded-xl mb-3 text-[11px]">{err}</div>}
+    {hint&&<div className="bg-white/[0.03] border border-white/[0.06] text-white/45 px-3 py-2 rounded-xl mb-3 text-[11px]">{hint}</div>}
     {phase==="select"&&<div><p className="text-white/20 text-xs mb-2">Team size</p><div className="grid grid-cols-4 gap-2 mb-4">{TEAM_SIZES.map(s=><button key={s} onClick={()=>setSz(s)} className={`py-3.5 rounded-xl font-black text-lg transition-all ${sz===s?"bg-gradient-to-br from-amber-500 to-orange-600 shadow-lg shadow-orange-500/15 -translate-y-0.5":"bg-white/[0.02] border border-white/[0.05] text-white/20 hover:bg-white/[0.04]"}`}>{s}P</button>)}</div><button onClick={create} className="btn-primary w-full py-3.5 font-black">Create Arena</button></div>}
     <PaymentModal visible={phase==="payment"} onConfirm={payRoom} onCancel={cancel} loading={loading} title="Room Full — Pay to Start" subtitle={`All ${paymentProgress.total} players joined! Pay 1 USDC to start.`} hint={`${paymentProgress.paidCount}/${paymentProgress.total} paid`} countdown={paymentCountdown}/>
+    {phase==="dissolving"&&<div className="text-center py-10"><div className="w-8 h-8 mx-auto rounded-full border-2 border-amber-400/30 border-t-amber-400 animate-spin mb-3"/><p className="text-white/40 text-xs">Cancelling room...</p></div>}
     {(phase==="waiting"||phase==="paid_waiting")&&<div className="card text-center glow-orange">
       <p className="text-white/15 text-[8px] uppercase tracking-[0.3em] mb-2">Arena Code</p>
       <div className="mb-2"><span className="text-3xl font-mono font-black tracking-[0.4em] text-gradient">{code}</span></div>

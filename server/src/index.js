@@ -6,10 +6,12 @@ import { initDB } from "./config/database.js";
 import { initSocket } from "./socket/index.js";
 import priceService from "./services/price.js";
 import contractService from "./services/contract.js";
+import gameService from "./services/game.js";
 import gameRoutes from "./routes/game.js";
 
 async function main() {
   await initDB();
+  await gameService.recoverInterruptedGames();
   contractService.init();
   priceService.start();
   const app = express();

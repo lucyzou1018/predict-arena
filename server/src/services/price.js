@@ -1,8 +1,10 @@
 import WebSocket from "ws";
 import fetch from "node-fetch";
+import config from "../config/index.js";
+import { buildFetchOptions, buildWebSocketOptions, proxyUrl } from "../utils/network.js";
 
-const BINANCE_WS_URL = "wss://stream.binance.com:9443/ws/btcusdt@ticker";
-const BINANCE_REST_URL = "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT";
+const BINANCE_WS_URL = config.binance.wsUrl;
+const BINANCE_REST_URL = process.env.BINANCE_REST_URL || "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT";
 const RECONNECT_DELAY = 3000;
 const REST_POLL_MS = 5000;
 
@@ -17,6 +19,9 @@ class PriceService {
   }
 
   start() {
+    if (proxyUrl) {
+      console.log(`[Price] Using proxy ${proxyUrl}`);
+    }
     this._connect();
     this._startRestFallback();
   }
@@ -27,7 +32,7 @@ class PriceService {
     }
 
     console.log("[Price] Connecting to Binance WebSocket...");
-    this.ws = new WebSocket(BINANCE_WS_URL);
+    this.ws = new WebSocket(BINANCE_WS_URL, buildWebSocketOptions());
 
     this.ws.on("open", () => {
       console.log("[Price] Binance WebSocket connected");
@@ -64,7 +69,7 @@ class PriceService {
     if (this._restTimer) return;
     const poll = async () => {
       try {
-        const res = await fetch(BINANCE_REST_URL, { timeout: 4000 });
+        const res = await fetch(BINANCE_REST_URL, buildFetchOptions({ timeout: 4000 }));
         const data = await res.json();
         const newPrice = parseFloat(data.price);
         if (newPrice && newPrice !== this.price) {

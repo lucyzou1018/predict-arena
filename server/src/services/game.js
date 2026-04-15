@@ -1,14 +1,132 @@
 import config from "../config/index.js";
-import { query } from "../config/database.js";
+import { query, withTransaction } from "../config/database.js";
 import priceService from "./price.js";
 import settlementService from "./settlement.js";
 import contractService from "./contract.js";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const SETTLEMENT_FAILURE_MESSAGE = "Settlement sync failed. Funds remain safe on-chain. Use this page or history to claim reward or refund when available.";
+const SETTLEMENT_PRICE_FAILURE_MESSAGE = "Settlement price is temporarily unavailable. Funds remain safe on-chain. Use this page or history to claim reward or refund when available.";
+const STARTUP_RECOVERY_MESSAGE = "This battle was interrupted while the server was offline. Funds remain safe on-chain. Use history to claim reward or refund when available.";
 
 class GameService {
   constructor() { this.activeGames = {}; this.io = null; this.roomPayments = {}; }
   setIO(io) { this.io = io; }
+
+  getRoomPaymentByWallet(wallet) {
+    for (const session of Object.values(this.roomPayments)) {
+      const player = session?.players?.find((entry) => entry.wallet === wallet);
+      if (player) return session;
+    }
+    return null;
+  }
+
+  isInRoomPayment(wallet) {
+    return !!this.getRoomPaymentByWallet(wallet);
+  }
+
+  getActiveGameByWallet(wallet) {
+    for (const game of Object.values(this.activeGames)) {
+      const player = game?.players?.find((entry) => entry.wallet === wallet);
+      if (player) return game;
+    }
+    return null;
+  }
+
+  isInActiveGame(wallet) {
+    return !!this.getActiveGameByWallet(wallet);
+  }
+
+  _getActiveGameRemaining(game) {
+    if (!game) return 0;
+    if (game.phase === "settling") {
+      const settleStartedAt = game.settleStartedAt || Date.now();
+      return Math.ceil(Math.max(0, config.game.settleDelay - (Date.now() - settleStartedAt)) / 1000);
+    }
+    return Math.ceil(Math.max(0, config.game.predictTimeout - (Date.now() - game.startedAt)) / 1000);
+  }
+
+  _buildActiveGameSnapshot(game) {
+    if (!game) return null;
+    return {
+      gameId: game.gameId,
+      chainGameId: game.chainGameId,
+      phase: game.phase === "settling" ? "settling" : "predicting",
+      basePrice: game.basePrice,
+      currentPrice: priceService.getPrice() || game.basePrice,
+      players: game.players.map((player) => player.wallet),
+      totalPlayers: game.players.length,
+      totalPredicted: Object.keys(game.predictions || {}).length,
+      remaining: this._getActiveGameRemaining(game),
+      predictTimeout: config.game.predictTimeout,
+      predictSafeBuffer: config.game.predictSafeBuffer,
+      settleDelay: config.game.settleDelay,
+      predictionDeadline: game.predictionDeadline || null,
+    };
+  }
+
+  rebindPlayerSocket(wallet, socket) {
+    if (!wallet || !socket) return null;
+    const game = this.getActiveGameByWallet(wallet);
+    if (!game) return null;
+    const player = game.players.find((entry) => entry.wallet === wallet);
+    if (!player) return null;
+    player.socketId = socket.id;
+    socket.join(`game:${game.gameId}`);
+    return this._buildActiveGameSnapshot(game);
+  }
+
+  _emitToPlayers(players, event, payload) {
+    for (const player of players || []) {
+      if (player?.socketId) this.io?.to(player.socketId).emit(event, payload);
+    }
+  }
+
+  _clearGameTimers(game) {
+    if (!game) return;
+    if (game.predictTimer) clearTimeout(game.predictTimer);
+    if (game.settleTimer) clearTimeout(game.settleTimer);
+    if (game.countdownInterval) clearInterval(game.countdownInterval);
+    if (game.settleInterval) clearInterval(game.settleInterval);
+  }
+
+  _cleanupActiveGame(gameId) {
+    const game = this.activeGames[gameId];
+    if (!game) return;
+    this._clearGameTimers(game);
+    delete this.activeGames[gameId];
+  }
+
+  _buildSettlementFailureMessage(error) {
+    const reason = `${error?.message || ""}`.toLowerCase();
+    if (reason.includes("settlement price unavailable")) return SETTLEMENT_PRICE_FAILURE_MESSAGE;
+    return SETTLEMENT_FAILURE_MESSAGE;
+  }
+
+  async _markSettlementFailed(gameId, message) {
+    await query(
+      "UPDATE games SET state='failed',settlement_price=NULL,settled_at=NULL,failed_at=NOW(),error_message=$1 WHERE id=$2 AND state<>'settled'",
+      [message, gameId],
+    );
+  }
+
+  async recoverInterruptedGames() {
+    const recovered = await query(
+      `UPDATE games
+       SET state='failed',
+           settlement_price=NULL,
+           settled_at=NULL,
+           failed_at=COALESCE(failed_at, NOW()),
+           error_message=COALESCE(NULLIF(error_message, ''), $1)
+       WHERE state='active'
+       RETURNING id`,
+      [STARTUP_RECOVERY_MESSAGE],
+    );
+    if (recovered.rowCount > 0) {
+      console.warn(`[Game] Recovered ${recovered.rowCount} interrupted active games after startup`);
+    }
+    return recovered.rowCount;
+  }
 
   startRoomPayment(gameId, inviteCode, players) {
     this.roomPayments[gameId] = { inviteCode, players, startedAt: Date.now(), paid: new Set(), timer: null };
@@ -46,9 +164,7 @@ class GameService {
   async startGame(gameId, chainGameId, players) {
     const basePrice = priceService.getPrice();
     if (!basePrice || basePrice <= 0) {
-      for (const p of players) {
-        if (p.socketId) this.io?.to(p.socketId).emit("game:error", { message: "BTC price unavailable" });
-      }
+      this._emitToPlayers(players, "game:error", { message: "BTC price unavailable" });
       return;
     }
     const chainPredictionDeadline = await contractService.startGame(chainGameId, Math.round(basePrice * 100));
@@ -64,7 +180,10 @@ class GameService {
       predictionDeadline: chainPredictionDeadline || Math.floor((startedAt + config.game.predictTimeout - (config.game.predictSafeBuffer || 0)) / 1000),
     };
     this.activeGames[gameId] = game;
-    await query("UPDATE games SET state='active',base_price=$1,started_at=NOW() WHERE id=$2", [basePrice, gameId]);
+    await query(
+      "UPDATE games SET state='active',base_price=$1,started_at=NOW(),settlement_price=NULL,settled_at=NULL,failed_at=NULL,error_message=NULL WHERE id=$2",
+      [basePrice, gameId],
+    );
     for (const p of players) await query("INSERT INTO game_players(game_id,wallet_address,paid)VALUES($1,$2,true)ON CONFLICT DO NOTHING", [gameId, p.wallet]);
 
     const room = `game:${gameId}`;
@@ -117,45 +236,89 @@ class GameService {
     const room = `game:${gameId}`;
     this.io?.to(room).emit("game:phase", { phase: "settling", settleDelay: config.game.settleDelay });
     const t0 = Date.now();
+    g.settleStartedAt = t0;
     g.settleInterval = setInterval(() => {
       const rem = Math.max(0, config.game.settleDelay - (Date.now() - t0));
       this.io?.to(room).emit("game:countdown", { phase: "settling", remaining: Math.ceil(rem / 1000), currentPrice: priceService.getPrice() });
       if (rem <= 0) clearInterval(g.settleInterval);
     }, 1000);
-    g.settleTimer = setTimeout(async () => { clearInterval(g.settleInterval); await this._settle(gameId); }, config.game.settleDelay);
+    g.settleTimer = setTimeout(() => {
+      clearInterval(g.settleInterval);
+      void this._settle(gameId);
+    }, config.game.settleDelay);
   }
 
   async _settle(gameId) {
     const g = this.activeGames[gameId]; if (!g) return;
-    const sp = priceService.getPrice();
-    if (!sp || sp <= 0) {
-      for (const p of g.players) {
-        if (p.socketId) this.io?.to(p.socketId).emit("game:error", { message: "Settlement price unavailable" });
+    try {
+      const sp = priceService.getPrice();
+      if (!sp || sp <= 0) {
+        throw new Error("Settlement price unavailable");
       }
-      return;
-    }
-    if (g.chainGameId) {
-      await contractService.settleGame(g.chainGameId, Math.round(sp * 100));
-    }
-    g.phase = "settled";
-    const result = settlementService.calculate(g.players.map(p => p.wallet), g.predictions, g.basePrice, sp);
-    await query("UPDATE games SET state='settled',settlement_price=$1,settled_at=NOW() WHERE id=$2", [sp, gameId]);
-    for (const r of result.playerResults) {
-      await query("UPDATE game_players SET prediction=$1,is_correct=$2,reward=$3,predicted_at=NOW() WHERE game_id=$4 AND wallet_address=$5", [r.prediction, r.isCorrect, r.reward, gameId, r.wallet]);
-      if (r.isCorrect) await query("INSERT INTO users(wallet_address,wins,total_earned)VALUES($1,1,$2)ON CONFLICT(wallet_address)DO UPDATE SET wins=users.wins+1,total_earned=users.total_earned+$2", [r.wallet, r.reward]);
-      else await query("INSERT INTO users(wallet_address,losses,total_lost)VALUES($1,1,$2)ON CONFLICT(wallet_address)DO UPDATE SET losses=users.losses+1,total_lost=users.total_lost+$2", [r.wallet, r.lost]);
-    }
-    // Send personalized result to each player
-    for (const p of g.players) {
-      const my = result.playerResults.find(r => r.wallet === p.wallet);
-      this.io?.to(p.socketId).emit("game:result", {
-        gameId, chainGameId: g.chainGameId, basePrice: g.basePrice, settlementPrice: sp,
-        direction: sp > g.basePrice ? "up" : sp < g.basePrice ? "down" : "flat",
-        myResult: my, platformFee: result.platformFee,
+
+      if (g.chainGameId) {
+        await contractService.settleGame(g.chainGameId, Math.round(sp * 100));
+      }
+
+      g.phase = "settled";
+      const result = settlementService.calculate(g.players.map(p => p.wallet), g.predictions, g.basePrice, sp);
+
+      await withTransaction(async (db) => {
+        await db.query(
+          "UPDATE games SET state='settled',settlement_price=$1,settled_at=NOW(),failed_at=NULL,error_message=NULL WHERE id=$2",
+          [sp, gameId],
+        );
+        for (const playerResult of result.playerResults) {
+          await db.query(
+            "UPDATE game_players SET prediction=$1,is_correct=$2,reward=$3,predicted_at=NOW() WHERE game_id=$4 AND wallet_address=$5",
+            [playerResult.prediction, playerResult.isCorrect, playerResult.reward, gameId, playerResult.wallet],
+          );
+          if (playerResult.isCorrect) {
+            await db.query(
+              "INSERT INTO users(wallet_address,wins,total_earned)VALUES($1,1,$2)ON CONFLICT(wallet_address)DO UPDATE SET wins=users.wins+1,total_earned=users.total_earned+$2",
+              [playerResult.wallet, playerResult.reward],
+            );
+          } else {
+            await db.query(
+              "INSERT INTO users(wallet_address,losses,total_lost)VALUES($1,1,$2)ON CONFLICT(wallet_address)DO UPDATE SET losses=users.losses+1,total_lost=users.total_lost+$2",
+              [playerResult.wallet, playerResult.lost],
+            );
+          }
+        }
       });
+
+      for (const player of g.players) {
+        const myResult = result.playerResults.find((row) => row.wallet === player.wallet);
+        if (!player.socketId) continue;
+        this.io?.to(player.socketId).emit("game:result", {
+          gameId,
+          chainGameId: g.chainGameId,
+          basePrice: g.basePrice,
+          settlementPrice: sp,
+          direction: sp > g.basePrice ? "up" : sp < g.basePrice ? "down" : "flat",
+          myResult,
+          platformFee: result.platformFee,
+        });
+      }
+      console.log(`[Game] #${gameId} settled $${g.basePrice} -> $${sp}`);
+    } catch (error) {
+      const message = this._buildSettlementFailureMessage(error);
+      g.phase = "failed";
+      console.error(`[Game] #${gameId} settlement failed`, error);
+      try {
+        await this._markSettlementFailed(gameId, message);
+      } catch (dbError) {
+        console.error(`[Game] #${gameId} failed to persist settlement failure`, dbError);
+      }
+      this._emitToPlayers(g.players, "game:failed", {
+        gameId,
+        chainGameId: g.chainGameId,
+        basePrice: g.basePrice,
+        message,
+      });
+    } finally {
+      this._cleanupActiveGame(gameId);
     }
-    console.log(`[Game] #${gameId} settled $${g.basePrice} -> $${sp}`);
-    delete this.activeGames[gameId];
   }
 }
 export default new GameService();

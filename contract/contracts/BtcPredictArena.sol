@@ -11,6 +11,7 @@ contract BtcPredictArena {
     uint256 public totalFees;
     uint256 public predictionDuration = 30;
     uint256 public predictionBuffer = 5;
+    uint256 public refundGracePeriod = 300;
 
     bytes32 private constant EIP712_DOMAIN_TYPEHASH =
         keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
@@ -21,7 +22,7 @@ contract BtcPredictArena {
     uint256 private constant SECP256K1N_DIV_2 =
         0x7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0;
 
-    enum GameState { Created, Payment, Active, Settled, Cancelled }
+    enum GameState { Created, Payment, Active, Settled, Cancelled, Refundable }
     enum Prediction { None, Up, Down }
 
     struct Game {
@@ -49,6 +50,8 @@ contract BtcPredictArena {
     bytes32 private immutable INITIAL_DOMAIN_SEPARATOR;
 
     mapping(uint256 => Game) public games;
+    mapping(uint256 => uint256) public gameEntryFee;
+    mapping(uint256 => uint256) public gameFeeRate;
     mapping(uint256 => mapping(address => PlayerPrediction)) public playerPredictions;
     mapping(uint256 => uint256) public predictionDeadline;
     mapping(uint256 => address[]) public gamePlayers;
@@ -63,6 +66,8 @@ contract BtcPredictArena {
     event GameSettled(uint256 indexed gameId, uint256 settlementPrice);
     event RewardClaimed(uint256 indexed gameId, address indexed player, uint256 amount);
     event GameCancelled(uint256 indexed gameId);
+    event GameRefundable(uint256 indexed gameId);
+    event RefundClaimed(uint256 indexed gameId, address indexed player, uint256 amount);
     event FeeWithdrawn(address indexed to, uint256 amount);
 
     modifier onlyOwner() { require(msg.sender == owner, "Not owner"); _; }
@@ -157,7 +162,8 @@ contract BtcPredictArena {
         require(_isPlayer(_gameId, msg.sender), "Not a player");
         PlayerPrediction storage pp = playerPredictions[_gameId][msg.sender];
         require(!pp.hasPaid, "Already paid");
-        require(usdc.transferFrom(msg.sender, address(this), entryFee), "Payment failed");
+        uint256 paymentAmount = gameEntryFee[_gameId];
+        require(usdc.transferFrom(msg.sender, address(this), paymentAmount), "Payment failed");
         pp.hasPaid = true;
         emit PlayerPaid(_gameId, msg.sender);
     }
@@ -231,8 +237,10 @@ contract BtcPredictArena {
             else loserCount++;
         }
 
-        uint256 feePerPlayer = (entryFee * feeRate) / 10000;
-        uint256 netPerPlayer = entryFee - feePerPlayer;
+        uint256 entryFeeForGame = gameEntryFee[_gameId];
+        uint256 feeRateForGame = gameFeeRate[_gameId];
+        uint256 feePerPlayer = (entryFeeForGame * feeRateForGame) / 10000;
+        uint256 netPerPlayer = entryFeeForGame - feePerPlayer;
         totalFees += feePerPlayer * g.players.length;
 
         if (isFlat || winnerCount == g.players.length || winnerCount == 0) {
@@ -264,14 +272,38 @@ contract BtcPredictArena {
         emit RewardClaimed(_gameId, msg.sender, pp.reward);
     }
 
+    function forceRefund(uint256 _gameId) external gameExists(_gameId) {
+        Game storage g = games[_gameId];
+        require(g.state == GameState.Active, "Game not active");
+        uint256 deadline = predictionDeadline[_gameId];
+        require(deadline > 0, "Prediction deadline unavailable");
+        require(block.timestamp > deadline + refundGracePeriod, "Refund not available yet");
+        g.state = GameState.Refundable;
+        emit GameRefundable(_gameId);
+    }
+
+    function claimRefund(uint256 _gameId) external gameExists(_gameId) {
+        Game storage g = games[_gameId];
+        require(g.state == GameState.Refundable, "Not refundable");
+        PlayerPrediction storage pp = playerPredictions[_gameId][msg.sender];
+        require(pp.hasPaid, "Not a participant");
+        require(!pp.claimed, "Already claimed");
+        uint256 refundAmount = gameEntryFee[_gameId];
+        require(refundAmount > 0, "No refund");
+        pp.claimed = true;
+        require(usdc.transfer(msg.sender, refundAmount), "Transfer failed");
+        emit RefundClaimed(_gameId, msg.sender, refundAmount);
+    }
+
     function cancelGame(uint256 _gameId) external onlyOwner gameExists(_gameId) {
         Game storage g = games[_gameId];
         require(g.state == GameState.Created || g.state == GameState.Payment, "Cannot cancel now");
         g.state = GameState.Cancelled;
+        uint256 refundAmount = gameEntryFee[_gameId];
         for (uint256 i = 0; i < g.players.length; i++) {
             address p = g.players[i];
             if (playerPredictions[_gameId][p].hasPaid) {
-                usdc.transfer(p, entryFee);
+                require(usdc.transfer(p, refundAmount), "Refund failed");
             }
         }
         if (bytes(g.inviteCode).length > 0) delete inviteCodeToGame[g.inviteCode];
@@ -301,6 +333,7 @@ contract BtcPredictArena {
 
     function setFeeRate(uint256 _feeRate) external onlyOwner { require(_feeRate <= 1000, "Fee too high"); feeRate = _feeRate; }
     function setEntryFee(uint256 _entryFee) external onlyOwner { entryFee = _entryFee; }
+    function setRefundGracePeriod(uint256 _refundGracePeriod) external onlyOwner { require(_refundGracePeriod > 0, "Invalid grace period"); refundGracePeriod = _refundGracePeriod; }
 
     function getGamePlayers(uint256 _gameId) external view returns (address[] memory) { return games[_gameId].players; }
 
@@ -328,6 +361,8 @@ contract BtcPredictArena {
         g.createdAt = block.timestamp;
         g.isRoom = _isRoom;
         g.inviteCode = _inviteCode;
+        gameEntryFee[gid] = entryFee;
+        gameFeeRate[gid] = feeRate;
         emit GameCreated(gid, _maxPlayers, _isRoom, _inviteCode, creator);
         return gid;
     }

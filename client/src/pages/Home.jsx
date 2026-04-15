@@ -12,6 +12,9 @@ import{ENTRY_FEE,TEAM_SIZES,PAYMENT_TIMEOUT}from"../config/constants";
 function formatPaymentUiError(message){
   const text=(message||"").toLowerCase();
   if(!text)return null;
+  if(text.includes("request timeout")||text.includes("confirmation timed out")||text.includes("econnreset")){
+    return "Base Sepolia RPC timed out while waiting for confirmation. Please retry in a few seconds.";
+  }
   if(text.includes("on-chain payment not confirmed")){
     return "Payment was sent, but server confirmation is still catching up. Please wait a few seconds.";
   }
@@ -24,12 +27,67 @@ function formatPaymentUiError(message){
   return message;
 }
 
+function enrichHistoryGame(game,status){
+  if(!status)return game;
+  if(status.action==="refund"||(status.claimed&&status.state===5)){
+    return{
+      ...game,
+      claimAction:"refund",
+      claimLabel:"Claim Refund",
+      claimedLabel:"Refunded",
+      claimable:!status.claimed,
+      claimed:status.claimed,
+      reward:status.entryFee,
+      uiState:status.claimed?"Refunded":"Refund Ready",
+    };
+  }
+  if(status.state===3){
+    return{
+      ...game,
+      claimAction:(status.canClaimReward||status.claimed)?"reward":game.claimAction,
+      claimLabel:"Claim Reward",
+      claimedLabel:"Claimed",
+      claimable:status.canClaimReward,
+      claimed:status.claimed,
+      reward:status.reward,
+      uiState:game.state==="settled"?(game.uiState||"Settled"):"Settled",
+    };
+  }
+  return game;
+}
+
+function getHistoryResult(game){
+  if(game.uiState)return game.uiState;
+  if(game.state!=="settled"){
+    if(game.state==="expired")return"Expired";
+    if(game.state==="failed")return"Failed";
+    if(game.state==="cancelled")return"Cancelled";
+    if(game.state==="waiting")return"Waiting";
+    if(game.state==="active")return"Playing";
+    return game.state;
+  }
+  return game.is_correct===null||game.is_correct===undefined?"—":game.is_correct?"Win":"Lose";
+}
+
+function getHistoryResultClass(result){
+  if(result==="Win")return"text-emerald-400";
+  if(result==="Lose")return"text-rose-400";
+  if(result==="Failed")return"text-amber-300";
+  if(result==="Expired")return"text-orange-400";
+  if(result==="Cancelled")return"text-white/30";
+  if(result==="Waiting")return"text-amber-300";
+  if(result==="Playing")return"text-sky-300";
+  if(result==="Refund Ready"||result==="Refunded")return"text-amber-300";
+  if(result==="Settled")return"text-emerald-300";
+  return"text-white/35";
+}
+
 export default function Home(){
   const nav=useNavigate();
   const{wallet,provider,signer,connect,mockMode,refund,pendingAction,setPendingAction}=useWallet();
   const{emit,on}=useSocket();
   const{updateGame}=useGame();
-  const{payForGame,claimReward,loading,claiming,mockPay,shouldUseMockPayment}=useContract();
+  const{payForGame,claimGameFunds,getGameClaimStatus,loading,claiming,mockPay,shouldUseMockPayment}=useContract();
   const price=useBtcPrice();
 
   const[history,setHistory]=useState([]);
@@ -46,6 +104,7 @@ export default function Home(){
   const createTimeoutRef=useRef(null);
   const joinTimeoutRef=useRef(null);
   const[createErr,setCreateErr]=useState(null);
+  const[createHint,setCreateHint]=useState(null);
   const[createPaid,setCreatePaid]=useState(false);
   const[roomFullInfo,setRoomFullInfo]=useState(null);
   const[paymentProgress,setPaymentProgress]=useState({paidCount:0,total:0});
@@ -89,14 +148,24 @@ export default function Home(){
   const walletRef=useRef(wallet); walletRef.current=wallet;
   const szRef=useRef(sz); szRef.current=sz;
   const roomCodeRef=useRef(roomCode); roomCodeRef.current=roomCode;
+  const createCancelPendingRef=useRef(false);
+  const createPhaseBeforeCancelRef=useRef("select");
 
-  const reloadHistory=useCallback((targetWallet=walletRef.current)=>{
+  const reloadHistory=useCallback(async(targetWallet=walletRef.current)=>{
     if(!targetWallet)return;
-    fetch(`${SERVER_URL}/api/users/${targetWallet}/games?limit=20`)
-      .then(r=>r.json())
-      .then(d=>{setHistory(d.games||[]);setHistoryPage(1);})
-      .catch(()=>{});
-  },[]);
+    try{
+      const response=await fetch(`${SERVER_URL}/api/users/${targetWallet}/games?limit=20`);
+      const data=await response.json();
+      const rows=Array.isArray(data.games)?data.games:[];
+      const enriched=await Promise.all(rows.map(async(game)=>{
+        if(!game?.chain_game_id||!["active","failed"].includes(game.state))return game;
+        const status=await getGameClaimStatus(game.chain_game_id,targetWallet);
+        return enrichHistoryGame(game,status);
+      }));
+      setHistory(enriched);
+      setHistoryPage(1);
+    }catch{}
+  },[getGameClaimStatus]);
 
   // Carousel state
   const scrollRef=useRef(null);
@@ -236,7 +305,10 @@ export default function Home(){
     const u=[
       on("room:created",d=>{
         if(createTimeoutRef.current){clearTimeout(createTimeoutRef.current);createTimeoutRef.current=null;}
+        createCancelPendingRef.current=false;
+        createPhaseBeforeCancelRef.current="select";
         setCreateErr(null);
+        setCreateHint(null);
         setRoomCode(d.inviteCode);
         setRoom({current:1,total:szRef.current,players:[walletRef.current]});
         setRoomExpiresAt(d.expiresAt);
@@ -263,22 +335,40 @@ export default function Home(){
         if(joinPhaseRef.current==="waiting"||joinPhaseRef.current==="joining") setTimeout(()=>setJoinPhase("payment"),700);
       }),
       on("room:error",d=>{
+        if(createTimeoutRef.current){clearTimeout(createTimeoutRef.current);createTimeoutRef.current=null;}
         const uiMsg=formatPaymentUiError(d.message);
+        if(createPhaseRef.current==="dissolving"){
+          createCancelPendingRef.current=false;
+          setCreatePhase(createPhaseBeforeCancelRef.current==="paid_waiting"?"paid_waiting":"waiting");
+        }
+        setCreateHint(null);
         if(createPhaseRef.current==="creating"||createPhaseRef.current==="waiting"||createPhaseRef.current==="payment"||createPhaseRef.current==="paid_waiting") {setCreateErr(uiMsg);setPaymentErr(uiMsg);}
+        if(createPhaseRef.current==="dissolving") {setCreateErr(uiMsg);}
         if(joinPhaseRef.current==="select"||joinPhaseRef.current==="waiting"||joinPhaseRef.current==="joining"||joinPhaseRef.current==="payment"||joinPhaseRef.current==="paid_waiting") {setJoinErr(uiMsg);setPaymentErr(uiMsg);if(joinPhaseRef.current!=="payment"&&joinPhaseRef.current!=="paid_waiting")setJoinPhase("select");}
         setCreatePhase(prev=>prev==="creating"?"select":prev);
       }),
       on("room:dissolved",d=>{
+        const wasCreateFlow = createPhaseRef.current!=="select" || !!roomCodeRef.current;
         const wasJoinFlow = joinPhaseRef.current!=="select" || !!joinCodeRef.current;
+        const selfCancelledCreate = createCancelPendingRef.current;
+        createCancelPendingRef.current=false;
+        createPhaseBeforeCancelRef.current="select";
+        if(createTimeoutRef.current){clearTimeout(createTimeoutRef.current);createTimeoutRef.current=null;}
         if(createPaidRef.current){refund(ENTRY_FEE);setCreatePaid(false);}
         if(joinPaidRef.current){refund(ENTRY_FEE);setJoinPaid(false);}
         setOpenRoom(null);setRoomCode("");setRoom({current:0,total:0,players:[]});
         setRoomExpiresAt(null);setJoinExpiresAt(null);setPaymentStartedAt(null);
         setCreatePhase("select");setJoinPhase("select");
+        setCreateHint(null);
+        if(wasCreateFlow && d&&d.reason && !selfCancelledCreate)setCreateErr(d.reason);
+        if(selfCancelledCreate)setCreateErr(null);
         if(wasJoinFlow && d&&d.reason)setJoinErr(d.reason);
         refreshHistory();
       }),
       on("room:expired",d=>{
+        if(createTimeoutRef.current){clearTimeout(createTimeoutRef.current);createTimeoutRef.current=null;}
+        createCancelPendingRef.current=false;
+        createPhaseBeforeCancelRef.current="select";
         setRoomExpiresAt(null);setRoomCountdown(null);
         setJoinExpiresAt(null);setJoinCountdown(null);
         setPaymentStartedAt(null);
@@ -286,6 +376,7 @@ export default function Home(){
           setCreatePhase("expired");
           setCreateErr(null);
         }
+        setCreateHint(null);
         if(joinPhaseRef.current==="waiting"){
           setJoinPhase("select");
           setJoinErr("Room expired — team not filled in time");
@@ -315,10 +406,14 @@ export default function Home(){
           !!joinCodeRef.current;
         if(createPaidRef.current){refund(ENTRY_FEE);setCreatePaid(false);}
         if(joinPaidRef.current){refund(ENTRY_FEE);setJoinPaid(false);}
+        if(createTimeoutRef.current){clearTimeout(createTimeoutRef.current);createTimeoutRef.current=null;}
+        createCancelPendingRef.current=false;
+        createPhaseBeforeCancelRef.current="select";
         setPaymentStartedAt(null);setRoomFullInfo(null);
         setPaymentErr(null);
         setCreatePhase("select");setJoinPhase("select");setMatchPhase("select");
         setRoomCode("");setRoom({current:0,total:0,players:[]});setOpenRoom(null);
+        setCreateHint(null);
         const reason=d?.reason||"Payment timeout — team disbanded";
         setCreateErr(wasCreateFlow?reason:null);
         setJoinErr(wasJoinFlow?reason:null);
@@ -351,10 +446,10 @@ export default function Home(){
       ?"Finish the current match flow before joining a room."
       :null;
 
-  const createRoom=()=>{if(isJoinBusy||isMatchBusy){setCreateErr("Finish or cancel current action first");return;}if(isCreateBusy){setCreateErr("Already creating a room");return;}if(!mockMode && (!wallet || !provider || !signer)){connect({type:"create-room"});return;}setCreateErr(null);setCreatePhase("creating");if(createTimeoutRef.current)clearTimeout(createTimeoutRef.current);createTimeoutRef.current=setTimeout(()=>{setCreateErr("Create room failed. Please retry.");setCreatePhase("select");},8000);emit("room:create",{teamSize:sz});};
+  const createRoom=()=>{if(isJoinBusy||isMatchBusy){setCreateErr("Finish or cancel current action first");return;}if(isCreateBusy){setCreateErr("Already creating a room");return;}if(!mockMode && (!wallet || !provider || !signer)){connect({type:"create-room"});return;}createCancelPendingRef.current=false;createPhaseBeforeCancelRef.current="select";setCreateErr(null);setCreateHint(null);setCreatePhase("creating");if(createTimeoutRef.current)clearTimeout(createTimeoutRef.current);createTimeoutRef.current=setTimeout(()=>{createTimeoutRef.current=null;if(createPhaseRef.current==="creating")setCreateHint("Base Sepolia is taking longer than usual. Waiting for on-chain confirmation...");},12000);emit("room:create",{teamSize:sz});};
   const payCreate=useCallback(async()=>{try{setPaymentErr(null);if(!roomFullInfo?.chainGameId||!roomFullInfo?.gameId||!wallet)throw new Error("Missing game id");await payForGame(roomFullInfo.chainGameId);setCreatePaid(true);setCreateErr(null);emit("room:payment:confirm",{gameId:roomFullInfo.gameId,chainGameId:roomFullInfo.chainGameId,inviteCode:roomCode,wallet});setCreatePhase("paid_waiting");}catch(e){const msg=formatPaymentUiError(e?.message||"Payment failed");setCreateErr(msg);setPaymentErr(msg);}},[payForGame,roomFullInfo,roomCode,emit,wallet]);
-  const cancelCreate=()=>{emit("room:dissolve",{inviteCode:roomCode});setCreatePhase("select");setRoomExpiresAt(null);setPaymentStartedAt(null);};
-  const dissolveRoom=()=>{emit("room:dissolve",{inviteCode:roomCode});if(createPaid){refund(ENTRY_FEE);setCreatePaid(false);}setOpenRoom(null);setRoomCode("");setRoom({current:0,total:0,players:[]});setCreatePhase("select");setRoomExpiresAt(null);setPaymentStartedAt(null);reloadHistory(wallet);};
+  const cancelCreate=()=>{createCancelPendingRef.current=true;createPhaseBeforeCancelRef.current=createPhaseRef.current;setCreateErr(null);setCreateHint("Cancelling room...");setCreatePhase("dissolving");emit("room:dissolve",{inviteCode:roomCode});};
+  const dissolveRoom=()=>{createCancelPendingRef.current=true;createPhaseBeforeCancelRef.current=createPhaseRef.current;setCreateErr(null);setCreateHint("Cancelling room...");setCreatePhase("dissolving");emit("room:dissolve",{inviteCode:roomCode});};
   const clearExpired=()=>{setCreatePhase("select");setRoomCode("");setRoom({current:0,total:0,players:[]});setOpenRoom(null);setCreateErr(null);reloadHistory(wallet);};
   const copyCode=()=>{navigator.clipboard.writeText(roomCode);setCopied(true);setTimeout(()=>setCopied(false),2000);};
 
@@ -384,8 +479,13 @@ export default function Home(){
     if(!game?.claimable||!game?.chain_game_id)return;
     try{
       setClaimingHistoryId(game.id);
-      await claimReward(game.chain_game_id);
-      setHistory(prev=>prev.map(item=>item.id===game.id?{...item,claimed:true,claimable:false}:item));
+      const payout=await claimGameFunds(game.chain_game_id,walletRef.current);
+      setHistory(prev=>prev.map(item=>item.id===game.id?{
+        ...item,
+        claimed:true,
+        claimable:false,
+        uiState:(payout?.type==="refund"||item.claimAction==="refund")?"Refunded":item.uiState,
+      }:item));
       reloadHistory(walletRef.current);
     }catch(e){
       const msg=e?.message||"Claim failed";
@@ -393,7 +493,7 @@ export default function Home(){
     }finally{
       setClaimingHistoryId(null);
     }
-  },[claimReward,reloadHistory]);
+  },[claimGameFunds,reloadHistory]);
 
   // Payment modal — room payment keeps the modal open while waiting for everyone
   const isRoomPaymentPhase=(createPhase==="payment")||(joinPhase==="payment");
@@ -510,11 +610,13 @@ export default function Home(){
               </div>
 
               {createErr&&<div className="bg-rose-500/10 border border-rose-500/15 text-rose-400 px-3 py-2 rounded-lg mb-3 text-[10px]">⚠️ {createErr}</div>}
+              {createHint&&<div className="bg-white/[0.03] border border-white/[0.06] text-white/45 px-3 py-2 rounded-lg mb-3 text-[10px]">{createHint}</div>}
 
               {createPhase==="select"&& !openRoom&&(
                 <SizeSelector onAction={createRoom} actionLabel={`Create Arena · ${sz}P`} disabled={isJoinBusy||isMatchBusy}/>
               )}
               {createPhase==="creating"&&(<div className="text-center py-10"><div className="w-8 h-8 mx-auto rounded-full border-2 border-orange-400/30 border-t-orange-400 animate-spin mb-3"/><p className="text-white/40 text-xs">Creating arena...</p></div>)}
+              {createPhase==="dissolving"&&(<div className="text-center py-10"><div className="w-8 h-8 mx-auto rounded-full border-2 border-amber-400/30 border-t-amber-400 animate-spin mb-3"/><p className="text-white/40 text-xs">Cancelling room...</p></div>)}
               {(createPhase==="waiting"||createPhase==="paid_waiting")&&(
                 <div className="text-center">
                   <p className="text-white/20 text-[8px] uppercase tracking-[0.3em] mb-2">Arena Code</p>
@@ -744,18 +846,13 @@ export default function Home(){
             {pageItems.map(g=>{
               const isRoom = g.mode === "room";
               const title = isRoom ? (g.is_owner ? "Create Room" : "Join Room") : "Random Match";
-              const result = g.state !== "settled"
-                ? (g.state === "expired" ? "Expired"
-                  : g.state === "failed" ? "Failed"
-                  : g.state === "cancelled" ? "Cancelled"
-                  : g.state === "waiting" ? "Waiting"
-                  : g.state === "active" ? "Playing"
-                  : g.state)
-                : (g.is_correct === null || g.is_correct === undefined ? "—" : (g.is_correct ? "Win" : "Lose"));
-              const time = new Date(g.settled_at || g.started_at || g.created_at).toLocaleString();
+              const result = getHistoryResult(g);
+              const time = new Date(g.settled_at || g.failed_at || g.started_at || g.created_at).toLocaleString();
               const canClaim = !!g.claimable;
               const isClaiming = claimingHistoryId === g.id && claiming;
               const isClaimed = !!g.claimed;
+              const actionLabel = g.claimLabel || "Claim";
+              const claimedLabel = g.claimedLabel || "Claimed";
               return (
                 <div key={g.id} className="bg-white/[0.02] border border-white/[0.05] rounded-xl px-3 py-2.5">
                   <div className="flex items-start justify-between gap-3">
@@ -769,9 +866,12 @@ export default function Home(){
                     </div>
                     <div className="text-right shrink-0">
                       <p className="text-[10px] text-white/35">{g.max_players}P</p>
-                      <p className={`text-xs font-bold mt-1 ${result==="Win"?"text-emerald-400":result==="Lose"?"text-rose-400":result==="Expired"?"text-orange-400":result==="Failed"?"text-rose-400":result==="Cancelled"?"text-white/30":result==="Waiting"?"text-amber-300":result==="Playing"?"text-sky-300":"text-white/35"}`}>{result}</p>
+                      <p className={`text-xs font-bold mt-1 ${getHistoryResultClass(result)}`}>{result}</p>
                     </div>
                   </div>
+                  {g.error_message&&g.state==="failed"&&(
+                    <p className="mt-2 text-[10px] text-amber-200/80 leading-relaxed">{g.error_message}</p>
+                  )}
                   {(canClaim||isClaimed||isClaiming) && <div className="mt-3 flex justify-end">
                     <button
                       onClick={()=>claimHistoryReward(g)}
@@ -784,7 +884,7 @@ export default function Home(){
                             :"bg-white/[0.03] border border-white/[0.05] text-white/35 cursor-default"
                       }`}
                     >
-                      {isClaiming ? "Claiming..." : isClaimed ? "Claimed" : "Claim"}
+                      {isClaiming ? "Claiming..." : isClaimed ? claimedLabel : actionLabel}
                     </button>
                   </div>}
                 </div>
@@ -817,18 +917,36 @@ export default function Home(){
           {history.length>0
             ?<div className="space-y-2">{history.map((g,i)=>{
               const dir=parseFloat(g.settlement_price)>parseFloat(g.base_price)?"up":"down";
-              const won=g.is_correct;
+              const isRefund=g.claimAction==="refund"||g.claimedLabel==="Refunded";
+              const won=g.is_correct===true;
+              const lost=g.is_correct===false;
+              const failed=g.state==="failed"&&!isRefund&&!won&&!lost;
               const canClaim=!!g.claimable;
               const isClaiming=claimingHistoryId===g.id&&claiming;
               const isClaimed=!!g.claimed;
-              return<div key={i} className={`flex items-center justify-between px-3 py-2.5 rounded-lg ${won?"bg-emerald-500/[0.06] border border-emerald-500/[0.08]":"bg-rose-500/[0.06] border border-rose-500/[0.08]"}`}>
+              const actionLabel=g.claimLabel||"Claim";
+              const claimedLabel=g.claimedLabel||"Claimed";
+              const payoutValue=Number(g.reward||0);
+              const payoutText=payoutValue>0?`+${payoutValue.toFixed(2)}`:isRefund?"+0.00":failed?"Pending":"-1.00";
+              const rowClass=isRefund
+                ?"bg-amber-500/[0.06] border border-amber-500/[0.08]"
+                :won
+                  ?"bg-emerald-500/[0.06] border border-emerald-500/[0.08]"
+                  :lost
+                    ?"bg-rose-500/[0.06] border border-rose-500/[0.08]"
+                    :failed
+                      ?"bg-amber-500/[0.06] border border-amber-500/[0.08]"
+                      :"bg-white/[0.03] border border-white/[0.05]";
+              const icon=isRefund?"↩️":won?"🏆":lost?"💀":failed?"⚠️":"⏳";
+              const tone=isRefund?"text-amber-300":won?"text-emerald-400":lost?"text-rose-400":failed?"text-amber-300":"text-white/35";
+              return<div key={i} className={`flex items-center justify-between px-3 py-2.5 rounded-lg ${rowClass}`}>
                 <div className="flex items-center gap-2">
-                  <span className="text-sm">{won?"🏆":"💀"}</span>
+                  <span className="text-sm">{icon}</span>
                   <div><p className="text-[11px] font-mono text-white/50">#{g.id} · {g.mode==="random"?"Quick":"Room"} · {g.max_players}P</p>
-                  <p className="text-[10px] text-white/30">{g.prediction==="up"?"LONG":"SHORT"} → BTC {dir==="up"?"📈":"📉"}</p></div>
+                  <p className="text-[10px] text-white/30">{isRefund?"Emergency refund path unlocked":failed?(g.error_message||"Settlement interrupted"):(g.prediction==="up"?"LONG":g.prediction==="down"?"SHORT":"Awaiting outcome")}{isRefund||failed||!g.settlement_price||!g.base_price?"":` → BTC ${dir==="up"?"📈":"📉"}`}</p></div>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className={`text-xs font-mono font-bold ${won?"text-emerald-400":"text-rose-400"}`}>{parseFloat(g.reward)>0?`+${parseFloat(g.reward).toFixed(2)}`:"-1.00"}</span>
+                  <span className={`text-xs font-mono font-bold ${tone}`}>{payoutText}</span>
                   {(canClaim||isClaimed||isClaiming)&&<button
                     onClick={()=>claimHistoryReward(g)}
                     disabled={!canClaim||isClaiming}
@@ -840,7 +958,7 @@ export default function Home(){
                           :"bg-white/[0.03] border border-white/[0.05] text-white/35 cursor-default"
                     }`}
                   >
-                    {isClaiming?"Claiming...":isClaimed?"Claimed":"Claim"}
+                    {isClaiming?"Claiming...":isClaimed?claimedLabel:actionLabel}
                   </button>}
                 </div>
               </div>;

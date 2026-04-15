@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useSocket } from "../hooks/useSocket";
 import { useGame } from "../context/GameContext";
 import { useContract } from "../hooks/useContract";
 import { useWallet } from "../context/WalletContext";
 import { PredictButtons, CountdownRing, SettlementReveal } from "../components";
-import { PREDICT_TIMEOUT, PREDICT_SAFE_BUFFER, SETTLE_DELAY } from "../config/constants";
+import { PREDICT_TIMEOUT, PREDICT_SAFE_BUFFER, SERVER_URL, SETTLE_DELAY } from "../config/constants";
 
 const SHARE_TEXT = "Think you know where BTC goes next? 📈📉 Battle me on PredictArena. ⚔️ https://predict-arena-test.vercel.app/arena";
 const predictionStorageKey = (gameId, wallet) => `predict-arena:prediction:${gameId}:${wallet?.toLowerCase?.()}`;
@@ -32,45 +32,212 @@ export default function GamePlay() {
   const { on, emit } = useSocket();
   const { gameState, updateGame } = useGame();
   const { wallet } = useWallet();
-  const { claimReward, claiming, getPlayerState, submitPrediction, predicting } = useContract();
+  const { claimGameFunds, claiming, getGameClaimStatus, getPlayerState, submitPrediction, predicting } = useContract();
 
-  const initialPhase = gameState.phase === "predicting" && gameState.basePrice ? "predicting" : "waiting";
+  const initialPhase = (gameState.phase === "predicting" || gameState.phase === "settling") && gameState.basePrice
+    ? gameState.phase
+    : gameState.phase === "result" && gameState.result
+      ? "result"
+      : gameState.phase === "failed"
+        ? "failed"
+        : "waiting";
 
   const [phase, setPhase] = useState(initialPhase);
   const [countdown, setCountdown] = useState(gameState.countdown || PREDICT_TIMEOUT);
   const [myPrediction, setMyPrediction] = useState(null);
   const [pendingPrediction, setPendingPrediction] = useState(null);
-  const [predictedCount, setPredictedCount] = useState(0);
+  const [predictedCount, setPredictedCount] = useState(gameState.predictedCount || 0);
   const [basePrice, setBasePrice] = useState(gameState.basePrice || 0);
-  const [currentPrice, setCurrentPrice] = useState(gameState.basePrice || 0);
+  const [currentPrice, setCurrentPrice] = useState(gameState.currentPrice || gameState.basePrice || 0);
   const [result, setResult] = useState(gameState.result || null);
   const [gameId, setGameId] = useState(gameState.gameId);
   const [chainGameId, setChainGameId] = useState(gameState.chainGameId || gameState.gameId);
   const [totalPlayers, setTotalPlayers] = useState(gameState.players?.length || 0);
   const [claimState, setClaimState] = useState({ claimed: false, error: null, success: null });
+  const [claimStatus, setClaimStatus] = useState(null);
+  const [claimStatusLoading, setClaimStatusLoading] = useState(false);
+  const [failureMessage, setFailureMessage] = useState(gameState.failureMessage || null);
   const [predictSafeBuffer, setPredictSafeBuffer] = useState(PREDICT_SAFE_BUFFER);
   const [predictionDeadline, setPredictionDeadline] = useState(gameState.predictionDeadline || null);
+  const currentGameId = useMemo(
+    () => gameId || result?.gameId || gameState.gameId,
+    [gameId, result, gameState.gameId],
+  );
+  const currentChainGameId = useMemo(
+    () => chainGameId || result?.chainGameId || gameState.chainGameId || gameId,
+    [chainGameId, result, gameState.chainGameId, gameId],
+  );
+
+  const syncGameFromServer = useCallback(async (targetGameId = currentGameId) => {
+    if (!targetGameId) return null;
+    try {
+      const response = await fetch(`${SERVER_URL}/api/games/${targetGameId}`);
+      if (!response.ok) return null;
+      const data = await response.json();
+      const game = data?.game;
+      const players = Array.isArray(data?.players) ? data.players : [];
+      if (!game) return null;
+
+      const nextGameId = Number(game.id || targetGameId);
+      const nextChainGameId = Number(game.chain_game_id || nextGameId);
+      const playerWallets = players.map((player) => player.wallet_address?.toLowerCase?.()).filter(Boolean);
+      const walletLower = wallet?.toLowerCase?.() || null;
+      const myRow = walletLower ? players.find((player) => player.wallet_address?.toLowerCase?.() === walletLower) : null;
+      const nextBasePrice = Number(game.base_price || 0);
+      const nextSettlementPrice = Number(game.settlement_price || 0);
+
+      if (game.state === "settled") {
+        const playerState = walletLower ? await getPlayerState(nextChainGameId, walletLower) : null;
+        const restoredResult = {
+          gameId: nextGameId,
+          chainGameId: nextChainGameId,
+          basePrice: nextBasePrice,
+          settlementPrice: nextSettlementPrice,
+          direction: nextSettlementPrice > nextBasePrice ? "up" : nextSettlementPrice < nextBasePrice ? "down" : "flat",
+          myResult: myRow ? {
+            wallet: myRow.wallet_address?.toLowerCase?.() || walletLower,
+            prediction: myRow.prediction,
+            isCorrect: myRow.is_correct === null || myRow.is_correct === undefined ? null : !!myRow.is_correct,
+            reward: Number(myRow.reward || 0),
+            claimed: !!playerState?.claimed,
+          } : null,
+          platformFee: 0,
+        };
+        setGameId(nextGameId);
+        setChainGameId(nextChainGameId);
+        setBasePrice(nextBasePrice);
+        setCurrentPrice(nextSettlementPrice || nextBasePrice);
+        setTotalPlayers(playerWallets.length);
+        setPhase("result");
+        setCountdown(0);
+        setResult(restoredResult);
+        setFailureMessage(null);
+        setClaimStatus(null);
+        setClaimState({ claimed: false, error: null, success: null });
+        updateGame({
+          gameId: nextGameId,
+          chainGameId: nextChainGameId,
+          players: playerWallets,
+          basePrice: nextBasePrice,
+          currentPrice: nextSettlementPrice || nextBasePrice,
+          phase: "result",
+          result: restoredResult,
+          settlementPrice: nextSettlementPrice,
+          failureMessage: null,
+        });
+        return restoredResult;
+      }
+
+      if (game.state === "failed") {
+        const message = game.error_message || "Settlement was interrupted. Funds remain safe on-chain.";
+        setGameId(nextGameId);
+        setChainGameId(nextChainGameId);
+        setBasePrice(nextBasePrice);
+        setCurrentPrice(nextBasePrice);
+        setTotalPlayers(playerWallets.length);
+        setPhase("failed");
+        setCountdown(0);
+        setFailureMessage(message);
+        setResult(null);
+        setClaimStatus(null);
+        setClaimState({ claimed: false, error: null, success: null });
+        updateGame({
+          gameId: nextGameId,
+          chainGameId: nextChainGameId,
+          players: playerWallets,
+          basePrice: nextBasePrice,
+          currentPrice: nextBasePrice,
+          phase: "failed",
+          failureMessage: message,
+          result: null,
+        });
+        return { phase: "failed", gameId: nextGameId };
+      }
+
+      if (game.state === "active") {
+        const nextPhase = phase === "settling" || gameState.phase === "settling" ? "settling" : "predicting";
+        setGameId(nextGameId);
+        setChainGameId(nextChainGameId);
+        setBasePrice(nextBasePrice);
+        setCurrentPrice((previous) => previous || nextBasePrice);
+        setTotalPlayers(playerWallets.length);
+        setPhase(nextPhase);
+        updateGame({
+          gameId: nextGameId,
+          chainGameId: nextChainGameId,
+          players: playerWallets,
+          basePrice: nextBasePrice,
+          currentPrice: nextBasePrice,
+          phase: nextPhase,
+        });
+      }
+      return game;
+    } catch {
+      return null;
+    }
+  }, [currentGameId, gameState.phase, getPlayerState, phase, updateGame, wallet]);
+
+  const refreshClaimStatus = useCallback(async (targetChainGameId = currentChainGameId, silent = false) => {
+    if (!wallet || !targetChainGameId) {
+      setClaimStatus(null);
+      return null;
+    }
+    if (!silent) setClaimStatusLoading(true);
+    try {
+      const status = await getGameClaimStatus(targetChainGameId, wallet);
+      setClaimStatus(status);
+      if (status?.claimed) {
+        setClaimState((previous) => ({ ...previous, claimed: true }));
+      }
+      return status;
+    } finally {
+      if (!silent) setClaimStatusLoading(false);
+    }
+  }, [currentChainGameId, getGameClaimStatus, wallet]);
 
   useEffect(() => {
-    if (gameState.phase === "predicting" && gameState.basePrice) {
+    if ((gameState.phase === "predicting" || gameState.phase === "settling") && gameState.basePrice) {
       setGameId(gameState.gameId);
       setChainGameId(gameState.chainGameId || gameState.gameId);
       setBasePrice(gameState.basePrice);
-      setCurrentPrice(gameState.basePrice);
+      setCurrentPrice(gameState.currentPrice || gameState.basePrice);
       setTotalPlayers(gameState.players?.length || 0);
-      setPhase("predicting");
+      setPhase(gameState.phase);
       setCountdown(gameState.countdown || PREDICT_TIMEOUT);
       setPredictSafeBuffer(gameState.predictSafeBuffer || PREDICT_SAFE_BUFFER);
       setPredictionDeadline(gameState.predictionDeadline || null);
+      setPredictedCount(gameState.predictedCount || 0);
+      setResult(null);
       setPendingPrediction(null);
+      setFailureMessage(null);
+      setClaimStatus(null);
+      setClaimState({ claimed: false, error: null, success: null });
     }
     if (gameState.phase === "result" && gameState.result) {
+      setGameId(gameState.gameId || gameState.result.gameId);
       setPhase("result");
       setResult(gameState.result);
       setChainGameId(gameState.chainGameId || gameState.result.chainGameId || gameState.gameId);
+      setBasePrice(gameState.result.basePrice || gameState.basePrice || 0);
+      setCurrentPrice(gameState.result.settlementPrice || gameState.currentPrice || gameState.basePrice || 0);
+      setTotalPlayers(gameState.players?.length || totalPlayers);
       setPendingPrediction(null);
+      setFailureMessage(null);
+      setClaimStatus(null);
+      setClaimState({ claimed: false, error: null, success: null });
     }
-  }, [gameState]);
+    if (gameState.phase === "failed") {
+      setGameId(gameState.gameId);
+      setChainGameId(gameState.chainGameId || gameState.gameId);
+      setBasePrice(gameState.basePrice || 0);
+      setCurrentPrice(gameState.currentPrice || gameState.basePrice || 0);
+      setTotalPlayers(gameState.players?.length || 0);
+      setPhase("failed");
+      setCountdown(0);
+      setPendingPrediction(null);
+      setFailureMessage(gameState.failureMessage || "Settlement was interrupted. Funds remain safe on-chain.");
+    }
+  }, [gameState, totalPlayers]);
 
   useEffect(() => {
     setPendingPrediction(null);
@@ -81,7 +248,7 @@ export default function GamePlay() {
 
     const syncPredictionForWallet = async () => {
       const targetChainGameId = chainGameId || gameState.chainGameId || gameId || gameState.gameId;
-      const shouldTrackPrediction = phase === "predicting" || phase === "settling" || phase === "result";
+      const shouldTrackPrediction = phase === "predicting" || phase === "settling" || phase === "result" || phase === "failed";
       if (!wallet || !targetChainGameId || !shouldTrackPrediction) {
         setMyPrediction(null);
         return;
@@ -108,29 +275,135 @@ export default function GamePlay() {
   }, [wallet, chainGameId, gameId, gameState.chainGameId, gameState.gameId, phase, getPlayerState]);
 
   useEffect(() => {
+    if (!currentGameId) return undefined;
+    let cancelled = false;
+    const sync = async () => {
+      const restored = await syncGameFromServer(currentGameId);
+      if (cancelled) return;
+      if (!restored && phase === "waiting") {
+        setFailureMessage("We couldn't restore this battle yet. Give it a moment or return home.");
+      }
+    };
+    void sync();
+    return () => { cancelled = true; };
+  }, [currentGameId, phase, syncGameFromServer]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (phase !== "failed") {
+      setClaimStatus(null);
+      setClaimStatusLoading(false);
+      return undefined;
+    }
+
+    const pollClaimStatus = async (silent = false) => {
+      try {
+        const status = await refreshClaimStatus(currentChainGameId, silent);
+        if (cancelled || !status) return;
+        if (status.state === 3 && result?.myResult && !status.canClaimReward && !status.claimed) {
+          setClaimState((previous) => ({ ...previous, claimed: false }));
+        }
+      } catch {
+        if (!cancelled && !silent) setClaimStatus(null);
+      }
+    };
+
+    void pollClaimStatus(false);
+    const intervalId = setInterval(() => {
+      void pollClaimStatus(true);
+    }, 5000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+    };
+  }, [phase, currentChainGameId, refreshClaimStatus, result]);
+
+  useEffect(() => {
     const unsubscribers = [
       on("game:start", (data) => {
-        setGameId(data.gameId || gameState.gameId);
-        setChainGameId(data.chainGameId || gameState.chainGameId || data.gameId || gameState.gameId);
+        const nextGameId = data.gameId || gameState.gameId;
+        const nextChainGameId = data.chainGameId || gameState.chainGameId || data.gameId || gameState.gameId;
+        const nextPlayers = data.players || [];
+        const nextCountdown = Math.round((data.predictTimeout || 30000) / 1000);
+        const nextPredictSafeBuffer = Math.round((data.predictSafeBuffer || PREDICT_SAFE_BUFFER * 1000) / 1000);
+        setGameId(nextGameId);
+        setChainGameId(nextChainGameId);
         setBasePrice(data.basePrice);
         setCurrentPrice(data.basePrice);
-        setTotalPlayers(data.players?.length || 0);
+        setTotalPlayers(nextPlayers.length || 0);
         setPhase("predicting");
-        setCountdown(Math.round((data.predictTimeout || 30000) / 1000));
-        setPredictSafeBuffer(Math.round((data.predictSafeBuffer || PREDICT_SAFE_BUFFER * 1000) / 1000));
+        setCountdown(nextCountdown);
+        setPredictSafeBuffer(nextPredictSafeBuffer);
         setPredictionDeadline(data.predictionDeadline || null);
         setMyPrediction(null);
         setPendingPrediction(null);
         setPredictedCount(0);
         setResult(null);
+        setFailureMessage(null);
+        setClaimStatus(null);
         setClaimState({ claimed: false, error: null, success: null });
+        updateGame({
+          gameId: nextGameId,
+          chainGameId: nextChainGameId,
+          players: nextPlayers,
+          basePrice: data.basePrice,
+          currentPrice: data.basePrice,
+          phase: "predicting",
+          countdown: nextCountdown,
+          predictSafeBuffer: nextPredictSafeBuffer,
+          predictionDeadline: data.predictionDeadline || null,
+          predictedCount: 0,
+          result: null,
+          failureMessage: null,
+        });
+      }),
+      on("game:resume", (data) => {
+        const nextPhase = data.phase === "settling" ? "settling" : "predicting";
+        const nextGameId = data.gameId || gameState.gameId;
+        const nextChainGameId = data.chainGameId || gameState.chainGameId || data.gameId || gameState.gameId;
+        const nextPlayers = data.players || gameState.players || [];
+        const nextCountdown = Number.isFinite(data.remaining) ? data.remaining : Math.round((data.predictTimeout || 30000) / 1000);
+        const nextPredictSafeBuffer = Math.round((data.predictSafeBuffer || PREDICT_SAFE_BUFFER * 1000) / 1000);
+        setGameId(nextGameId);
+        setChainGameId(nextChainGameId);
+        setBasePrice(data.basePrice || 0);
+        setCurrentPrice(data.currentPrice || data.basePrice || 0);
+        setTotalPlayers(data.totalPlayers || nextPlayers.length || 0);
+        setPhase(nextPhase);
+        setCountdown(nextCountdown);
+        setPredictSafeBuffer(nextPredictSafeBuffer);
+        setPredictionDeadline(data.predictionDeadline || null);
+        setPredictedCount(data.totalPredicted || 0);
+        setResult(null);
+        setFailureMessage(null);
+        setClaimStatus(null);
+        setClaimState({ claimed: false, error: null, success: null });
+        updateGame({
+          gameId: nextGameId,
+          chainGameId: nextChainGameId,
+          players: nextPlayers,
+          basePrice: data.basePrice || 0,
+          currentPrice: data.currentPrice || data.basePrice || 0,
+          phase: nextPhase,
+          countdown: nextCountdown,
+          predictSafeBuffer: nextPredictSafeBuffer,
+          predictionDeadline: data.predictionDeadline || null,
+          predictedCount: data.totalPredicted || 0,
+          result: null,
+          failureMessage: null,
+        });
       }),
       on("game:countdown", (data) => {
         setCountdown(data.remaining);
         if (data.currentPrice) setCurrentPrice(data.currentPrice);
         if (data.phase === "settling" && phase !== "settling" && phase !== "result") setPhase("settling");
       }),
-      on("game:prediction", (data) => setPredictedCount(data.totalPredicted)),
+      on("game:prediction", (data) => {
+        setPredictedCount(data.totalPredicted);
+        updateGame({ predictedCount: data.totalPredicted });
+      }),
       on("game:predicted", (data) => {
         const targetChainGameId = chainGameId || gameState.chainGameId || gameId || gameState.gameId;
         if (wallet && targetChainGameId) writeStoredPrediction(targetChainGameId, wallet, data.prediction);
@@ -142,30 +415,83 @@ export default function GamePlay() {
         if (data.phase === "settling") {
           setPhase("settling");
           setCountdown(Math.round((data.settleDelay || 10000) / 1000));
+          updateGame({ phase: "settling", countdown: Math.round((data.settleDelay || 10000) / 1000) });
         }
       }),
       on("game:result", (data) => {
+        const nextGameId = data.gameId || gameState.gameId;
+        const nextChainGameId = data.chainGameId || gameState.chainGameId || data.gameId;
         setPhase("result");
         setResult(data);
-        setChainGameId(data.chainGameId || gameState.chainGameId || data.gameId);
+        setGameId(nextGameId);
+        setChainGameId(nextChainGameId);
+        setBasePrice(data.basePrice || basePrice);
+        setCurrentPrice(data.settlementPrice || data.basePrice || basePrice);
+        setCountdown(0);
+        setFailureMessage(null);
+        setClaimStatus(null);
         setClaimState({ claimed: false, error: null, success: null });
         updateGame({
-          gameId: data.gameId || gameState.gameId,
-          chainGameId: data.chainGameId || gameState.chainGameId || data.gameId,
+          gameId: nextGameId,
+          chainGameId: nextChainGameId,
           phase: "result",
           result: data,
           settlementPrice: data.settlementPrice,
+          currentPrice: data.settlementPrice || data.basePrice || basePrice,
+          failureMessage: null,
+        });
+      }),
+      on("game:failed", (data) => {
+        const message = data.message || "Settlement was interrupted. Funds remain safe on-chain.";
+        const nextGameId = data.gameId || gameState.gameId;
+        const nextChainGameId = data.chainGameId || gameState.chainGameId || data.gameId;
+        setPhase("failed");
+        setCountdown(0);
+        setPendingPrediction(null);
+        setGameId(nextGameId);
+        setChainGameId(nextChainGameId);
+        setBasePrice(data.basePrice || basePrice);
+        setCurrentPrice(data.basePrice || basePrice);
+        setFailureMessage(message);
+        setClaimState({ claimed: false, error: null, success: null });
+        updateGame({
+          gameId: nextGameId,
+          chainGameId: nextChainGameId,
+          phase: "failed",
+          failureMessage: message,
+          basePrice: data.basePrice || basePrice,
+          currentPrice: data.basePrice || basePrice,
         });
       }),
       on("game:error", (data) => {
         setPendingPrediction(null);
-        alert(data.message);
+        const message = data.message || "Game error";
+        if ((phase === "settling" || phase === "failed") && message.toLowerCase().includes("settlement")) {
+          setPhase("failed");
+          setCountdown(0);
+          setFailureMessage(message);
+          setClaimState({ claimed: false, error: null, success: null });
+          updateGame({
+            gameId: gameId || gameState.gameId,
+            chainGameId: currentChainGameId,
+            phase: "failed",
+            failureMessage: message,
+            basePrice,
+          });
+          return;
+        }
+        alert(message);
         nav("/");
       }),
     ];
 
     return () => unsubscribers.forEach((unsubscribe) => unsubscribe());
-  }, [on, nav, gameState, phase, updateGame]);
+  }, [on, nav, gameState, phase, updateGame, gameId, currentChainGameId, basePrice, wallet]);
+
+  useEffect(() => {
+    if (!wallet || !currentGameId) return;
+    emit("game:resume:request");
+  }, [wallet, currentGameId, emit]);
 
   const [predictionError, setPredictionError] = useState(null);
 
@@ -186,19 +512,28 @@ export default function GamePlay() {
     }
   };
 
-  const handleClaimReward = async () => {
+  const handleClaimFunds = async () => {
+    const targetChainGameId = currentChainGameId || chainGameId || gameState.chainGameId || gameId;
     try {
       setClaimState({ claimed: false, error: null, success: null });
-      await claimReward(chainGameId || result?.chainGameId || gameState.chainGameId || gameId);
+      const payout = await claimGameFunds(targetChainGameId, wallet);
+      const latestStatus = await refreshClaimStatus(targetChainGameId, true);
+      const claimedAmount = payout?.type === "refund"
+        ? latestStatus?.entryFee ?? claimStatus?.entryFee
+        : latestStatus?.reward ?? rewardAmount;
       setClaimState({
         claimed: true,
         error: null,
-        success: `Reward claimed to wallet${result?.myResult?.reward ? `: +${result.myResult.reward.toFixed(4)} USDC` : "."}`,
+        success: payout?.type === "refund"
+          ? `Refund claimed to wallet${claimedAmount ? `: ${claimedAmount.toFixed(4)} USDC` : "."}`
+          : `Reward claimed to wallet${claimedAmount ? `: +${claimedAmount.toFixed(4)} USDC` : "."}`,
       });
-      setResult((previous) => previous ? ({
-        ...previous,
-        myResult: previous.myResult ? { ...previous.myResult, claimed: true } : previous.myResult,
-      }) : previous);
+      if (payout?.type !== "refund") {
+        setResult((previous) => previous ? ({
+          ...previous,
+          myResult: previous.myResult ? { ...previous.myResult, claimed: true } : previous.myResult,
+        }) : previous);
+      }
     } catch (error) {
       setClaimState({ claimed: false, error: error?.message || "Claim failed. Please try again.", success: null });
     }
@@ -221,10 +556,6 @@ export default function GamePlay() {
     if (prediction === "down") return "SHORT";
     return null;
   };
-  const currentChainGameId = useMemo(
-    () => chainGameId || result?.chainGameId || gameState.chainGameId || gameId,
-    [chainGameId, result, gameState.chainGameId, gameId],
-  );
   const displayedPrediction = myPrediction || pendingPrediction;
   const normalizedPlayers = useMemo(
     () => (Array.isArray(gameState.players) ? gameState.players.map((player) => player?.toLowerCase?.()).filter(Boolean) : []),
@@ -242,6 +573,9 @@ export default function GamePlay() {
   const predictionBufferActive = phase === "predicting" && !displayedPrediction && countdown <= predictSafeBuffer;
   const resultPrediction = result?.myResult?.prediction || displayedPrediction;
   const resultPredictionLabel = formatPredictionLabel(resultPrediction);
+  const refundWaitSeconds = claimStatus?.refundUnlockAt ? Math.max(0, claimStatus.refundUnlockAt - Math.floor(Date.now() / 1000)) : null;
+  const canClaimFailedFunds = !!(claimStatus?.canClaimReward || claimStatus?.canClaimRefund || claimStatus?.canForceRefund);
+  const failedClaimLabel = claimStatus?.canClaimReward ? "Claim Reward" : "Claim Refund";
 
   return (
     <div className="page-container flex flex-col items-center">
@@ -330,6 +664,102 @@ export default function GamePlay() {
         </div>
       )}
 
+      {phase === "failed" && (
+        <div className="w-full max-w-2xl animate-slideUp">
+          <div className="rounded-2xl border border-amber-500/20 bg-gradient-to-br from-[#22160f] via-[#17110d] to-[#120d0a] shadow-2xl shadow-orange-900/20 p-6">
+            <div className="text-center">
+              <div className="text-4xl mb-3">⚠️</div>
+              <h3 className="text-lg font-black text-white/85">Settlement Interrupted</h3>
+              <p className="text-white/45 text-xs mt-2 leading-relaxed">
+                {failureMessage || "Settlement was interrupted. Funds remain safe on-chain while recovery options load."}
+              </p>
+              {currentChainGameId ? (
+                <p className="text-white/15 text-[10px] mt-3 font-mono">Chain Game #{currentChainGameId}</p>
+              ) : null}
+            </div>
+
+            {displayedPrediction && (
+              <div className="mt-4 rounded-2xl border border-amber-500/15 bg-amber-500/[0.04] p-4 text-center">
+                <p className="text-white/25 text-[10px] uppercase tracking-[0.2em] mb-1">Your Call</p>
+                <p className={displayedPrediction === "up" ? "text-emerald-400 font-black text-xl" : "text-rose-400 font-black text-xl"}>
+                  {displayedPrediction === "up" ? "LONG" : "SHORT"}
+                </p>
+              </div>
+            )}
+
+            <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="rounded-2xl border border-amber-500/15 bg-amber-500/[0.05] p-4 text-center">
+                <p className="text-white/20 text-[10px] uppercase tracking-[0.2em] mb-1">Base Price</p>
+                <p className="text-2xl font-mono font-black text-white/80">${basePrice.toLocaleString("en-US", { minimumFractionDigits: 2 })}</p>
+              </div>
+              <div className="rounded-2xl border border-amber-500/15 bg-amber-500/[0.05] p-4 text-center">
+                <p className="text-white/20 text-[10px] uppercase tracking-[0.2em] mb-1">Current Price</p>
+                <p className={`text-2xl font-mono font-black ${priceColor}`}>${currentPrice.toLocaleString("en-US", { minimumFractionDigits: 2 })}</p>
+                <p className={`text-[11px] font-mono mt-1 ${priceColor}`}>{diff >= 0 ? "+" : ""}{diff.toFixed(2)} ({percent}%)</p>
+              </div>
+            </div>
+
+            <div className="mt-4 rounded-2xl border border-amber-500/15 bg-amber-500/[0.04] p-4">
+              <div className="flex items-center justify-between gap-3 mb-3">
+                <div>
+                  <p className="text-amber-300 text-xs font-bold uppercase tracking-[0.2em]">Recovery</p>
+                  <p className="text-white/40 text-xs mt-1">We keep checking the contract so you can claim the correct outcome from this page.</p>
+                </div>
+                {claimStatus?.state === 3 && claimStatus?.reward > 0 && (
+                  <div className="text-right">
+                    <p className="text-white/20 text-[10px] uppercase tracking-[0.2em]">On-Chain Reward</p>
+                    <p className="text-emerald-400 font-mono font-black text-lg">{claimStatus.reward.toFixed(4)} USDC</p>
+                  </div>
+                )}
+              </div>
+
+              {claimState.error && <div className="bg-rose-500/10 border border-rose-500/15 text-rose-300 px-3 py-2 rounded-xl text-xs mb-3">{claimState.error}</div>}
+              {claimState.success && <div className="bg-emerald-500/10 border border-emerald-500/15 text-emerald-300 px-3 py-2 rounded-xl text-xs mb-3">{claimState.success}</div>}
+
+              {claimStatusLoading ? (
+                <p className="text-white/40 text-xs">Checking on-chain recovery status...</p>
+              ) : !wallet ? (
+                <p className="text-white/40 text-xs">Reconnect your wallet to see recovery options.</p>
+              ) : !claimStatus ? (
+                <p className="text-white/40 text-xs">Recovery status is temporarily unavailable. Refresh in a moment.</p>
+              ) : claimStatus.claimed || claimState.claimed ? (
+                <p className="text-emerald-300 text-xs">Funds for this round have already been claimed to your wallet.</p>
+              ) : canClaimFailedFunds ? (
+                <div className="space-y-2">
+                  <p className="text-white/50 text-xs">
+                    {claimStatus.canClaimReward
+                      ? "The round has already settled on-chain. You can claim your reward now."
+                      : claimStatus.canForceRefund
+                        ? "The grace period has expired. We can unlock the emergency refund and claim it in one flow."
+                        : "Refund is ready on-chain. Confirm one transaction to return your entry fee."}
+                  </p>
+                  <button
+                    onClick={handleClaimFunds}
+                    disabled={!canClaimFailedFunds || claiming}
+                    className="w-full py-3 rounded-xl font-black text-sm bg-gradient-to-r from-emerald-500 to-teal-500 text-white shadow-lg shadow-emerald-500/20 hover:shadow-emerald-500/30 disabled:opacity-40"
+                  >
+                    {claiming ? "Claiming..." : failedClaimLabel}
+                  </button>
+                </div>
+              ) : claimStatus.state === 3 ? (
+                <p className="text-white/45 text-xs">The round is settled on-chain, but this wallet has no claimable reward for this outcome.</p>
+              ) : claimStatus.state === 2 && refundWaitSeconds !== null ? (
+                <p className="text-white/45 text-xs">
+                  Settlement is still syncing. If the oracle does not finish first, the refund path unlocks in about {refundWaitSeconds}s.
+                </p>
+              ) : (
+                <p className="text-white/45 text-xs">Recovery is still syncing. You can also return to the home page and check history later.</p>
+              )}
+            </div>
+
+            <div className="flex gap-2 mt-4">
+              <button onClick={() => nav("/")} className="flex-1 py-2.5 rounded-xl bg-amber-500/[0.05] border border-amber-500/15 hover:bg-amber-500/[0.08] transition text-xs text-white/60">Home</button>
+              <button onClick={handleShareToX} className="flex-1 btn-primary !py-2.5 font-black !text-sm">Share to 𝕏</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {phase === "result" && result && (
         <div className="w-full max-w-2xl animate-slideUp">
           <div className="rounded-2xl border border-amber-500/20 bg-gradient-to-br from-[#22160f] via-[#17110d] to-[#120d0a] shadow-2xl shadow-orange-900/20 p-6">
@@ -376,7 +806,7 @@ export default function GamePlay() {
                 {claimState.success && <div className="bg-emerald-500/10 border border-emerald-500/15 text-emerald-300 px-3 py-2 rounded-xl text-xs mb-3">{claimState.success}</div>}
 
                 <button
-                  onClick={handleClaimReward}
+                  onClick={handleClaimFunds}
                   disabled={!canClaimReward || claiming}
                   className={`w-full py-3 rounded-xl font-black text-sm transition ${
                     claimState.claimed

@@ -6,6 +6,18 @@ class MatchmakingService {
   constructor() { this.queues = { 2: [], 3: [], 4: [], 5: [] }; this.timers = {}; this.io = null; }
   setIO(io) { this.io = io; }
 
+  getQueueEntry(wallet) {
+    for (const [teamSize, queue] of Object.entries(this.queues)) {
+      const entry = queue.find((player) => player.wallet === wallet);
+      if (entry) return { ...entry, teamSize: Number(teamSize) };
+    }
+    return null;
+  }
+
+  isQueued(wallet) {
+    return !!this.getQueueEntry(wallet);
+  }
+
   addPlayer(teamSize, wallet, socketId) {
     const q = this.queues[teamSize];
     if (!q) return { error: "Invalid team size" };

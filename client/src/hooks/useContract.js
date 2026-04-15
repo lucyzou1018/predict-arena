@@ -1,7 +1,7 @@
 import { useCallback, useState } from "react";
 import { ethers } from "ethers";
 import { useWallet } from "../context/WalletContext";
-import { ARENA_ABI, ERC20_ABI, CONTRACT_ADDRESS, USDC_ADDRESS } from "../config/contract";
+import { ARENA_ABI, ERC20_ABI, CONTRACT_ADDRESS, USDC_ADDRESS, GAME_STATE } from "../config/contract";
 import { ENTRY_FEE } from "../config/constants";
 
 function mapContractError(err) {
@@ -12,10 +12,16 @@ function mapContractError(err) {
     return "Transaction was cancelled in wallet.";
   }
   if (reason.includes("already claimed")) {
-    return "Reward has already been claimed.";
+    return "Funds have already been claimed.";
   }
   if (reason.includes("no reward")) {
     return "No reward is available for this round.";
+  }
+  if (reason.includes("not refundable")) {
+    return "Refund is not available for this round.";
+  }
+  if (reason.includes("refund not available yet")) {
+    return "Refund is not available yet. Please wait for the grace period to end.";
   }
   if (reason.includes("insufficient funds")) {
     return "Insufficient gas balance in wallet.";
@@ -61,6 +67,11 @@ export function useContract() {
     }
   }, [signer, wallet, chainOk, switchChain]);
 
+  const getArena = useCallback(() => {
+    if (!signer || !ethers.isAddress(CONTRACT_ADDRESS)) return null;
+    return new ethers.Contract(CONTRACT_ADDRESS, ARENA_ABI, signer);
+  }, [signer]);
+
   const mockPay = useCallback(async () => {
     setLoading(true);
     await new Promise((resolve) => setTimeout(resolve, 400));
@@ -74,15 +85,20 @@ export function useContract() {
 
     await ensureWalletReady();
 
-    const arena = new ethers.Contract(CONTRACT_ADDRESS, ARENA_ABI, signer);
-    const amount = ethers.parseUnits(ENTRY_FEE.toString(), 6);
+    const arena = getArena();
+    if (!arena) throw new Error("Wallet not connected");
 
     setLoading(true);
     try {
+      let amount = ethers.parseUnits(ENTRY_FEE.toString(), 6);
       let resolvedUsdc = USDC_ADDRESS;
       try {
-        const contractUsdc = await arena.usdc();
+        const [contractUsdc, snapshotAmount] = await Promise.all([
+          arena.usdc(),
+          arena.gameEntryFee(gameId),
+        ]);
         if (ethers.isAddress(contractUsdc)) resolvedUsdc = contractUsdc;
+        if (snapshotAmount > 0) amount = snapshotAmount;
       } catch {
         resolvedUsdc = USDC_ADDRESS;
       }
@@ -105,7 +121,7 @@ export function useContract() {
     } finally {
       setLoading(false);
     }
-  }, [ensureWalletReady, mockPay, shouldUseMockPayment, signer, wallet]);
+  }, [ensureWalletReady, getArena, mockPay, shouldUseMockPayment, signer, wallet]);
 
   const claimReward = useCallback(async (gameId) => {
     if (!gameId) throw new Error("Missing game id");
@@ -113,7 +129,8 @@ export function useContract() {
 
     await ensureWalletReady();
 
-    const arena = new ethers.Contract(CONTRACT_ADDRESS, ARENA_ABI, signer);
+    const arena = getArena();
+    if (!arena) throw new Error("Wallet not connected");
 
     setClaiming(true);
     try {
@@ -124,13 +141,11 @@ export function useContract() {
     } finally {
       setClaiming(false);
     }
-  }, [ensureWalletReady, shouldUseMockPayment, signer]);
+  }, [ensureWalletReady, getArena, shouldUseMockPayment]);
 
   const getPlayerState = useCallback(async (gameId, targetWallet = wallet) => {
-    if (!gameId || !targetWallet || !ethers.isAddress(CONTRACT_ADDRESS)) return null;
-    const reader = signer
-      ? new ethers.Contract(CONTRACT_ADDRESS, ARENA_ABI, signer)
-      : null;
+    if (!gameId || !targetWallet) return null;
+    const reader = getArena();
     if (!reader) return null;
     const [prediction, hasPaid, reward, claimed] = await reader.getPlayerPrediction(gameId, targetWallet);
     return {
@@ -139,17 +154,121 @@ export function useContract() {
       reward: Number(reward),
       claimed: !!claimed,
     };
-  }, [signer, wallet]);
+  }, [getArena, wallet]);
 
   const getPredictionDeadline = useCallback(async (gameId) => {
-    if (!gameId || !ethers.isAddress(CONTRACT_ADDRESS)) return null;
-    const reader = signer
-      ? new ethers.Contract(CONTRACT_ADDRESS, ARENA_ABI, signer)
-      : null;
+    if (!gameId) return null;
+    const reader = getArena();
     if (!reader) return null;
     const deadline = await reader.predictionDeadline(gameId);
     return Number(deadline);
-  }, [signer]);
+  }, [getArena]);
+
+  const getGameClaimStatus = useCallback(async (gameId, targetWallet = wallet) => {
+    if (!gameId || !targetWallet) return null;
+    const reader = getArena();
+    if (!reader) return null;
+
+    try {
+      const [gameInfo, playerStateRaw, deadlineRaw] = await Promise.all([
+        reader.getGameInfo(gameId),
+        reader.getPlayerPrediction(gameId, targetWallet),
+        reader.predictionDeadline(gameId),
+      ]);
+
+      let refundSupport = false;
+      let refundGraceRaw = 0n;
+      let entryFeeRaw = ethers.parseUnits(ENTRY_FEE.toString(), 6);
+
+      try {
+        [refundGraceRaw, entryFeeRaw] = await Promise.all([
+          reader.refundGracePeriod(),
+          reader.gameEntryFee(gameId),
+        ]);
+        refundSupport = true;
+      } catch {
+        refundSupport = false;
+      }
+
+      const state = Number(gameInfo[2]);
+      const prediction = Number(playerStateRaw[0]);
+      const hasPaid = !!playerStateRaw[1];
+      const rewardRaw = Number(playerStateRaw[2]);
+      const claimed = !!playerStateRaw[3];
+      const predictionDeadline = Number(deadlineRaw);
+      const refundGracePeriod = Number(refundGraceRaw);
+      const refundUnlockAt = predictionDeadline > 0 ? predictionDeadline + refundGracePeriod : null;
+      const entryFeeRawNumber = Number(entryFeeRaw);
+      const now = Math.floor(Date.now() / 1000);
+      const overdue = !!refundUnlockAt && now > refundUnlockAt;
+      const canForceRefund = refundSupport && state === GAME_STATE.ACTIVE && hasPaid && !claimed && overdue;
+      const canClaimRefund = refundSupport && state === GAME_STATE.REFUNDABLE && hasPaid && !claimed;
+      const canClaimReward = state === GAME_STATE.SETTLED && rewardRaw > 0 && !claimed;
+      const action = canClaimRefund || canForceRefund ? "refund" : canClaimReward ? "reward" : null;
+
+      return {
+        action,
+        canClaimRefund,
+        canClaimReward,
+        canForceRefund,
+        claimed,
+        entryFee: entryFeeRawNumber / 1_000_000,
+        entryFeeRaw: entryFeeRawNumber,
+        hasPaid,
+        overdue,
+        prediction,
+        predictionDeadline,
+        refundGracePeriod,
+        refundSupport,
+        refundUnlockAt,
+        reward: rewardRaw / 1_000_000,
+        rewardRaw,
+        state,
+      };
+    } catch {
+      return null;
+    }
+  }, [getArena, wallet]);
+
+  const claimGameFunds = useCallback(async (gameId, targetWallet = wallet) => {
+    if (!gameId) throw new Error("Missing game id");
+    if (shouldUseMockPayment) return { type: "mock" };
+
+    await ensureWalletReady();
+
+    const arena = getArena();
+    if (!arena) throw new Error("Wallet not connected");
+
+    setClaiming(true);
+    try {
+      const status = await getGameClaimStatus(gameId, targetWallet);
+      if (!status) throw new Error("Payout status unavailable. Refresh and try again.");
+
+      if (status.canClaimReward) {
+        await (await arena.claimReward(gameId)).wait();
+        return { type: "reward" };
+      }
+
+      if (status.canForceRefund) {
+        await (await arena.forceRefund(gameId)).wait();
+        await (await arena.claimRefund(gameId)).wait();
+        return { type: "refund" };
+      }
+
+      if (status.canClaimRefund) {
+        await (await arena.claimRefund(gameId)).wait();
+        return { type: "refund" };
+      }
+
+      if (status.claimed) throw new Error("Funds have already been claimed.");
+      if (status.state === GAME_STATE.ACTIVE) throw new Error("Refund is not available yet. Please wait for the grace period to end.");
+      throw new Error("No funds are currently claimable for this round.");
+    } catch (err) {
+      throw new Error(mapContractError(err));
+    } finally {
+      setClaiming(false);
+    }
+  }, [ensureWalletReady, getArena, getGameClaimStatus, shouldUseMockPayment, wallet]);
 
   const submitPrediction = useCallback(async (gameId, prediction) => {
     if (!gameId) throw new Error("Missing game id");
@@ -194,5 +313,18 @@ export function useContract() {
     }
   }, [ensureWalletReady, getPredictionDeadline, shouldUseMockPayment, signer, wallet]);
 
-  return { payForGame, claimReward, getPlayerState, getPredictionDeadline, submitPrediction, loading, claiming, predicting, mockPay, shouldUseMockPayment };
+  return {
+    payForGame,
+    claimReward,
+    claimGameFunds,
+    getPlayerState,
+    getPredictionDeadline,
+    getGameClaimStatus,
+    submitPrediction,
+    loading,
+    claiming,
+    predicting,
+    mockPay,
+    shouldUseMockPayment,
+  };
 }

@@ -4,6 +4,7 @@ export default {
   env: process.env.NODE_ENV || "development",
   db: { url: process.env.DATABASE_URL },
   redis: { url: process.env.REDIS_URL || "redis://localhost:6379" },
+  outbound: { proxyUrl: process.env.OUTBOUND_PROXY_URL || process.env.HTTPS_PROXY || process.env.HTTP_PROXY || process.env.ALL_PROXY || "" },
   rpc: { url: process.env.RPC_URL },
   contract: { address: process.env.CONTRACT_ADDRESS, oracleKey: process.env.ORACLE_PRIVATE_KEY },
   usdc: { address: process.env.USDC_ADDRESS },

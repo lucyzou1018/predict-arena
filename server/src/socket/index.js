@@ -4,6 +4,7 @@ import { query } from "../config/database.js";
 import matchmakingService from "../services/matchmaking.js";
 import roomService from "../services/room.js";
 import gameService from "../services/game.js";
+import contractService from "../services/contract.js";
 import priceService from "../services/price.js";
 
 export function initSocket(httpServer) {
@@ -16,6 +17,14 @@ export function initSocket(httpServer) {
   io.on("connection", (socket) => {
     console.log("[Socket] Connected:", socket.id);
     let wallet = null;
+    const getBusyMessage = (target, walletAddress) => {
+      if (!walletAddress) return null;
+      if (gameService.isInActiveGame(walletAddress)) return "Finish your current game first";
+      if (gameService.isInRoomPayment(walletAddress)) return "Finish or cancel your current payment flow first";
+      if (target === "match" && roomService.isInRoom(walletAddress)) return "Finish or cancel your active room first";
+      if (target === "room" && matchmakingService.isQueued(walletAddress)) return "Finish or cancel your current match first";
+      return null;
+    };
     const resolvePlayersForGame = async (gameId, fallbackPlayers = []) => {
       const dbPlayers = await query(
         `SELECT wallet_address
@@ -43,6 +52,13 @@ export function initSocket(httpServer) {
       wallet = d.wallet?.toLowerCase?.() || null;
       socket.data.wallet = wallet;
       console.log("[Socket] Auth:", wallet);
+      const resumedGame = gameService.rebindPlayerSocket(wallet, socket);
+      if (resumedGame) socket.emit("game:resume", resumedGame);
+    });
+    socket.on("game:resume:request", () => {
+      if (!wallet) return;
+      const resumedGame = gameService.rebindPlayerSocket(wallet, socket);
+      if (resumedGame) socket.emit("game:resume", resumedGame);
     });
     socket.on("price:subscribe", () => {
       let lastSent = 0;
@@ -75,6 +91,8 @@ export function initSocket(httpServer) {
     // Match
     socket.on("match:join", async d => {
       if (!wallet) return socket.emit("match:error", { message: "Connect wallet first" });
+      const busyMessage = getBusyMessage("match", wallet);
+      if (busyMessage) return socket.emit("match:error", { message: busyMessage });
       try {
         const r = await matchmakingService.addPlayer(d.teamSize, wallet, socket.id);
         if (r.error) return socket.emit("match:error", { message: r.error });
@@ -83,8 +101,9 @@ export function initSocket(httpServer) {
           session.timer = setTimeout(async () => {
             const current = gameService.getRoomPayment(r.gameId);
             if (!current) return;
-            await query(`UPDATE games SET state = 'failed' WHERE id = $1`, [r.gameId]);
+            await query(`UPDATE games SET state = 'cancelled' WHERE id = $1`, [r.gameId]);
             for (const p of r.players) io.to(p.socketId).emit("match:error", { message: "Payment timeout" });
+            if (r.chainGameId) await contractService.cancelGame(r.chainGameId);
             gameService.clearRoomPayment(r.gameId);
           }, config.game.paymentTimeout);
         }
@@ -97,6 +116,8 @@ export function initSocket(httpServer) {
     // Room
     socket.on("room:create", async d => {
       if (!wallet) return socket.emit("room:error", { message: "Connect wallet first" });
+      const busyMessage = getBusyMessage("room", wallet);
+      if (busyMessage) return socket.emit("room:error", { message: busyMessage });
       try {
         const r = await roomService.createRoom(d.teamSize, wallet, socket.id);
         if (r.error) return socket.emit("room:error", { message: r.error });
@@ -107,8 +128,11 @@ export function initSocket(httpServer) {
     });
     socket.on("room:validate", d => {
       if (!wallet) return socket.emit("room:invalid", { message: "Connect wallet first" });
+      const busyMessage = getBusyMessage("room", wallet);
+      if (busyMessage) return socket.emit("room:invalid", { message: busyMessage });
       const room = roomService.getRoom(d.inviteCode);
       if (!room) return socket.emit("room:invalid", { message: "Room not found" });
+      if (room.transitioning) return socket.emit("room:invalid", { message: "Room is updating, please retry" });
       if (room.players.length >= room.maxPlayers) return socket.emit("room:invalid", { message: "Room is full" });
       if (room.players.find(p => p.wallet === wallet)) return socket.emit("room:invalid", { message: "Already in this room" });
       for (const code in roomService.rooms) {
@@ -120,6 +144,8 @@ export function initSocket(httpServer) {
     });
     socket.on("room:join", async d => {
       if (!wallet) return socket.emit("room:error", { message: "Connect wallet first" });
+      const busyMessage = getBusyMessage("room", wallet);
+      if (busyMessage) return socket.emit("room:error", { message: busyMessage });
       try {
         const r = await roomService.joinRoom(d.inviteCode, wallet, socket.id);
         if (r.error) return socket.emit("room:error", { message: r.error });
@@ -129,13 +155,11 @@ export function initSocket(httpServer) {
           if (rm) {
             const players = [...rm.players]; const gid = rm.gameId; const cid = rm.chainGameId;
             const session = gameService.startRoomPayment(gid, d.inviteCode, players);
+            roomService.clearRoomExpiry(d.inviteCode);
             session.timer = setTimeout(async () => {
               const current = gameService.getRoomPayment(gid);
               if (!current) return;
-              await query(`UPDATE games SET state = 'failed' WHERE id = $1`, [gid]);
-              for (const p of players) io.to(p.socketId).emit("room:payment:failed", { reason: "Payment timeout" });
-              await roomService._dissolve(d.inviteCode, "Payment timeout");
-              gameService.clearRoomPayment(gid);
+              await roomService._abortPaymentRoom(d.inviteCode, "Payment timeout");
             }, config.game.paymentTimeout);
             for (const p of players) { io.to(p.socketId).emit("room:full", { gameId: gid, chainGameId: cid, players: players.map(x => x.wallet), inviteCode: d.inviteCode, paymentTimeout: config.game.paymentTimeout }); }
           }
@@ -145,7 +169,15 @@ export function initSocket(httpServer) {
       }
     });
     socket.on("room:leave", async () => { if (wallet) await roomService.leaveRoom(wallet); });
-    socket.on("room:dissolve", async d => { if (wallet) await roomService.dissolveRoom(d.inviteCode, wallet); });
+    socket.on("room:dissolve", async d => {
+      if (!wallet) return;
+      try {
+        const result = await roomService.dissolveRoom(d.inviteCode, wallet);
+        if (result?.error) socket.emit("room:error", { message: result.error });
+      } catch (error) {
+        socket.emit("room:error", { message: error?.message || "Cancel room failed" });
+      }
+    });
 
     socket.on("room:payment:confirm", async d => {
       const confirmedWallet = d?.wallet?.toLowerCase?.() || wallet;
@@ -171,6 +203,12 @@ export function initSocket(httpServer) {
               await gameService.startGame(d.gameId, chainGameId, players);
             } catch (error) {
               console.error("[Game] start failed", { gameId: d.gameId, chainGameId, error: error?.message || error });
+              try {
+                await query(`UPDATE games SET state='failed', error_message=$1 WHERE id=$2`, [error?.message || "Game start failed", d.gameId]);
+                if (chainGameId) await contractService.cancelGame(chainGameId);
+              } catch (cleanupError) {
+                console.error("[Game] start failure cleanup failed", { gameId: d.gameId, error: cleanupError?.message || cleanupError });
+              }
               for (const p of players) {
                 if (p.socketId) io.to(p.socketId).emit("room:error", { message: error?.message || "Game start failed" });
               }

@@ -2,6 +2,20 @@ import pg from "pg";
 import config from "./index.js";
 const pool = new pg.Pool({ connectionString: config.db.url });
 export async function query(text, params) { return pool.query(text, params); }
+export async function withTransaction(fn) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await fn(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
 export async function initDB() {
   await query(`CREATE TABLE IF NOT EXISTS users (
     wallet_address VARCHAR(42) PRIMARY KEY, wins INT DEFAULT 0, losses INT DEFAULT 0,
@@ -10,7 +24,8 @@ export async function initDB() {
   await query(`CREATE TABLE IF NOT EXISTS games (
     id SERIAL PRIMARY KEY, chain_game_id INT, mode VARCHAR(10) NOT NULL, invite_code VARCHAR(10),
     max_players SMALLINT NOT NULL, state VARCHAR(20) DEFAULT 'created', base_price NUMERIC(20,2),
-    settlement_price NUMERIC(20,2), created_at TIMESTAMPTZ DEFAULT NOW(), started_at TIMESTAMPTZ, settled_at TIMESTAMPTZ
+    settlement_price NUMERIC(20,2), error_message TEXT, created_at TIMESTAMPTZ DEFAULT NOW(),
+    started_at TIMESTAMPTZ, settled_at TIMESTAMPTZ, failed_at TIMESTAMPTZ
   )`);
   await query(`CREATE TABLE IF NOT EXISTS game_players (
     id SERIAL PRIMARY KEY, game_id INT REFERENCES games(id), wallet_address VARCHAR(42),
@@ -19,6 +34,8 @@ export async function initDB() {
   )`);
   await query(`CREATE INDEX IF NOT EXISTS idx_games_state ON games(state)`);
   await query(`CREATE INDEX IF NOT EXISTS idx_games_invite ON games(invite_code)`);
+  await query(`ALTER TABLE games ADD COLUMN IF NOT EXISTS error_message TEXT`);
+  await query(`ALTER TABLE games ADD COLUMN IF NOT EXISTS failed_at TIMESTAMPTZ`);
   await query(`ALTER TABLE game_players ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ`);
   await query(`ALTER TABLE game_players ADD COLUMN IF NOT EXISTS is_owner BOOLEAN DEFAULT false`);
   await query(`CREATE INDEX IF NOT EXISTS idx_gp_game ON game_players(game_id)`);
