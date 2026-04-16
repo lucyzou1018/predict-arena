@@ -13,6 +13,40 @@ class GameService {
   constructor() { this.activeGames = {}; this.io = null; this.roomPayments = {}; this.startingGames = new Set(); }
   setIO(io) { this.io = io; }
 
+  _findSocketIdByWallet(wallet) {
+    if (!wallet || !this.io?.sockets?.sockets) return null;
+    const matchedSocket = [...this.io.sockets.sockets.values()].find((candidate) => candidate.data?.wallet === wallet);
+    return matchedSocket?.id || null;
+  }
+
+  async _resolveGamePlayers(gameId, fallbackPlayers = []) {
+    const fallbackByWallet = new Map(
+      (fallbackPlayers || [])
+        .filter((player) => player?.wallet)
+        .map((player) => [player.wallet.toLowerCase(), { wallet: player.wallet.toLowerCase(), socketId: player.socketId || null }]),
+    );
+
+    const dbPlayers = await query(
+      `SELECT wallet_address
+       FROM game_players
+       WHERE game_id = $1
+       ORDER BY is_owner DESC, wallet_address ASC`,
+      [gameId],
+    );
+
+    if (dbPlayers.rowCount === 0) {
+      return [...fallbackByWallet.values()];
+    }
+
+    return dbPlayers.rows.map((row) => {
+      const wallet = row.wallet_address.toLowerCase();
+      return {
+        wallet,
+        socketId: fallbackByWallet.get(wallet)?.socketId || this._findSocketIdByWallet(wallet),
+      };
+    });
+  }
+
   getRoomPaymentByWallet(wallet) {
     for (const session of Object.values(this.roomPayments)) {
       const player = session?.players?.find((entry) => entry.wallet === wallet);
@@ -145,17 +179,19 @@ class GameService {
 
   async confirmRoomPayment(gameId, chainGameId, wallet) {
     const targetChainGameId = chainGameId || gameId;
-    let paidOnChain = false;
-    for (let attempt = 0; attempt < 5; attempt += 1) {
-      paidOnChain = await contractService.isPlayerPaid(targetChainGameId, wallet);
-      if (paidOnChain) break;
-      if (attempt < 4) await sleep(800);
+    let paidOnChain = contractService.isMockMode();
+    if (!paidOnChain) {
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        paidOnChain = await contractService.isPlayerPaid(targetChainGameId, wallet);
+        if (paidOnChain) break;
+        if (attempt < 4) await sleep(800);
+      }
     }
     if (!paidOnChain) throw new Error("On-chain payment not confirmed");
     await query("UPDATE game_players SET paid=true, paid_at=NOW() WHERE game_id=$1 AND wallet_address=$2", [gameId, wallet]);
     const r = await query("SELECT wallet_address, paid FROM game_players WHERE game_id=$1", [gameId]);
     const allPaidDb = r.rows.length > 0 && r.rows.every(x => x.paid === true);
-    const allPaidChain = await contractService.allPlayersPaid(targetChainGameId);
+    const allPaidChain = contractService.isMockMode() ? true : await contractService.allPlayersPaid(targetChainGameId);
     const allPaid = allPaidDb && allPaidChain;
     if (allPaid) await query("UPDATE games SET state='payment' WHERE id=$1", [gameId]);
     return { allPaid, paidCount: r.rows.filter(x => x.paid).length, total: r.rows.length };
@@ -170,9 +206,10 @@ class GameService {
     }
     this.startingGames.add(gameId);
     try {
+    const resolvedPlayers = await this._resolveGamePlayers(gameId, players);
     const basePrice = priceService.getPrice();
     if (!basePrice || basePrice <= 0) {
-      this._emitToPlayers(players, "game:error", { message: "BTC price unavailable" });
+      this._emitToPlayers(resolvedPlayers, "game:error", { message: "BTC price unavailable" });
       return;
     }
     const chainPredictionDeadline = await contractService.startGame(chainGameId, Math.round(basePrice * 100));
@@ -180,7 +217,7 @@ class GameService {
     const game = {
       gameId,
       chainGameId,
-      players,
+      players: resolvedPlayers,
       predictions: {},
       basePrice,
       phase: "predicting",
@@ -192,20 +229,20 @@ class GameService {
       "UPDATE games SET state='active',base_price=$1,started_at=NOW(),settlement_price=NULL,settled_at=NULL,failed_at=NULL,error_message=NULL WHERE id=$2",
       [basePrice, gameId],
     );
-    for (const p of players) await query("INSERT INTO game_players(game_id,wallet_address,paid)VALUES($1,$2,true)ON CONFLICT DO NOTHING", [gameId, p.wallet]);
+    for (const p of resolvedPlayers) await query("INSERT INTO game_players(game_id,wallet_address,paid)VALUES($1,$2,true)ON CONFLICT DO NOTHING", [gameId, p.wallet]);
 
     const room = `game:${gameId}`;
-    for (const p of players) {
+    for (const p of resolvedPlayers) {
       if (!p.socketId) continue;
       const s = this.io?.sockets.sockets.get(p.socketId);
       if (s) s.join(room);
     }
-    console.log(`[Game] #${gameId} started base=$${basePrice} players=${players.length}`);
+    console.log(`[Game] #${gameId} started base=$${basePrice} players=${resolvedPlayers.length}`);
     this.io?.to(room).emit("game:start", {
       gameId,
       chainGameId,
       basePrice,
-      players: players.map(p => p.wallet),
+      players: resolvedPlayers.map(p => p.wallet),
       predictTimeout: config.game.predictTimeout,
       predictSafeBuffer: config.game.predictSafeBuffer,
       predictionDeadline: game.predictionDeadline,
@@ -226,7 +263,26 @@ class GameService {
   async confirmPrediction(gameId, wallet, prediction) {
     const g = this.activeGames[gameId]; if (!g) return { error: "Game not found" };
     if (g.phase !== "predicting") return { error: "Prediction phase ended" };
-    if (!g.players.find(p => p.wallet === wallet)) return { error: "Not in this game" };
+    let player = g.players.find((entry) => entry.wallet === wallet);
+    if (!player) {
+      const membership = await query(
+        `SELECT 1
+         FROM game_players
+         WHERE game_id = $1 AND LOWER(wallet_address) = LOWER($2)
+         LIMIT 1`,
+        [gameId, wallet],
+      );
+      if (membership.rowCount === 0) return { error: "Not in this game" };
+      const repairedPlayers = await this._resolveGamePlayers(gameId, g.players);
+      if (repairedPlayers.length > 0) {
+        g.players = repairedPlayers;
+        player = g.players.find((entry) => entry.wallet === wallet) || null;
+      }
+      if (!player) {
+        player = { wallet, socketId: this._findSocketIdByWallet(wallet) };
+        g.players.push(player);
+      }
+    }
     if (prediction !== "up" && prediction !== "down") return { error: "Invalid prediction" };
     const expectedValue = prediction === "up" ? 1 : 2;
 
@@ -234,15 +290,18 @@ class GameService {
       return g.predictions[wallet] === prediction ? { status: "ok" } : { error: "Prediction already submitted" };
     }
 
-    let onchainPrediction = 0;
-    for (let attempt = 0; attempt < 6; attempt += 1) {
-      const playerState = await contractService.getPlayerPrediction(g.chainGameId, wallet);
-      onchainPrediction = Number(playerState?.prediction || 0);
-      if (onchainPrediction === expectedValue) break;
-      if (onchainPrediction !== 0) {
-        return { error: "Prediction already submitted" };
+    let onchainPrediction = expectedValue;
+    if (!contractService.isMockMode()) {
+      onchainPrediction = 0;
+      for (let attempt = 0; attempt < 6; attempt += 1) {
+        const playerState = await contractService.getPlayerPrediction(g.chainGameId, wallet);
+        onchainPrediction = Number(playerState?.prediction || 0);
+        if (onchainPrediction === expectedValue) break;
+        if (onchainPrediction !== 0) {
+          return { error: "Prediction already submitted" };
+        }
+        if (attempt < 5) await sleep(400);
       }
-      if (attempt < 5) await sleep(400);
     }
 
     if (onchainPrediction !== expectedValue) {

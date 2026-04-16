@@ -396,7 +396,7 @@ export default function Home(){
           setJoinRoom({current:d.current,total,players:d.players});
           if(d.expiresAt)setJoinExpiresAt(d.expiresAt);
         }
-        if(d.status==="full"||(d.total&&d.current>=d.total))enterRoomPayment(d);
+        if((d.status==="full"||(d.total&&d.current>=d.total))&&d.chainGameId)enterRoomPayment(d);
       }),
       on("room:full",d=>{
         enterRoomPayment(d);
@@ -424,7 +424,10 @@ export default function Home(){
         if(createPaidRef.current){refund(ENTRY_FEE);setCreatePaid(false);}
         if(joinPaidRef.current){refund(ENTRY_FEE);setJoinPaid(false);}
         setOpenRoom(null);setRoomCode("");setRoom({current:0,total:0,players:[]});
-        setRoomExpiresAt(null);setJoinExpiresAt(null);setPaymentStartedAt(null);
+        setRoomExpiresAt(null);setRoomCountdown(null);
+        setJoinExpiresAt(null);setJoinCountdown(null);
+        setPaymentStartedAt(null);setPaymentCountdown(null);
+        setRoomFullInfo(null);setPaymentProgress({paidCount:0,total:0});setPaymentErr(null);
         setCreatePhase("select");setJoinPhase("select");
         setCreateHint(null);
         if(wasCreateFlow && d&&d.reason && !selfCancelledCreate)setCreateErr(d.reason);
@@ -472,8 +475,12 @@ export default function Home(){
         const current=d.current||d.players?.length||0;
         setJoinRoom({current,total,players:d.players});
         if(d.expiresAt)setJoinExpiresAt(d.expiresAt);
-        if(d.status==="full"){enterRoomPayment(d);setJoinPhase("payment");}
-        else setJoinPhase("waiting");
+        if(d.status==="full"){
+          enterRoomPayment(d);
+          setJoinPhase("payment");
+        } else if(joinPhaseRef.current!=="payment"&&joinPhaseRef.current!=="paid_waiting"){
+          setJoinPhase("waiting");
+        }
       }),
       on("game:start",d=>{
         updateGame({gameId:d.gameId,chainGameId:d.chainGameId||d.gameId,mode:"room",teamSize:d.players.length,players:d.players,phase:"predicting",basePrice:d.basePrice,countdown:Math.round((d.predictTimeout||30000)/1000),predictSafeBuffer:Math.round((d.predictSafeBuffer||5000)/1000),predictionDeadline:d.predictionDeadline||null});
@@ -498,8 +505,9 @@ export default function Home(){
 
   const createRoom=()=>{if(isJoinBusy||isMatchBusy){setCreateErr("Finish or cancel current action first");return;}if(isCreateBusy){setCreateErr("Already creating a room");return;}if(!mockMode && (!wallet || !provider || !signer)){connect({type:"create-room"});return;}createCancelPendingRef.current=false;createPhaseBeforeCancelRef.current="select";setCreateErr(null);setCreateHint(null);setCreatePhase("creating");if(createTimeoutRef.current)clearTimeout(createTimeoutRef.current);createTimeoutRef.current=setTimeout(()=>{createTimeoutRef.current=null;if(createPhaseRef.current==="creating")setCreateHint("Base Sepolia is taking longer than usual. Waiting for on-chain confirmation...");},12000);emit("room:create",{teamSize:createTeamSize});};
   const payCreate=useCallback(async()=>{try{setPaymentErr(null);if(!roomFullInfo?.chainGameId||!roomFullInfo?.gameId||!wallet)throw new Error("Missing game id");await payForGame(roomFullInfo.chainGameId);setCreatePaid(true);setCreateErr(null);emit("room:payment:confirm",{gameId:roomFullInfo.gameId,chainGameId:roomFullInfo.chainGameId,inviteCode:roomCode,wallet});setCreatePhase("paid_waiting");}catch(e){const msg=formatPaymentUiError(e?.message||"Payment failed");setCreateErr(msg);setPaymentErr(msg);}},[payForGame,roomFullInfo,roomCode,emit,wallet]);
-  const cancelCreate=()=>{createCancelPendingRef.current=true;createPhaseBeforeCancelRef.current=createPhaseRef.current;setCreateErr(null);setCreateHint("Cancelling room...");setCreatePhase("dissolving");emit("room:dissolve",{inviteCode:roomCode});};
-  const dissolveRoom=()=>{createCancelPendingRef.current=true;createPhaseBeforeCancelRef.current=createPhaseRef.current;setCreateErr(null);setCreateHint("Cancelling room...");setCreatePhase("dissolving");emit("room:dissolve",{inviteCode:roomCode});};
+  const beginCreateRoomCancel=()=>{createCancelPendingRef.current=true;createPhaseBeforeCancelRef.current=createPhaseRef.current;setCreateErr(null);setCreateHint("Cancelling room...");setRoomCountdown(null);setCreatePhase("dissolving");emit("room:dissolve",{inviteCode:roomCodeRef.current||roomCode});};
+  const cancelCreate=()=>{beginCreateRoomCancel();};
+  const dissolveRoom=()=>{beginCreateRoomCancel();};
   const clearExpired=()=>{setCreatePhase("select");setRoomCode("");setRoom({current:0,total:0,players:[]});setOpenRoom(null);setCreateErr(null);reloadHistory(wallet);};
   const copyCode=()=>{navigator.clipboard.writeText(roomCode);setCopied(true);setTimeout(()=>setCopied(false),2000);};
 

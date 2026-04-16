@@ -37,7 +37,7 @@ function clearStoredPrediction(gameId, wallet) {
 export default function GamePlay() {
   const nav = useNavigate();
   const { on, emit } = useSocket();
-  const { gameState, updateGame } = useGame();
+  const { gameState, updateGame, resetGame } = useGame();
   const { wallet } = useWallet();
   const { claimGameFunds, claiming, getGameClaimStatus, getPlayerState, submitPrediction, predicting } = useContract();
 
@@ -473,6 +473,11 @@ export default function GamePlay() {
       on("game:error", (data) => {
         setPendingPrediction(null);
         const message = data.message || "Game error";
+        if (message === "Not in this game") {
+          resetGame();
+          nav("/", { replace: true });
+          return;
+        }
         if ((phase === "settling" || phase === "failed") && message.toLowerCase().includes("settlement")) {
           setPhase("failed");
           setCountdown(0);
@@ -500,7 +505,7 @@ export default function GamePlay() {
     ];
 
     return () => unsubscribers.forEach((unsubscribe) => unsubscribe());
-  }, [on, nav, gameState, phase, updateGame, gameId, currentChainGameId, basePrice, wallet, myPrediction]);
+  }, [on, nav, gameState, phase, updateGame, resetGame, gameId, currentChainGameId, basePrice, wallet, myPrediction]);
 
   useEffect(() => {
     if (!wallet || !currentGameId) return;
@@ -594,6 +599,15 @@ export default function GamePlay() {
   const refundWaitSeconds = claimStatus?.refundUnlockAt ? Math.max(0, claimStatus.refundUnlockAt - Math.floor(Date.now() / 1000)) : null;
   const canClaimFailedFunds = !!(claimStatus?.canClaimReward || claimStatus?.canClaimRefund || claimStatus?.canForceRefund);
   const failedClaimLabel = claimStatus?.canClaimReward ? "Claim Reward" : "Claim Refund";
+
+  useEffect(() => {
+    const hasResolvedPlayers = normalizedPlayers.length > 0;
+    const inBattlePhase = phase === "predicting" || phase === "settling" || phase === "result" || phase === "failed";
+    if (!currentWallet || !hasResolvedPlayers || !inBattlePhase) return;
+    if (normalizedPlayers.includes(currentWallet)) return;
+    resetGame();
+    nav("/", { replace: true });
+  }, [currentWallet, normalizedPlayers, phase, nav, resetGame]);
 
   return (
     <div className="page-container flex flex-col items-center">

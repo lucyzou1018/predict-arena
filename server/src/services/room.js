@@ -59,41 +59,26 @@ class RoomService {
     const code = generateInviteCode();
     const res = await query(`INSERT INTO games (mode, max_players, invite_code, state) VALUES ('room', $1, $2, 'waiting') RETURNING id`, [maxPlayers, code]);
     const gameId = res.rows[0].id;
-    await query(`INSERT INTO game_players (game_id, wallet_address, paid, is_owner) VALUES ($1, $2, false, true) ON CONFLICT DO NOTHING`, [gameId, wallet]);
-    const expiresAt = Date.now() + config.game.roomExpiry;
-    this.rooms[code] = {
-      gameId, chainGameId: gameId, maxPlayers,
-      players: [{ wallet, socketId }], owner: wallet,
-      createdAt: Date.now(), expiresAt,
-      timer: setTimeout(() => this._expire(code), config.game.roomExpiry),
-      paid: {}, transitioning: false,
-      _chainOps: [],
-    };
-    // Chain tx fires in background — will complete before payment phase
-    const chainPromise = contractService.ownerCreateRoom(maxPlayers, code, wallet)
-      .then(async (cid) => {
-        const chainGameId = cid || gameId;
-        const room = this.rooms[code];
-        if (room) room.chainGameId = chainGameId;
-        await query(`UPDATE games SET chain_game_id = $1 WHERE id = $2`, [chainGameId, gameId]);
-        return chainGameId;
-      })
-      .catch(async (error) => {
-        console.error("[Room] chain createRoom failed", { code, gameId, error: error?.message || error });
-        const room = this.rooms[code];
-        if (room) {
-          for (const p of room.players) {
-            if (p?.socketId) this.io?.to(p.socketId).emit("room:dissolved", { reason: error?.message || "On-chain room creation failed" });
-          }
-          this._clearRoomTimer(room);
-          delete this.rooms[code];
-        }
-        await query(`DELETE FROM game_players WHERE game_id = $1`, [gameId]).catch(() => {});
-        await query(`DELETE FROM games WHERE id = $1`, [gameId]).catch(() => {});
-        throw error;
-      });
-    this.rooms[code]._chainOps.push(chainPromise);
-    return { inviteCode: code, gameId, chainGameId: gameId, maxPlayers, expiresAt };
+    try {
+      const chainGameId = await contractService.ownerCreateRoom(maxPlayers, code, wallet) || gameId;
+      await query(`UPDATE games SET chain_game_id = $1 WHERE id = $2`, [chainGameId, gameId]);
+      await query(`INSERT INTO game_players (game_id, wallet_address, paid, is_owner) VALUES ($1, $2, false, true) ON CONFLICT DO NOTHING`, [gameId, wallet]);
+      const expiresAt = Date.now() + config.game.roomExpiry;
+      this.rooms[code] = {
+        gameId, chainGameId, maxPlayers,
+        players: [{ wallet, socketId }], owner: wallet,
+        createdAt: Date.now(), expiresAt,
+        timer: setTimeout(() => this._expire(code), config.game.roomExpiry),
+        paid: {}, transitioning: false,
+        _chainOps: [],
+      };
+      return { inviteCode: code, gameId, chainGameId, maxPlayers, expiresAt };
+    } catch (error) {
+      console.error("[Room] createRoom failed", { code, gameId, error: error?.message || error });
+      await query(`DELETE FROM game_players WHERE game_id = $1`, [gameId]).catch(() => {});
+      await query(`DELETE FROM games WHERE id = $1`, [gameId]).catch(() => {});
+      throw error;
+    }
   }
 
   async joinRoom(code, wallet, socketId) {
@@ -111,7 +96,18 @@ class RoomService {
     });
     if (!r._chainOps) r._chainOps = [];
     r._chainOps.push(joinPromise);
-    if (r.players.length === r.maxPlayers) { return { status: "full", gameId: r.gameId, chainGameId: r.chainGameId, players: r.players.map(p => p.wallet) }; }
+    if (r.players.length === r.maxPlayers) {
+      return {
+        status: "full",
+        inviteCode: code,
+        gameId: r.gameId,
+        chainGameId: r.chainGameId,
+        current: r.players.length,
+        total: r.maxPlayers,
+        players: r.players.map((p) => p.wallet),
+        paymentTimeout: config.game.paymentTimeout,
+      };
+    }
     return { status: "joined", gameId: r.gameId, current: r.players.length, total: r.maxPlayers, players: r.players.map(p => p.wallet), expiresAt: r.expiresAt };
   }
 
@@ -134,20 +130,25 @@ class RoomService {
     if (r.transitioning) return false;
     r.transitioning = true;
     const players = [...r.players];
-    try {
-      await contractService.cancelGame(r.chainGameId);
-      await query(`UPDATE games SET state = $1 WHERE id = $2`, [state, r.gameId]);
-      this._clearRoomTimer(r);
-      delete this.rooms[code];
-      gameService.clearRoomPayment(r.gameId);
-      for (const p of players) {
-        if (p?.socketId) this.io?.to(p.socketId).emit(event, { reason });
-      }
-      return true;
-    } catch (error) {
-      r.transitioning = false;
-      throw error;
+    const chainGameId = r.chainGameId;
+    const gameId = r.gameId;
+
+    // Immediately clean up memory and notify players
+    this._clearRoomTimer(r);
+    delete this.rooms[code];
+    gameService.clearRoomPayment(gameId);
+    for (const p of players) {
+      if (p?.socketId) this.io?.to(p.socketId).emit(event, { reason });
     }
+
+    // DB update and chain cancel run in background
+    query(`UPDATE games SET state = $1 WHERE id = $2`, [state, gameId]).catch((error) => {
+      console.error("[Room] failed to update game state on close", { code, gameId, state, error: error?.message || error });
+    });
+    contractService.cancelGame(chainGameId).catch((error) => {
+      console.error("[Room] background cancelGame failed", { code, chainGameId, error: error?.message || error });
+    });
+    return true;
   }
 
   async _abortPaymentRoom(code, reason) {
