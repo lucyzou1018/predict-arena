@@ -155,6 +155,10 @@ export function initSocket(httpServer) {
         if (r.status === "full") {
           const rm = roomService.getRoom(d.inviteCode);
           if (rm) {
+            try { await roomService.awaitChainReady(d.inviteCode); } catch (e) {
+              console.error("[Room] chain setup failed when full", { inviteCode: d.inviteCode, error: e?.message || e });
+              return;
+            }
             const players = [...rm.players]; const gid = rm.gameId; const cid = rm.chainGameId;
             const session = gameService.startRoomPayment(gid, d.inviteCode, players);
             roomService.clearRoomExpiry(d.inviteCode);

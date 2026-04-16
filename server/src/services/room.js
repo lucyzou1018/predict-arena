@@ -59,29 +59,41 @@ class RoomService {
     const code = generateInviteCode();
     const res = await query(`INSERT INTO games (mode, max_players, invite_code, state) VALUES ('room', $1, $2, 'waiting') RETURNING id`, [maxPlayers, code]);
     const gameId = res.rows[0].id;
-    try {
-      const chainGameId = await contractService.ownerCreateRoom(maxPlayers, code, wallet) || gameId;
-      await query(`UPDATE games SET chain_game_id = $1 WHERE id = $2`, [chainGameId, gameId]);
-      await query(`INSERT INTO game_players (game_id, wallet_address, paid, is_owner) VALUES ($1, $2, false, true) ON CONFLICT DO NOTHING`, [gameId, wallet]);
-      const expiresAt = Date.now() + config.game.roomExpiry;
-      this.rooms[code] = {
-        gameId,
-        chainGameId,
-        maxPlayers,
-        players: [{ wallet, socketId }],
-        owner: wallet,
-        createdAt: Date.now(),
-        expiresAt,
-        timer: setTimeout(() => this._expire(code), config.game.roomExpiry),
-        paid: {},
-        transitioning: false,
-      };
-      return { inviteCode: code, gameId, chainGameId, maxPlayers, expiresAt };
-    } catch (error) {
-      await query(`DELETE FROM game_players WHERE game_id = $1`, [gameId]);
-      await query(`DELETE FROM games WHERE id = $1`, [gameId]);
-      throw error;
-    }
+    await query(`INSERT INTO game_players (game_id, wallet_address, paid, is_owner) VALUES ($1, $2, false, true) ON CONFLICT DO NOTHING`, [gameId, wallet]);
+    const expiresAt = Date.now() + config.game.roomExpiry;
+    this.rooms[code] = {
+      gameId, chainGameId: gameId, maxPlayers,
+      players: [{ wallet, socketId }], owner: wallet,
+      createdAt: Date.now(), expiresAt,
+      timer: setTimeout(() => this._expire(code), config.game.roomExpiry),
+      paid: {}, transitioning: false,
+      _chainOps: [],
+    };
+    // Chain tx fires in background — will complete before payment phase
+    const chainPromise = contractService.ownerCreateRoom(maxPlayers, code, wallet)
+      .then(async (cid) => {
+        const chainGameId = cid || gameId;
+        const room = this.rooms[code];
+        if (room) room.chainGameId = chainGameId;
+        await query(`UPDATE games SET chain_game_id = $1 WHERE id = $2`, [chainGameId, gameId]);
+        return chainGameId;
+      })
+      .catch(async (error) => {
+        console.error("[Room] chain createRoom failed", { code, gameId, error: error?.message || error });
+        const room = this.rooms[code];
+        if (room) {
+          for (const p of room.players) {
+            if (p?.socketId) this.io?.to(p.socketId).emit("room:dissolved", { reason: error?.message || "On-chain room creation failed" });
+          }
+          this._clearRoomTimer(room);
+          delete this.rooms[code];
+        }
+        await query(`DELETE FROM game_players WHERE game_id = $1`, [gameId]).catch(() => {});
+        await query(`DELETE FROM games WHERE id = $1`, [gameId]).catch(() => {});
+        throw error;
+      });
+    this.rooms[code]._chainOps.push(chainPromise);
+    return { inviteCode: code, gameId, chainGameId: gameId, maxPlayers, expiresAt };
   }
 
   async joinRoom(code, wallet, socketId) {
@@ -89,12 +101,24 @@ class RoomService {
     if (r.transitioning) return { error: "房间正在更新，请稍后重试" };
     if (r.players.find(p => p.wallet === wallet)) return { error: "已在房间中" };
     for (const c in this.rooms) { if (c !== code && this.rooms[c].players.find(p => p.wallet === wallet)) return { error: "已在其他房间中" }; }
-    await contractService.ownerJoinRoom(code, wallet);
     r.players.push({ wallet, socketId });
     await query(`INSERT INTO game_players (game_id, wallet_address, paid) VALUES ($1, $2, false) ON CONFLICT DO NOTHING`, [r.gameId, wallet]);
     this._broadcast(code);
+    // Chain join fires in background
+    const joinPromise = contractService.ownerJoinRoom(code, wallet).catch((error) => {
+      console.error("[Room] chain joinRoom failed", { code, wallet, error: error?.message || error });
+      throw error;
+    });
+    if (!r._chainOps) r._chainOps = [];
+    r._chainOps.push(joinPromise);
     if (r.players.length === r.maxPlayers) { return { status: "full", gameId: r.gameId, chainGameId: r.chainGameId, players: r.players.map(p => p.wallet) }; }
     return { status: "joined", gameId: r.gameId, current: r.players.length, total: r.maxPlayers, players: r.players.map(p => p.wallet), expiresAt: r.expiresAt };
+  }
+
+  async awaitChainReady(code) {
+    const r = this.rooms[code];
+    if (!r?._chainOps?.length) return;
+    await Promise.all(r._chainOps);
   }
 
   clearRoomExpiry(code) {
@@ -209,6 +233,7 @@ class RoomService {
         timer: null,
         paid: {},
         transitioning: false,
+        _chainOps: [],
       };
       this._scheduleRoomExpiry(code, remainingMs);
       gameService.clearRoomPayment(room.gameId);

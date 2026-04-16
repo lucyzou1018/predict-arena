@@ -4,7 +4,7 @@ import config from "../config/index.js";
 import { createRpcFetchRequest, proxyUrl } from "../utils/network.js";
 
 const TX_CONFIRM_TIMEOUT_MS = parseInt(process.env.CONTRACT_TX_CONFIRM_TIMEOUT_MS || "45000", 10);
-const TX_RECOVERY_TIMEOUT_MS = parseInt(process.env.CONTRACT_TX_RECOVERY_TIMEOUT_MS || "15000", 10);
+const TX_RECOVERY_TIMEOUT_MS = parseInt(process.env.CONTRACT_TX_RECOVERY_TIMEOUT_MS || "30000", 10);
 const TX_RECOVERY_POLL_MS = 2000;
 const NONCE_LOCK_WAIT_MS = parseInt(process.env.CONTRACT_NONCE_LOCK_WAIT_MS || "30000", 10);
 const NONCE_LOCK_TTL_MS = parseInt(process.env.CONTRACT_NONCE_LOCK_TTL_MS || "15000", 10);
@@ -72,6 +72,7 @@ class ContractService {
     this.instanceId = `${process.pid}:${Math.random().toString(36).slice(2, 10)}`;
     this.feeCache = null;
     this.relayQueue = Promise.resolve();
+    this._localNonce = null;
   }
 
   async init() {
@@ -81,7 +82,6 @@ class ContractService {
     }
     this.provider = new ethers.JsonRpcProvider(createRpcFetchRequest(config.rpc.url));
     this.baseSigner = new ethers.Wallet(config.contract.oracleKey, this.provider);
-    this.localSigner = new ethers.NonceManager(this.baseSigner);
     this.contract = new ethers.Contract(config.contract.address, ABI, this.provider);
     this.network = await this.provider.getNetwork();
     this.chainId = Number(this.network.chainId);
@@ -260,14 +260,28 @@ class ContractService {
     const request = { ...txRequest, ...relayOverrides };
     if (!this.redisEnabled || !this.redis) {
       for (let attempt = 0; attempt < RELAY_NONCE_RETRY_LIMIT; attempt += 1) {
+        const pendingNonce = await this.provider.getTransactionCount(this.baseSigner.address, "pending");
+        const nextNonce = this._localNonce != null && this._localNonce > pendingNonce
+          ? this._localNonce : pendingNonce;
         try {
-          return await this.localSigner.sendTransaction(request);
+          const signedTx = await this.baseSigner.signTransaction({
+            ...request,
+            chainId: this.chainId,
+            type: 2,
+            nonce: nextNonce,
+          });
+          const tx = await this.provider.broadcastTransaction(signedTx);
+          this._localNonce = nextNonce + 1;
+          return tx;
         } catch (error) {
-          if (!isNonceConflictLike(error) || attempt === RELAY_NONCE_RETRY_LIMIT - 1) {
-            throw error;
+          if (isNonceConflictLike(error)) {
+            this._localNonce = Math.max((this._localNonce || 0), nextNonce + 1, pendingNonce);
+            if (attempt < RELAY_NONCE_RETRY_LIMIT - 1) {
+              await sleep(RELAY_NONCE_RETRY_MS * (attempt + 1));
+              continue;
+            }
           }
-          this.localSigner.reset();
-          await sleep(RELAY_NONCE_RETRY_MS * (attempt + 1));
+          throw error;
         }
       }
     }
@@ -285,14 +299,14 @@ class ContractService {
         return tx;
       } catch (error) {
         const pendingNonce = await this.provider.getTransactionCount(this.baseSigner.address, "pending").catch(() => nextNonce);
-        if (isNonceConflictLike(error) || isRpcTimeoutLike(error)) {
+        if (isNonceConflictLike(error)) {
           await this._setDistributedNonce(Math.max(nextNonce + 1, pendingNonce));
+          if (attempt < RELAY_NONCE_RETRY_LIMIT - 1) {
+            await sleep(RELAY_NONCE_RETRY_MS * (attempt + 1));
+            continue;
+          }
         } else {
           await this._setDistributedNonce(Math.max(pendingNonce, nextNonce));
-        }
-        if (isNonceConflictLike(error) && attempt < RELAY_NONCE_RETRY_LIMIT - 1) {
-          await sleep(RELAY_NONCE_RETRY_MS * (attempt + 1));
-          continue;
         }
         throw error;
       }
