@@ -2,7 +2,7 @@ import { useCallback, useState } from "react";
 import { ethers } from "ethers";
 import { useWallet } from "../context/WalletContext";
 import { ARENA_ABI, ERC20_ABI, CONTRACT_ADDRESS, USDC_ADDRESS, GAME_STATE } from "../config/contract";
-import { ENTRY_FEE } from "../config/constants";
+import { ENTRY_FEE, LOCAL_CHAIN_MOCK } from "../config/constants";
 
 function mapContractError(err) {
   const code = err?.code || err?.info?.error?.code;
@@ -56,7 +56,20 @@ function mapContractError(err) {
   if (reason.includes("network") || reason.includes("chain")) {
     return "Wallet network is incorrect. Switch to Base Sepolia and try again.";
   }
-  return err?.reason || err?.shortMessage || "Transaction failed. Please try again.";
+  if (reason.includes("transfer amount exceeds") || reason.includes("exceeds balance")) {
+    return "Insufficient USDC balance.";
+  }
+  if (reason.includes("payment failed")) {
+    return "USDC transfer failed. Check your USDC balance and approval.";
+  }
+  if (reason.includes("not a player")) {
+    return "Wallet is not registered as a player for this game.";
+  }
+  if (reason.includes("already paid")) {
+    return "Payment was already submitted for this game.";
+  }
+  console.error("[payForGame] unmapped error:", { code, reason, err });
+  return err?.reason || err?.shortMessage || err?.message || "Transaction failed. Please try again.";
 }
 
 async function waitForAllowance(token, wallet, spender, required, retries = 5, delayMs = 500) {
@@ -75,7 +88,7 @@ export function useContract() {
   const [predicting, setPredicting] = useState(false);
 
   const hasOnchainPayment = ethers.isAddress(CONTRACT_ADDRESS) && ethers.isAddress(USDC_ADDRESS);
-  const shouldUseMockPayment = mockMode || !hasOnchainPayment;
+  const shouldUseMockPayment = mockMode || LOCAL_CHAIN_MOCK || !hasOnchainPayment;
 
   const ensureWalletReady = useCallback(async () => {
     if (!signer || !wallet) throw new Error("Wallet not connected");
@@ -141,10 +154,11 @@ export function useContract() {
         if (refreshedAllowance < amount) {
           throw new Error("Token approval has not finished syncing yet. Please wait a moment and try again.");
         }
+        return { approved: true, paid: false };
       }
 
       await (await arena.payForGame(gameId)).wait();
-      return true;
+      return { approved: allowance >= amount, paid: true };
     } catch (err) {
       throw new Error(mapContractError(err));
     } finally {

@@ -8,6 +8,7 @@ export function PaymentModal({
   amount="1 USDC",
   subtitle="Entry fee for this round",
   hint="You'll confirm this payment in your wallet.",
+  notice=null,
   error=null,
   countdown=null,
   mode="confirm",
@@ -57,6 +58,7 @@ export function PaymentModal({
         </div>
         {countdownLabel&&<p className="text-[10px] text-white/25 mt-2">{countdownLabel}</p>}
       </div>}
+      {notice&&<div className="mb-3 rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200">{notice}</div>}
       {error&&<div className="mb-3 rounded-xl border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-[11px] text-rose-300">{error}</div>}
       {hint&&<p className="text-white/25 text-[11px] text-center mb-4">{hint}</p>}
       {isPreparing?(
