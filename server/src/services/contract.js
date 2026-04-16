@@ -9,6 +9,8 @@ const TX_RECOVERY_POLL_MS = 2000;
 const NONCE_LOCK_WAIT_MS = parseInt(process.env.CONTRACT_NONCE_LOCK_WAIT_MS || "30000", 10);
 const NONCE_LOCK_TTL_MS = parseInt(process.env.CONTRACT_NONCE_LOCK_TTL_MS || "15000", 10);
 const NONCE_LOCK_RETRY_MS = parseInt(process.env.CONTRACT_NONCE_LOCK_RETRY_MS || "150", 10);
+const RELAY_NONCE_RETRY_LIMIT = parseInt(process.env.CONTRACT_NONCE_RETRY_LIMIT || "4", 10);
+const RELAY_NONCE_RETRY_MS = parseInt(process.env.CONTRACT_NONCE_RETRY_MS || "400", 10);
 const RELAY_MIN_PRIORITY_FEE = ethers.parseUnits(process.env.CONTRACT_RELAY_MIN_PRIORITY_GWEI || "3", "gwei");
 const RELAY_MAX_FEE_MULTIPLIER = BigInt(parseInt(process.env.CONTRACT_RELAY_MAX_FEE_MULTIPLIER || "4", 10));
 
@@ -243,28 +245,44 @@ class ContractService {
     const relayOverrides = await this._buildRelayOverrides(methodName, txRequest);
     const request = { ...txRequest, ...relayOverrides };
     if (!this.redisEnabled || !this.redis) {
-      return this.localSigner.sendTransaction(request);
+      for (let attempt = 0; attempt < RELAY_NONCE_RETRY_LIMIT; attempt += 1) {
+        try {
+          return await this.localSigner.sendTransaction(request);
+        } catch (error) {
+          if (!isNonceConflictLike(error) || attempt === RELAY_NONCE_RETRY_LIMIT - 1) {
+            throw error;
+          }
+          this.localSigner.reset();
+          await sleep(RELAY_NONCE_RETRY_MS * (attempt + 1));
+        }
+      }
     }
     return this._withDistributedNonceLock(action, async () => {
-      const nextNonce = await this._getNextDistributedNonce();
-      try {
-        const signedTx = await this.baseSigner.signTransaction({
-          ...request,
-          chainId: this.chainId,
-          type: 2,
-          nonce: nextNonce,
-        });
-        const tx = await this.provider.broadcastTransaction(signedTx);
-        await this._setDistributedNonce(nextNonce + 1);
-        return tx;
-      } catch (error) {
-        const pendingNonce = await this.provider.getTransactionCount(this.baseSigner.address, "pending").catch(() => nextNonce);
-        if (isNonceConflictLike(error) || isRpcTimeoutLike(error)) {
-          await this._setDistributedNonce(Math.max(nextNonce + 1, pendingNonce));
-        } else {
-          await this._setDistributedNonce(Math.max(pendingNonce, nextNonce));
+      for (let attempt = 0; attempt < RELAY_NONCE_RETRY_LIMIT; attempt += 1) {
+        const nextNonce = await this._getNextDistributedNonce();
+        try {
+          const signedTx = await this.baseSigner.signTransaction({
+            ...request,
+            chainId: this.chainId,
+            type: 2,
+            nonce: nextNonce,
+          });
+          const tx = await this.provider.broadcastTransaction(signedTx);
+          await this._setDistributedNonce(nextNonce + 1);
+          return tx;
+        } catch (error) {
+          const pendingNonce = await this.provider.getTransactionCount(this.baseSigner.address, "pending").catch(() => nextNonce);
+          if (isNonceConflictLike(error) || isRpcTimeoutLike(error)) {
+            await this._setDistributedNonce(Math.max(nextNonce + 1, pendingNonce));
+          } else {
+            await this._setDistributedNonce(Math.max(pendingNonce, nextNonce));
+          }
+          if (isNonceConflictLike(error) && attempt < RELAY_NONCE_RETRY_LIMIT - 1) {
+            await sleep(RELAY_NONCE_RETRY_MS * (attempt + 1));
+            continue;
+          }
+          throw error;
         }
-        throw error;
       }
     });
   }
@@ -364,12 +382,14 @@ class ContractService {
 
   async ownerJoinGame(gameId, player) {
     if (!this.initialized) return;
-    await (await this._sendContractTransaction("ownerJoinGame", [gameId, player], "Join game")).wait();
+    const tx = await this._sendContractTransaction("ownerJoinGame", [gameId, player], "Join game");
+    await this._waitForReceipt(tx, "Join game");
   }
 
   async ownerJoinRoom(inviteCode, player) {
     if (!this.initialized) return;
-    await (await this._sendContractTransaction("ownerJoinRoom", [inviteCode, player], "Join room")).wait();
+    const tx = await this._sendContractTransaction("ownerJoinRoom", [inviteCode, player], "Join room");
+    await this._waitForReceipt(tx, "Join room");
   }
 
   async isPlayerPaid(gameId, wallet) {
@@ -408,17 +428,27 @@ class ContractService {
 
   async startGame(id, price) {
     if (!this.initialized) return null;
-    await (await this._sendContractTransaction("startGame", [id, price], "Start game")).wait();
+    const tx = await this._sendContractTransaction("startGame", [id, price], "Start game");
+    await this._waitForReceipt(tx, "Start game");
     const deadline = await this.contract.predictionDeadline(id);
     return Number(deadline);
   }
   async submitPredictionBySig(id, player, prediction, deadline, signature) {
     if (!this.initialized) return;
     const value = prediction === "up" ? 1 : prediction === "down" ? 2 : Number(prediction);
-    await (await this._sendContractTransaction("submitPredictionBySig", [id, player, value, deadline, signature], "Submit prediction")).wait();
+    const tx = await this._sendContractTransaction("submitPredictionBySig", [id, player, value, deadline, signature], "Submit prediction");
+    await this._waitForReceipt(tx, "Submit prediction");
   }
-  async settleGame(id, price) { if (!this.initialized) return; await (await this._sendContractTransaction("settleGame", [id, price], "Settle game")).wait(); }
-  async cancelGame(id) { if (!this.initialized) return; await (await this._sendContractTransaction("cancelGame", [id], "Cancel game")).wait(); }
+  async settleGame(id, price) {
+    if (!this.initialized) return;
+    const tx = await this._sendContractTransaction("settleGame", [id, price], "Settle game");
+    await this._waitForReceipt(tx, "Settle game");
+  }
+  async cancelGame(id) {
+    if (!this.initialized) return;
+    const tx = await this._sendContractTransaction("cancelGame", [id], "Cancel game");
+    await this._waitForReceipt(tx, "Cancel game");
+  }
 }
 
 export default new ContractService();
