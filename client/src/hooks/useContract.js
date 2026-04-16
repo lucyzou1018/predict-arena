@@ -41,6 +41,18 @@ function mapContractError(err) {
   if (reason.includes("payment not open")) {
     return "This room is not ready for payment yet. Refresh the page and try again.";
   }
+  if (reason.includes("prediction window closed")) {
+    return "Prediction window closed. Please choose earlier next round.";
+  }
+  if (reason.includes("already predicted")) {
+    return "Prediction already submitted for this round.";
+  }
+  if (reason.includes("game not active")) {
+    return "Prediction round is no longer active.";
+  }
+  if (reason.includes("payment required")) {
+    return "Entry payment is not confirmed yet for this wallet.";
+  }
   if (reason.includes("network") || reason.includes("chain")) {
     return "Wallet network is incorrect. Switch to Base Sepolia and try again.";
   }
@@ -287,48 +299,33 @@ export function useContract() {
     }
   }, [ensureWalletReady, getArena, getGameClaimStatus, shouldUseMockPayment, wallet]);
 
-  const submitPrediction = useCallback(async (gameId, prediction) => {
+  const submitPrediction = useCallback(async (gameId, prediction, deadlineOverride = null) => {
     if (!gameId) throw new Error("Missing game id");
-    if (shouldUseMockPayment) return { signature: null, deadline: null };
+    if (shouldUseMockPayment) return { deadline: null, hash: null };
 
     await ensureWalletReady();
+
+    const arena = getArena();
+    if (!arena) throw new Error("Wallet not connected");
 
     const predictionValue = prediction === "up" ? 1 : prediction === "down" ? 2 : 0;
     if (!predictionValue) throw new Error("Invalid prediction");
 
     setPredicting(true);
     try {
-      const deadline = await getPredictionDeadline(gameId);
+      const deadline = deadlineOverride || await getPredictionDeadline(gameId);
       if (!deadline) throw new Error("Prediction deadline unavailable");
-      const network = await signer.provider.getNetwork();
-      const domain = {
-        name: "BtcPredictArena",
-        version: "1",
-        chainId: Number(network.chainId),
-        verifyingContract: CONTRACT_ADDRESS,
-      };
-      const types = {
-        PredictionIntent: [
-          { name: "gameId", type: "uint256" },
-          { name: "player", type: "address" },
-          { name: "prediction", type: "uint8" },
-          { name: "deadline", type: "uint256" },
-        ],
-      };
-      const value = {
-        gameId,
-        player: wallet,
-        prediction: predictionValue,
-        deadline,
-      };
-      const signature = await signer.signTypedData(domain, types, value);
-      return { signature, deadline };
+      const now = Math.floor(Date.now() / 1000);
+      if (now > deadline) throw new Error("Prediction window closed. Please choose earlier next round.");
+      const tx = await arena.predict(gameId, predictionValue);
+      await tx.wait();
+      return { deadline, hash: tx.hash };
     } catch (err) {
       throw new Error(mapContractError(err));
     } finally {
       setPredicting(false);
     }
-  }, [ensureWalletReady, getPredictionDeadline, shouldUseMockPayment, signer, wallet]);
+  }, [ensureWalletReady, getArena, getPredictionDeadline, shouldUseMockPayment]);
 
   return {
     payForGame,

@@ -27,6 +27,13 @@ function writeStoredPrediction(gameId, wallet, prediction) {
   } catch {}
 }
 
+function clearStoredPrediction(gameId, wallet) {
+  if (typeof window === "undefined" || !gameId || !wallet) return;
+  try {
+    window.sessionStorage.removeItem(predictionStorageKey(gameId, wallet));
+  } catch {}
+}
+
 export default function GamePlay() {
   const nav = useNavigate();
   const { on, emit } = useSocket();
@@ -480,13 +487,20 @@ export default function GamePlay() {
           });
           return;
         }
+        if (phase === "predicting") {
+          if (!myPrediction) {
+            clearStoredPrediction(currentChainGameId, wallet);
+          }
+          setPredictionError(message);
+          return;
+        }
         alert(message);
         nav("/");
       }),
     ];
 
     return () => unsubscribers.forEach((unsubscribe) => unsubscribe());
-  }, [on, nav, gameState, phase, updateGame, gameId, currentChainGameId, basePrice, wallet]);
+  }, [on, nav, gameState, phase, updateGame, gameId, currentChainGameId, basePrice, wallet, myPrediction]);
 
   useEffect(() => {
     if (!wallet || !currentGameId) return;
@@ -502,10 +516,14 @@ export default function GamePlay() {
         throw new Error(`Final ${predictSafeBuffer}s are reserved for on-chain confirmation. Please choose earlier next round.`);
       }
       const targetChainGameId = chainGameId || gameState.chainGameId || gameId || gameState.gameId;
-      const signed = await submitPrediction(targetChainGameId, prediction);
-      writeStoredPrediction(targetChainGameId, wallet, prediction);
       setPendingPrediction(prediction);
-      emit("game:predict", { gameId: gameId || gameState.gameId, prediction, signature: signed.signature, deadline: signed.deadline });
+      const submitted = await submitPrediction(targetChainGameId, prediction, predictionDeadline);
+      emit("game:predict", {
+        gameId: gameId || gameState.gameId,
+        prediction,
+        deadline: submitted.deadline,
+        hash: submitted.hash,
+      });
     } catch (error) {
       setPendingPrediction(null);
       setPredictionError(error?.message || "Prediction failed. Please try again.");
@@ -618,7 +636,7 @@ export default function GamePlay() {
             </div>
             {predictionBufferActive && <div className="rounded-2xl border border-amber-500/15 bg-amber-500/10 text-amber-200 text-xs px-4 py-3 mb-4">Final {predictSafeBuffer}s are reserved for on-chain confirmation. Predictions are locked for this round.</div>}
             {predictionError && <div className="rounded-2xl border border-rose-500/15 bg-rose-500/10 text-rose-300 text-xs px-4 py-3 mb-4">{predictionError}</div>}
-            {predicting && <div className="rounded-2xl border border-cyan-500/15 bg-cyan-500/10 text-cyan-200 text-xs px-4 py-3 mb-4">Waiting for wallet signature to lock your prediction...</div>}
+            {predicting && <div className="rounded-2xl border border-cyan-500/15 bg-cyan-500/10 text-cyan-200 text-xs px-4 py-3 mb-4">Confirm the transaction in your wallet to lock this prediction on-chain.</div>}
             {displayedPrediction && (
               <div className={`rounded-2xl border p-4 text-center ${displayedPrediction === "up" ? "bg-emerald-500/[0.06] border-emerald-500/20" : "bg-rose-500/[0.06] border-rose-500/20"}`}>
                 <p className="text-white/25 text-[10px] uppercase tracking-[0.2em] mb-1">Your Position</p>

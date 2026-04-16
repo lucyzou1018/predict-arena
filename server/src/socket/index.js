@@ -226,7 +226,7 @@ export function initSocket(httpServer) {
     socket.on("game:predict", async d => {
       if (!wallet) return socket.emit("game:error", { message: "Connect wallet first" });
       try {
-        const r = await gameService.submitPrediction(d.gameId, wallet, d.prediction, d.signature, d.deadline);
+        const r = await gameService.confirmPrediction(d.gameId, wallet, d.prediction);
         if (r.error) return socket.emit("game:error", { message: r.error });
         socket.emit("game:predicted", { prediction: d.prediction });
       } catch (error) {

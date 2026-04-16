@@ -10,7 +10,7 @@ const SETTLEMENT_PRICE_FAILURE_MESSAGE = "Settlement price is temporarily unavai
 const STARTUP_RECOVERY_MESSAGE = "This battle was interrupted while the server was offline. Funds remain safe on-chain. Use history to claim reward or refund when available.";
 
 class GameService {
-  constructor() { this.activeGames = {}; this.io = null; this.roomPayments = {}; }
+  constructor() { this.activeGames = {}; this.io = null; this.roomPayments = {}; this.startingGames = new Set(); }
   setIO(io) { this.io = io; }
 
   getRoomPaymentByWallet(wallet) {
@@ -162,6 +162,14 @@ class GameService {
   }
 
   async startGame(gameId, chainGameId, players) {
+    if (this.activeGames[gameId]) {
+      return this.activeGames[gameId].predictionDeadline || null;
+    }
+    if (this.startingGames.has(gameId)) {
+      return null;
+    }
+    this.startingGames.add(gameId);
+    try {
     const basePrice = priceService.getPrice();
     if (!basePrice || basePrice <= 0) {
       this._emitToPlayers(players, "game:error", { message: "BTC price unavailable" });
@@ -209,21 +217,38 @@ class GameService {
       if (rem <= 0) clearInterval(game.countdownInterval);
     }, 1000);
     game.predictTimer = setTimeout(() => this._endPredict(gameId), config.game.predictTimeout);
+    return game.predictionDeadline;
+    } finally {
+      this.startingGames.delete(gameId);
+    }
   }
 
-  async submitPrediction(gameId, wallet, prediction, signature, deadline) {
+  async confirmPrediction(gameId, wallet, prediction) {
     const g = this.activeGames[gameId]; if (!g) return { error: "Game not found" };
     if (g.phase !== "predicting") return { error: "Prediction phase ended" };
     if (!g.players.find(p => p.wallet === wallet)) return { error: "Not in this game" };
-    if (g.predictions[wallet]) return { error: "Already predicted" };
     if (prediction !== "up" && prediction !== "down") return { error: "Invalid prediction" };
-    if (!signature) return { error: "Missing prediction signature" };
-    const chainDeadline = await contractService.getPredictionDeadline(g.chainGameId);
-    if (!chainDeadline) return { error: "Prediction deadline unavailable" };
-    g.predictionDeadline = chainDeadline;
-    if (Number(deadline) !== Number(chainDeadline)) return { error: "Prediction deadline is out of sync. Refresh and try again." };
-    if (Math.floor(Date.now() / 1000) > Number(chainDeadline)) return { error: "Prediction signature expired" };
-    await contractService.submitPredictionBySig(g.chainGameId, wallet, prediction, chainDeadline, signature);
+    const expectedValue = prediction === "up" ? 1 : 2;
+
+    if (g.predictions[wallet]) {
+      return g.predictions[wallet] === prediction ? { status: "ok" } : { error: "Prediction already submitted" };
+    }
+
+    let onchainPrediction = 0;
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      const playerState = await contractService.getPlayerPrediction(g.chainGameId, wallet);
+      onchainPrediction = Number(playerState?.prediction || 0);
+      if (onchainPrediction === expectedValue) break;
+      if (onchainPrediction !== 0) {
+        return { error: "Prediction already submitted" };
+      }
+      if (attempt < 5) await sleep(400);
+    }
+
+    if (onchainPrediction !== expectedValue) {
+      return { error: "Prediction is not confirmed on-chain yet. Please wait for wallet confirmation and try again." };
+    }
+
     g.predictions[wallet] = prediction;
     this.io?.to(`game:${gameId}`).emit("game:prediction", { wallet, predicted: true, totalPredicted: Object.keys(g.predictions).length, totalPlayers: g.players.length });
     if (Object.keys(g.predictions).length === g.players.length) { clearTimeout(g.predictTimer); clearInterval(g.countdownInterval); this._endPredict(gameId); }
