@@ -4,8 +4,8 @@ import config from "../config/index.js";
 import { createRpcFetchRequest, proxyUrl } from "../utils/network.js";
 import dbPool from "../config/database.js";
 
-const TX_CONFIRM_TIMEOUT_MS = parseInt(process.env.CONTRACT_TX_CONFIRM_TIMEOUT_MS || "45000", 10);
-const TX_RECOVERY_TIMEOUT_MS = parseInt(process.env.CONTRACT_TX_RECOVERY_TIMEOUT_MS || "30000", 10);
+const TX_CONFIRM_TIMEOUT_MS = parseInt(process.env.CONTRACT_TX_CONFIRM_TIMEOUT_MS || "90000", 10);
+const TX_RECOVERY_TIMEOUT_MS = parseInt(process.env.CONTRACT_TX_RECOVERY_TIMEOUT_MS || "60000", 10);
 const TX_RECOVERY_POLL_MS = 2000;
 const NONCE_LOCK_WAIT_MS = parseInt(process.env.CONTRACT_NONCE_LOCK_WAIT_MS || "30000", 10);
 const NONCE_LOCK_TTL_MS = parseInt(process.env.CONTRACT_NONCE_LOCK_TTL_MS || "15000", 10);
@@ -14,6 +14,10 @@ const RELAY_NONCE_SYNC_WAIT_MS = parseInt(process.env.CONTRACT_NONCE_SYNC_WAIT_M
 const RELAY_NONCE_RETRY_MS = parseInt(process.env.CONTRACT_NONCE_RETRY_MS || "400", 10);
 const RELAY_MIN_PRIORITY_FEE = ethers.parseUnits(process.env.CONTRACT_RELAY_MIN_PRIORITY_GWEI || "3", "gwei");
 const RELAY_MAX_FEE_MULTIPLIER = BigInt(parseInt(process.env.CONTRACT_RELAY_MAX_FEE_MULTIPLIER || "4", 10));
+const DEFAULT_BASE_SEPOLIA_RPC_FALLBACKS = [
+  "https://sepolia.base.org",
+  "https://base-sepolia-rpc.publicnode.com",
+];
 
 const RELAY_GAS_LIMITS = {
   ownerCreateGame: 220000n,
@@ -65,6 +69,28 @@ const isNonceConflictLike = (error) => {
   );
 };
 
+const isAlreadyKnownLike = (error) => {
+  const message = `${error?.message || ""}`.toLowerCase();
+  return (
+    message.includes("already known") ||
+    message.includes("known transaction") ||
+    message.includes("already imported")
+  );
+};
+
+const buildRpcUrls = (primaryUrl) => {
+  const explicitFallbacks = `${process.env.RPC_FALLBACK_URLS || ""}`
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+  const inferredFallbacks = `${primaryUrl || ""}`.toLowerCase().includes("sepolia")
+    ? DEFAULT_BASE_SEPOLIA_RPC_FALLBACKS
+    : [];
+
+  return [...new Set([primaryUrl, ...explicitFallbacks, ...inferredFallbacks].filter(Boolean))];
+};
+
 class ContractService {
   constructor() {
     this.initialized = false;
@@ -75,6 +101,7 @@ class ContractService {
     this.feeCache = null;
     this.relayQueue = Promise.resolve();
     this._localNonce = null;
+    this.rpcProviders = [];
   }
 
   async init() {
@@ -87,8 +114,13 @@ class ContractService {
       this.mockMode = true;
       return;
     }
-    this.provider = new ethers.JsonRpcProvider(createRpcFetchRequest(config.rpc.url));
-    this.baseSigner = new ethers.Wallet(config.contract.oracleKey, this.provider);
+    const rpcUrls = buildRpcUrls(config.rpc.url);
+    this.rpcProviders = rpcUrls.map((url) => new ethers.JsonRpcProvider(createRpcFetchRequest(url)));
+    this.txProvider = this.rpcProviders[0];
+    this.provider = this.rpcProviders.length === 1
+      ? this.txProvider
+      : new ethers.FallbackProvider(this.rpcProviders, undefined, { quorum: 1 });
+    this.baseSigner = new ethers.Wallet(config.contract.oracleKey, this.txProvider);
     this.contract = new ethers.Contract(config.contract.address, ABI, this.provider);
     this.network = await this.provider.getNetwork();
     this.chainId = Number(this.network.chainId);
@@ -96,6 +128,9 @@ class ContractService {
     this.initialized = true;
     if (proxyUrl) {
       console.log(`[Contract] RPC proxy enabled via ${proxyUrl}`);
+    }
+    if (rpcUrls.length > 1) {
+      console.log("[Contract] RPC read fallback enabled", rpcUrls);
     }
     console.log("[Contract] Initialized");
   }
@@ -272,6 +307,42 @@ class ContractService {
     return overrides;
   }
 
+  async _getTransactionCount(blockTag = "pending") {
+    try {
+      return await this.txProvider.getTransactionCount(this.baseSigner.address, blockTag);
+    } catch (error) {
+      if (!isRpcTimeoutLike(error)) throw error;
+      return this.provider.getTransactionCount(this.baseSigner.address, blockTag);
+    }
+  }
+
+  async _broadcastSignedTransaction(signedTx) {
+    const hash = ethers.Transaction.from(signedTx).hash;
+    let lastError = null;
+
+    for (const provider of this.rpcProviders.length > 0 ? this.rpcProviders : [this.txProvider || this.provider]) {
+      try {
+        const tx = await provider.broadcastTransaction(signedTx);
+        return tx || { hash };
+      } catch (error) {
+        if (isAlreadyKnownLike(error)) {
+          return { hash };
+        }
+        if (isRpcTimeoutLike(error)) {
+          lastError = error;
+          continue;
+        }
+        throw error;
+      }
+    }
+
+    if (lastError) {
+      return { hash };
+    }
+
+    throw new Error("Broadcast failed");
+  }
+
   async _simulateUintResult(methodName, args) {
     const txRequest = await this.contract.getFunction(methodName).populateTransaction(...args);
     const raw = await this.provider.call({ ...txRequest, from: this.baseSigner.address });
@@ -300,7 +371,7 @@ class ContractService {
       const deadline = Date.now() + RELAY_NONCE_SYNC_WAIT_MS;
       let attempt = 0;
       while (Date.now() < deadline) {
-        const pendingNonce = await this.provider.getTransactionCount(this.baseSigner.address, "pending");
+        const pendingNonce = await this._getTransactionCount("pending");
         const nextNonce = this._localNonce != null && this._localNonce > pendingNonce
           ? this._localNonce : pendingNonce;
         try {
@@ -310,7 +381,7 @@ class ContractService {
             type: 2,
             nonce: nextNonce,
           });
-          const tx = await this.provider.broadcastTransaction(signedTx);
+          const tx = await this._broadcastSignedTransaction(signedTx);
           this._localNonce = nextNonce + 1;
           return tx;
         } catch (error) {
@@ -336,11 +407,11 @@ class ContractService {
           type: 2,
           nonce: nextNonce,
         });
-        const tx = await this.provider.broadcastTransaction(signedTx);
+        const tx = await this._broadcastSignedTransaction(signedTx);
         await this._setDistributedNonce(nextNonce + 1);
         return tx;
       } catch (error) {
-        const pendingNonce = await this.provider.getTransactionCount(this.baseSigner.address, "pending").catch(() => nextNonce);
+        const pendingNonce = await this._getTransactionCount("pending").catch(() => nextNonce);
         if (isNonceConflictLike(error)) {
           await this._setDistributedNonce(Math.max(nextNonce + 1, pendingNonce));
           attempt += 1;
@@ -369,6 +440,21 @@ class ContractService {
     return null;
   }
 
+  async _getReceiptFromAnyProvider(txHash) {
+    let lastError = null;
+    for (const provider of this.rpcProviders.length > 0 ? this.rpcProviders : [this.provider]) {
+      try {
+        const receipt = await provider.getTransactionReceipt(txHash);
+        if (receipt) return receipt;
+      } catch (error) {
+        if (!isRpcTimeoutLike(error)) throw error;
+        lastError = error;
+      }
+    }
+    if (lastError) throw lastError;
+    return null;
+  }
+
   async _waitForReceipt(tx, label) {
     if (!tx?.hash) throw new Error(`${label} transaction hash missing`);
     try {
@@ -385,7 +471,7 @@ class ContractService {
     const deadline = Date.now() + TX_RECOVERY_TIMEOUT_MS;
     while (Date.now() < deadline) {
       try {
-        const receipt = await this.provider.getTransactionReceipt(tx.hash);
+        const receipt = await this._getReceiptFromAnyProvider(tx.hash);
         if (receipt) {
           if (receipt.status === 0) throw new Error(`${label} transaction reverted on-chain`);
           return receipt;
@@ -399,7 +485,7 @@ class ContractService {
     // Tx was broadcast but never confirmed — reset nonce to chain state
     // to prevent nonce drift from dropped transactions
     try {
-      const chainNonce = await this.provider.getTransactionCount(this.baseSigner.address, "pending");
+      const chainNonce = await this._getTransactionCount("pending");
       if (this.redisEnabled && this.redis) {
         await this._setDistributedNonce(chainNonce);
       }
