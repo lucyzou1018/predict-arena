@@ -16,7 +16,6 @@ const RELAY_MIN_PRIORITY_FEE = ethers.parseUnits(process.env.CONTRACT_RELAY_MIN_
 const RELAY_MAX_FEE_MULTIPLIER = BigInt(parseInt(process.env.CONTRACT_RELAY_MAX_FEE_MULTIPLIER || "4", 10));
 const DEFAULT_BASE_SEPOLIA_RPC_FALLBACKS = [
   "https://sepolia.base.org",
-  "https://base-sepolia-rpc.publicnode.com",
 ];
 
 const RELAY_GAS_LIMITS = {
@@ -50,13 +49,19 @@ const ABI = [
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const isRpcTimeoutLike = (error) => {
-  const message = `${error?.message || ""}`.toLowerCase();
+  const responseBody = `${error?.info?.responseBody || error?.responseBody || ""}`.toLowerCase();
+  const responseStatus = `${error?.info?.responseStatus || error?.responseStatus || ""}`.toLowerCase();
+  const requestUrl = `${error?.info?.requestUrl || error?.requestUrl || ""}`.toLowerCase();
+  const message = `${error?.message || ""} ${responseBody} ${responseStatus} ${requestUrl}`.toLowerCase();
   return (
     error?.code === "TIMEOUT" ||
+    error?.code === "SERVER_ERROR" ||
     message.includes("timeout") ||
     message.includes("econnreset") ||
     message.includes("socket hang up") ||
-    message.includes("network error")
+    message.includes("network error") ||
+    message.includes("timed out while waiting for confirmation") ||
+    message.includes("error when dialing")
   );
 };
 
@@ -117,12 +122,10 @@ class ContractService {
     const rpcUrls = buildRpcUrls(config.rpc.url);
     this.rpcProviders = rpcUrls.map((url) => new ethers.JsonRpcProvider(createRpcFetchRequest(url)));
     this.txProvider = this.rpcProviders[0];
-    this.provider = this.rpcProviders.length === 1
-      ? this.txProvider
-      : new ethers.FallbackProvider(this.rpcProviders, undefined, { quorum: 1 });
+    this.provider = this.txProvider;
     this.baseSigner = new ethers.Wallet(config.contract.oracleKey, this.txProvider);
     this.contract = new ethers.Contract(config.contract.address, ABI, this.provider);
-    this.network = await this.provider.getNetwork();
+    this.network = await this._readWithRpcFallback((provider) => provider.getNetwork());
     this.chainId = Number(this.network.chainId);
     await this._initRedis();
     this.initialized = true;
@@ -133,6 +136,20 @@ class ContractService {
       console.log("[Contract] RPC read fallback enabled", rpcUrls);
     }
     console.log("[Contract] Initialized");
+  }
+
+  async _readWithRpcFallback(fn) {
+    let lastError = null;
+    for (const provider of this.rpcProviders.length > 0 ? this.rpcProviders : [this.provider]) {
+      try {
+        return await fn(provider);
+      } catch (error) {
+        if (!isRpcTimeoutLike(error)) throw error;
+        lastError = error;
+      }
+    }
+    if (lastError) throw lastError;
+    throw new Error("RPC read failed");
   }
 
   isMockMode() {
@@ -247,7 +264,9 @@ class ContractService {
   }
 
   async _getNextDistributedNonce() {
-    const pendingNonce = await this.provider.getTransactionCount(this.baseSigner.address, "pending");
+    const pendingNonce = await this._readWithRpcFallback((provider) =>
+      provider.getTransactionCount(this.baseSigner.address, "pending")
+    );
     if (!this.redisEnabled || !this.redis) return pendingNonce;
     const storedRaw = await this.redis.get(this._nonceCounterKey());
     if (storedRaw === null) return pendingNonce;
@@ -265,7 +284,9 @@ class ContractService {
     const fallbackGasLimit = RELAY_GAS_LIMITS[methodName] || null;
     try {
       if (txRequest) {
-        const estimatedGas = await this.provider.estimateGas({ ...txRequest, from: this.baseSigner.address });
+        const estimatedGas = await this._readWithRpcFallback((provider) =>
+          provider.estimateGas({ ...txRequest, from: this.baseSigner.address })
+        );
         const bufferedGasLimit = (estimatedGas * 12n) / 10n;
         overrides.gasLimit = fallbackGasLimit && fallbackGasLimit > bufferedGasLimit ? fallbackGasLimit : bufferedGasLimit;
       } else if (fallbackGasLimit) {
@@ -278,7 +299,7 @@ class ContractService {
     }
     const now = Date.now();
     if (!this.feeCache || (now - this.feeCache.fetchedAt) > 2000) {
-      const feeData = await this.provider.getFeeData();
+      const feeData = await this._readWithRpcFallback((provider) => provider.getFeeData());
       this.feeCache = { feeData, fetchedAt: now };
     }
     const feeData = this.feeCache.feeData;
@@ -292,7 +313,9 @@ class ContractService {
     }
 
     if (overrides.gasLimit) {
-      const balance = await this.provider.getBalance(this.baseSigner.address);
+      const balance = await this._readWithRpcFallback((provider) =>
+        provider.getBalance(this.baseSigner.address)
+      );
       const affordableMaxFee = balance > 0n ? (balance * 95n) / (overrides.gasLimit * 100n) : 0n;
       if (affordableMaxFee > 0n && maxFeePerGas > affordableMaxFee) {
         maxFeePerGas = affordableMaxFee;
@@ -312,7 +335,9 @@ class ContractService {
       return await this.txProvider.getTransactionCount(this.baseSigner.address, blockTag);
     } catch (error) {
       if (!isRpcTimeoutLike(error)) throw error;
-      return this.provider.getTransactionCount(this.baseSigner.address, blockTag);
+      return this._readWithRpcFallback((provider) =>
+        provider.getTransactionCount(this.baseSigner.address, blockTag)
+      );
     }
   }
 
@@ -345,7 +370,9 @@ class ContractService {
 
   async _simulateUintResult(methodName, args) {
     const txRequest = await this.contract.getFunction(methodName).populateTransaction(...args);
-    const raw = await this.provider.call({ ...txRequest, from: this.baseSigner.address });
+    const raw = await this._readWithRpcFallback((provider) =>
+      provider.call({ ...txRequest, from: this.baseSigner.address })
+    );
     const [value] = this.contract.interface.decodeFunctionResult(methodName, raw);
     return Number(value);
   }
@@ -500,7 +527,9 @@ class ContractService {
     const deadline = Date.now() + TX_RECOVERY_TIMEOUT_MS;
     while (Date.now() < deadline) {
       try {
-        const gameId = await this.contract.inviteCodeToGame(inviteCode);
+        const gameId = await this._readWithRpcFallback((provider) =>
+          this.contract.connect(provider).inviteCodeToGame(inviteCode)
+        );
         if (gameId && gameId > 0n) return Number(gameId);
       } catch (error) {
         if (!isRpcTimeoutLike(error)) throw error;
@@ -515,7 +544,9 @@ class ContractService {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       try {
-        const gameId = await this.contract.inviteCodeToGame(inviteCode);
+        const gameId = await this._readWithRpcFallback((provider) =>
+          this.contract.connect(provider).inviteCodeToGame(inviteCode)
+        );
         if (gameId && gameId > 0n) return Number(gameId);
       } catch (error) {
         if (!isRpcTimeoutLike(error)) throw error;
@@ -585,24 +616,32 @@ class ContractService {
 
   async isPlayerPaid(gameId, wallet) {
     if (!this.initialized) return true;
-    const [, hasPaid] = await this.contract.getPlayerPrediction(gameId, wallet);
+    const [, hasPaid] = await this._readWithRpcFallback((provider) =>
+      this.contract.connect(provider).getPlayerPrediction(gameId, wallet)
+    );
     return !!hasPaid;
   }
 
   async allPlayersPaid(gameId) {
     if (!this.initialized) return true;
-    return !!(await this.contract.allPlayersPaid(gameId));
+    return !!(await this._readWithRpcFallback((provider) =>
+      this.contract.connect(provider).allPlayersPaid(gameId)
+    ));
   }
 
   async getGameState(gameId) {
     if (!this.initialized) return null;
-    const [, , state] = await this.contract.getGameInfo(gameId);
+    const [, , state] = await this._readWithRpcFallback((provider) =>
+      this.contract.connect(provider).getGameInfo(gameId)
+    );
     return Number(state);
   }
 
   async getPredictionDeadline(gameId) {
     if (!this.initialized) return null;
-    const deadline = await this.contract.predictionDeadline(gameId);
+    const deadline = await this._readWithRpcFallback((provider) =>
+      this.contract.connect(provider).predictionDeadline(gameId)
+    );
     return Number(deadline);
   }
 
@@ -615,7 +654,9 @@ class ContractService {
         claimed: false,
       };
     }
-    const [prediction, hasPaid, reward, claimed] = await this.contract.getPlayerPrediction(gameId, wallet);
+    const [prediction, hasPaid, reward, claimed] = await this._readWithRpcFallback((provider) =>
+      this.contract.connect(provider).getPlayerPrediction(gameId, wallet)
+    );
     return {
       prediction: Number(prediction),
       hasPaid: !!hasPaid,
@@ -630,7 +671,9 @@ class ContractService {
       const tx = await this._sendContractTransaction("startGame", [id, price], "Start game");
       await this._waitForReceipt(tx, "Start game");
     });
-    const deadline = await this.contract.predictionDeadline(id);
+    const deadline = await this._readWithRpcFallback((provider) =>
+      this.contract.connect(provider).predictionDeadline(id)
+    );
     return Number(deadline);
   }
   async submitPredictionBySig(id, player, prediction, deadline, signature) {
