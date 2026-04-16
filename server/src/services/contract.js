@@ -2,6 +2,7 @@ import { ethers } from "ethers";
 import Redis from "ioredis";
 import config from "../config/index.js";
 import { createRpcFetchRequest, proxyUrl } from "../utils/network.js";
+import dbPool from "../config/database.js";
 
 const TX_CONFIRM_TIMEOUT_MS = parseInt(process.env.CONTRACT_TX_CONFIRM_TIMEOUT_MS || "45000", 10);
 const TX_RECOVERY_TIMEOUT_MS = parseInt(process.env.CONTRACT_TX_RECOVERY_TIMEOUT_MS || "30000", 10);
@@ -9,7 +10,7 @@ const TX_RECOVERY_POLL_MS = 2000;
 const NONCE_LOCK_WAIT_MS = parseInt(process.env.CONTRACT_NONCE_LOCK_WAIT_MS || "30000", 10);
 const NONCE_LOCK_TTL_MS = parseInt(process.env.CONTRACT_NONCE_LOCK_TTL_MS || "15000", 10);
 const NONCE_LOCK_RETRY_MS = parseInt(process.env.CONTRACT_NONCE_LOCK_RETRY_MS || "150", 10);
-const RELAY_NONCE_RETRY_LIMIT = parseInt(process.env.CONTRACT_NONCE_RETRY_LIMIT || "4", 10);
+const RELAY_NONCE_SYNC_WAIT_MS = parseInt(process.env.CONTRACT_NONCE_SYNC_WAIT_MS || "20000", 10);
 const RELAY_NONCE_RETRY_MS = parseInt(process.env.CONTRACT_NONCE_RETRY_MS || "400", 10);
 const RELAY_MIN_PRIORITY_FEE = ethers.parseUnits(process.env.CONTRACT_RELAY_MIN_PRIORITY_GWEI || "3", "gwei");
 const RELAY_MAX_FEE_MULTIPLIER = BigInt(parseInt(process.env.CONTRACT_RELAY_MAX_FEE_MULTIPLIER || "4", 10));
@@ -67,6 +68,7 @@ const isNonceConflictLike = (error) => {
 class ContractService {
   constructor() {
     this.initialized = false;
+    this.mockMode = config.contract.mockMode;
     this.redis = null;
     this.redisEnabled = false;
     this.instanceId = `${process.pid}:${Math.random().toString(36).slice(2, 10)}`;
@@ -76,8 +78,13 @@ class ContractService {
   }
 
   async init() {
+    if (this.mockMode) {
+      console.warn("[Contract] Local chain mock enabled");
+      return;
+    }
     if (!config.rpc.url || !config.contract.address || !config.contract.oracleKey) {
       console.warn("[Contract] Missing config, mock mode");
+      this.mockMode = true;
       return;
     }
     this.provider = new ethers.JsonRpcProvider(createRpcFetchRequest(config.rpc.url));
@@ -91,6 +98,10 @@ class ContractService {
       console.log(`[Contract] RPC proxy enabled via ${proxyUrl}`);
     }
     console.log("[Contract] Initialized");
+  }
+
+  isMockMode() {
+    return !!this.mockMode;
   }
 
   _formatRpcError(action, error) {
@@ -132,6 +143,33 @@ class ContractService {
 
   _nonceCounterKey() {
     return `predict-arena:contract:nonce-next:${this.baseSigner.address.toLowerCase()}`;
+  }
+
+  _pgRelayLockKeys() {
+    const normalized = this.baseSigner.address.toLowerCase().replace(/^0x/, "").padStart(40, "0");
+    const toSignedInt = (hex) => {
+      const value = parseInt(hex, 16);
+      return value > 0x7fffffff ? value - 0x100000000 : value;
+    };
+    return {
+      key1: toSignedInt(normalized.slice(0, 8)),
+      key2: toSignedInt(normalized.slice(-8)),
+    };
+  }
+
+  async _withDatabaseRelayLock(fn) {
+    const client = await dbPool.connect();
+    const { key1, key2 } = this._pgRelayLockKeys();
+    try {
+      await client.query("SELECT pg_advisory_lock($1, $2)", [key1, key2]);
+      return await fn();
+    } finally {
+      try {
+        await client.query("SELECT pg_advisory_unlock($1, $2)", [key1, key2]);
+      } finally {
+        client.release();
+      }
+    }
   }
 
   async _releaseNonceLock(lockToken) {
@@ -244,7 +282,7 @@ class ContractService {
   async _runRelaySequence(action, fn) {
     const run = async () => {
       if (!this.redisEnabled || !this.redis) {
-        return fn();
+        return this._withDatabaseRelayLock(fn);
       }
       return this._withDistributedNonceLock(action, fn);
     };
@@ -259,7 +297,9 @@ class ContractService {
     const relayOverrides = await this._buildRelayOverrides(methodName, txRequest);
     const request = { ...txRequest, ...relayOverrides };
     if (!this.redisEnabled || !this.redis) {
-      for (let attempt = 0; attempt < RELAY_NONCE_RETRY_LIMIT; attempt += 1) {
+      const deadline = Date.now() + RELAY_NONCE_SYNC_WAIT_MS;
+      let attempt = 0;
+      while (Date.now() < deadline) {
         const pendingNonce = await this.provider.getTransactionCount(this.baseSigner.address, "pending");
         const nextNonce = this._localNonce != null && this._localNonce > pendingNonce
           ? this._localNonce : pendingNonce;
@@ -276,16 +316,18 @@ class ContractService {
         } catch (error) {
           if (isNonceConflictLike(error)) {
             this._localNonce = Math.max((this._localNonce || 0), nextNonce + 1, pendingNonce);
-            if (attempt < RELAY_NONCE_RETRY_LIMIT - 1) {
-              await sleep(RELAY_NONCE_RETRY_MS * (attempt + 1));
-              continue;
-            }
+            attempt += 1;
+            await sleep(RELAY_NONCE_RETRY_MS * attempt);
+            continue;
           }
           throw error;
         }
       }
+      throw new Error(`${action} relay is syncing another transaction. Please retry.`);
     }
-    for (let attempt = 0; attempt < RELAY_NONCE_RETRY_LIMIT; attempt += 1) {
+    const deadline = Date.now() + RELAY_NONCE_SYNC_WAIT_MS;
+    let attempt = 0;
+    while (Date.now() < deadline) {
       const nextNonce = await this._getNextDistributedNonce();
       try {
         const signedTx = await this.baseSigner.signTransaction({
@@ -301,16 +343,16 @@ class ContractService {
         const pendingNonce = await this.provider.getTransactionCount(this.baseSigner.address, "pending").catch(() => nextNonce);
         if (isNonceConflictLike(error)) {
           await this._setDistributedNonce(Math.max(nextNonce + 1, pendingNonce));
-          if (attempt < RELAY_NONCE_RETRY_LIMIT - 1) {
-            await sleep(RELAY_NONCE_RETRY_MS * (attempt + 1));
-            continue;
-          }
+          attempt += 1;
+          await sleep(RELAY_NONCE_RETRY_MS * attempt);
+          continue;
         } else {
           await this._setDistributedNonce(Math.max(pendingNonce, nextNonce));
         }
         throw error;
       }
     }
+    throw new Error(`${action} relay is syncing another transaction. Please retry.`);
   }
 
   _extractGameIdFromReceipt(receipt, { creator = null, inviteCode = null, isRoom = null } = {}) {
@@ -354,6 +396,17 @@ class ContractService {
       await sleep(TX_RECOVERY_POLL_MS);
     }
 
+    // Tx was broadcast but never confirmed — reset nonce to chain state
+    // to prevent nonce drift from dropped transactions
+    try {
+      const chainNonce = await this.provider.getTransactionCount(this.baseSigner.address, "pending");
+      if (this.redisEnabled && this.redis) {
+        await this._setDistributedNonce(chainNonce);
+      }
+      this._localNonce = chainNonce;
+      console.warn(`[Contract] ${label} timed out, nonce reset to ${chainNonce}`);
+    } catch (_) {}
+
     throw new Error(`${label} confirmation timed out. Please retry.`);
   }
 
@@ -388,10 +441,13 @@ class ContractService {
   }
 
   async ownerCreateRoom(maxPlayers, inviteCode, creator) {
-    if (!this.initialized) return null;
+    if (!this.initialized) { console.warn("[Contract] ownerCreateRoom skipped: not initialized"); return null; }
+    console.log("[Contract] ownerCreateRoom starting", { inviteCode, creator });
     try {
       return await this._runRelaySequence("Create room", async () => {
+        console.log("[Contract] ownerCreateRoom relay lock acquired", { inviteCode });
         const expectedGameId = await this._simulateUintResult("ownerCreateRoom", [maxPlayers, inviteCode, creator]).catch(() => null);
+        console.log("[Contract] ownerCreateRoom sending tx", { inviteCode, expectedGameId });
         const tx = await this._sendContractTransaction("ownerCreateRoom", [maxPlayers, inviteCode, creator], "Create room");
         const receipt = await this._waitForReceipt(tx, "Create room");
         const gameId =
@@ -427,13 +483,13 @@ class ContractService {
   }
 
   async isPlayerPaid(gameId, wallet) {
-    if (!this.initialized) return false;
+    if (!this.initialized) return true;
     const [, hasPaid] = await this.contract.getPlayerPrediction(gameId, wallet);
     return !!hasPaid;
   }
 
   async allPlayersPaid(gameId) {
-    if (!this.initialized) return false;
+    if (!this.initialized) return true;
     return !!(await this.contract.allPlayersPaid(gameId));
   }
 
@@ -450,7 +506,14 @@ class ContractService {
   }
 
   async getPlayerPrediction(gameId, wallet) {
-    if (!this.initialized) return null;
+    if (!this.initialized) {
+      return {
+        prediction: 0,
+        hasPaid: true,
+        reward: 0,
+        claimed: false,
+      };
+    }
     const [prediction, hasPaid, reward, claimed] = await this.contract.getPlayerPrediction(gameId, wallet);
     return {
       prediction: Number(prediction),
