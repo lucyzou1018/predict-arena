@@ -97,7 +97,8 @@ export default function Home(){
   const[claimingHistoryId,setClaimingHistoryId]=useState(null);
 
   const[mode,setMode]=useState("create");
-  const[sz,setSz]=useState(2);
+  const[createTeamSize,setCreateTeamSize]=useState(2);
+  const[matchTeamSize,setMatchTeamSize]=useState(2);
 
   // Per-card independent state
   const[createPhase,setCreatePhase]=useState("select");
@@ -147,7 +148,10 @@ export default function Home(){
   const joinPaidRef=useRef(joinPaid); joinPaidRef.current=joinPaid;
   const joinCodeRef=useRef(joinCode); joinCodeRef.current=joinCode;
   const walletRef=useRef(wallet); walletRef.current=wallet;
-  const szRef=useRef(sz); szRef.current=sz;
+  const roomRef=useRef(room); roomRef.current=room;
+  const joinRoomRef=useRef(joinRoom); joinRoomRef.current=joinRoom;
+  const createTeamSizeRef=useRef(createTeamSize); createTeamSizeRef.current=createTeamSize;
+  const matchTeamSizeRef=useRef(matchTeamSize); matchTeamSizeRef.current=matchTeamSize;
   const roomCodeRef=useRef(roomCode); roomCodeRef.current=roomCode;
   const createCancelPendingRef=useRef(false);
   const createPhaseBeforeCancelRef=useRef("select");
@@ -322,6 +326,7 @@ export default function Home(){
           setPaymentStartedAt(paymentStartedAt);
         }
         if(d.room.is_owner){
+          setCreateTeamSize(total);
           setRoomCode(code);
           setRoom({current,total,players});
           if(isPaymentPhase){
@@ -366,17 +371,20 @@ export default function Home(){
         setCreateErr(null);
         setCreateHint(null);
         setRoomCode(d.inviteCode);
-        setRoom({current:1,total:szRef.current,players:[walletRef.current]});
+        setRoom({current:1,total:createTeamSizeRef.current,players:[walletRef.current]});
         setRoomExpiresAt(d.expiresAt);
         setCreatePhase("waiting");
       }),
       on("room:update",d=>{
         if(createPhaseRef.current==="waiting"||createPhaseRef.current==="paid_waiting"){
-          setRoom({current:d.current,total:d.total||szRef.current,players:d.players});
+          const total=d.total||roomRef.current.total||createTeamSizeRef.current||d.players?.length||0;
+          setCreateTeamSize(total||createTeamSizeRef.current);
+          setRoom({current:d.current,total,players:d.players});
           if(d.expiresAt)setRoomExpiresAt(d.expiresAt);
         }
         if(joinPhaseRef.current==="waiting"||joinPhaseRef.current==="paid_waiting"){
-          setJoinRoom({current:d.current,total:d.total||szRef.current,players:d.players});
+          const total=d.total||joinRoomRef.current.total||d.players?.length||0;
+          setJoinRoom({current:d.current,total,players:d.players});
           if(d.expiresAt)setJoinExpiresAt(d.expiresAt);
         }
         if(d.status==="full"||(d.total&&d.current>=d.total))enterRoomPayment(d);
@@ -479,7 +487,7 @@ export default function Home(){
       ?"Finish the current match flow before joining a room."
       :null;
 
-  const createRoom=()=>{if(isJoinBusy||isMatchBusy){setCreateErr("Finish or cancel current action first");return;}if(isCreateBusy){setCreateErr("Already creating a room");return;}if(!mockMode && (!wallet || !provider || !signer)){connect({type:"create-room"});return;}createCancelPendingRef.current=false;createPhaseBeforeCancelRef.current="select";setCreateErr(null);setCreateHint(null);setCreatePhase("creating");if(createTimeoutRef.current)clearTimeout(createTimeoutRef.current);createTimeoutRef.current=setTimeout(()=>{createTimeoutRef.current=null;if(createPhaseRef.current==="creating")setCreateHint("Base Sepolia is taking longer than usual. Waiting for on-chain confirmation...");},12000);emit("room:create",{teamSize:sz});};
+  const createRoom=()=>{if(isJoinBusy||isMatchBusy){setCreateErr("Finish or cancel current action first");return;}if(isCreateBusy){setCreateErr("Already creating a room");return;}if(!mockMode && (!wallet || !provider || !signer)){connect({type:"create-room"});return;}createCancelPendingRef.current=false;createPhaseBeforeCancelRef.current="select";setCreateErr(null);setCreateHint(null);setCreatePhase("creating");if(createTimeoutRef.current)clearTimeout(createTimeoutRef.current);createTimeoutRef.current=setTimeout(()=>{createTimeoutRef.current=null;if(createPhaseRef.current==="creating")setCreateHint("Base Sepolia is taking longer than usual. Waiting for on-chain confirmation...");},12000);emit("room:create",{teamSize:createTeamSize});};
   const payCreate=useCallback(async()=>{try{setPaymentErr(null);if(!roomFullInfo?.chainGameId||!roomFullInfo?.gameId||!wallet)throw new Error("Missing game id");await payForGame(roomFullInfo.chainGameId);setCreatePaid(true);setCreateErr(null);emit("room:payment:confirm",{gameId:roomFullInfo.gameId,chainGameId:roomFullInfo.chainGameId,inviteCode:roomCode,wallet});setCreatePhase("paid_waiting");}catch(e){const msg=formatPaymentUiError(e?.message||"Payment failed");setCreateErr(msg);setPaymentErr(msg);}},[payForGame,roomFullInfo,roomCode,emit,wallet]);
   const cancelCreate=()=>{createCancelPendingRef.current=true;createPhaseBeforeCancelRef.current=createPhaseRef.current;setCreateErr(null);setCreateHint("Cancelling room...");setCreatePhase("dissolving");emit("room:dissolve",{inviteCode:roomCode});};
   const dissolveRoom=()=>{createCancelPendingRef.current=true;createPhaseBeforeCancelRef.current=createPhaseRef.current;setCreateErr(null);setCreateHint("Cancelling room...");setCreatePhase("dissolving");emit("room:dissolve",{inviteCode:roomCode});};
@@ -498,15 +506,16 @@ export default function Home(){
   useEffect(()=>{
     const u=[
       on("match:update",d=>setMatchInfo({current:d.current})),
-      on("match:found",d=>{setPending(d);setPaymentProgress({paidCount:0,total:d.players?.length||0});setPaymentErr(null);setPaymentStartedAt(Date.now());if(mockMode){mockPay().then(()=>{updateGame({gameId:d.gameId,chainGameId:d.chainGameId,mode:"random",teamSize:sz,players:d.players,phase:"predicting"});nav("/game");});}else setMatchPhase("payment");}),
-      on("match:failed",()=>{setMatchErr("No opponents found. Try again.");setMatchPhase("select");setPaymentStartedAt(null);}),
-      on("match:error",d=>{setMatchErr(d.message);setMatchPhase("select");setPaymentStartedAt(null);}),
+      on("match:full",d=>{setMatchErr(null);setMatchInfo({current:d.current||d.total||matchTeamSizeRef.current});setMatchPhase("preparing");}),
+      on("match:found",d=>{setPending(d);setPaymentProgress({paidCount:0,total:d.players?.length||0});setPaymentErr(null);setPaymentStartedAt(Date.now());if(mockMode){mockPay().then(()=>{updateGame({gameId:d.gameId,chainGameId:d.chainGameId,mode:"random",teamSize:d.teamSize||matchTeamSizeRef.current,players:d.players,phase:"predicting"});nav("/game");});}else setMatchPhase("payment");}),
+      on("match:failed",()=>{setMatchErr("No opponents found. Try again.");setMatchPhase("select");setMatchInfo({current:0});setPending(null);setPaymentStartedAt(null);}),
+      on("match:error",d=>{setMatchErr(d.message);setMatchPhase("select");setMatchInfo({current:0});setPending(null);setPaymentStartedAt(null);}),
     ];
     return()=>u.forEach(f=>f());
-  },[on,mockMode,mockPay,updateGame,sz,nav]);
+  },[on,mockMode,mockPay,updateGame,nav]);
 
-  const startMatch=()=>{if(isCreateBusy||isJoinBusy){setMatchErr("Finish or cancel current action first");return;}if(isMatchBusy){setMatchErr("Already matching");return;}if(!mockMode && (!wallet || !provider || !signer)){connect({type:"random-match"});return;}setMatchErr(null);setMatchPhase("matching");setMatchInfo({current:1});emit("match:join",{teamSize:sz});};
-  const cancelMatch=()=>{emit("match:cancel");setMatchPhase("select");};
+  const startMatch=()=>{if(isCreateBusy||isJoinBusy){setMatchErr("Finish or cancel current action first");return;}if(isMatchBusy){setMatchErr("Already matching");return;}if(!mockMode && (!wallet || !provider || !signer)){connect({type:"random-match"});return;}setPending(null);setMatchErr(null);setMatchPhase("matching");setMatchInfo({current:1});emit("match:join",{teamSize:matchTeamSize});};
+  const cancelMatch=()=>{emit("match:cancel");setPending(null);setMatchInfo({current:0});setMatchPhase("select");};
   const payMatch=useCallback(async()=>{if(!pending)return;try{setPaymentErr(null);if(!pending.gameId||!pending.chainGameId||!wallet)throw new Error("Missing game id");await payForGame(pending.chainGameId);emit("room:payment:confirm",{gameId:pending.gameId,chainGameId:pending.chainGameId,wallet});setMatchPhase("paid_waiting");}catch(e){const msg=formatPaymentUiError(e?.message||"Payment failed");setMatchErr(msg);setPaymentErr(msg);setMatchPhase("select");}},[pending,payForGame,emit,wallet]);
   const claimHistoryReward=useCallback(async(game)=>{
     if(!game?.claimable||!game?.chain_game_id)return;
@@ -578,14 +587,14 @@ export default function Home(){
   },[pendingAction,wallet,provider,signer,mockMode]);
 
   // Team size selector component
-  const SizeSelector=({onAction,actionLabel,disabled})=>(
+  const SizeSelector=({selectedSize,onSelect,onAction,actionLabel,disabled})=>(
     <div>
       <p className="text-white/30 text-[11px] mb-3 font-medium">Team Size</p>
       <div className="grid grid-cols-4 gap-2 mb-4">
         {TEAM_SIZES.map(s=>(
-          <button key={s} onClick={()=>setSz(s)} disabled={disabled}
+          <button key={s} onClick={()=>onSelect(s)} disabled={disabled}
             className={`py-3 rounded-xl font-black text-base transition-all
-              ${sz===s
+              ${selectedSize===s
                 ?"bg-gradient-to-br from-amber-500 to-orange-600 text-white shadow-lg shadow-orange-500/20 -translate-y-0.5"
                 :"bg-white/[0.03] border border-white/[0.06] text-white/20 hover:bg-white/[0.06] hover:text-white/40"}
               ${disabled?"!opacity-30 cursor-not-allowed":""}`}
@@ -598,6 +607,7 @@ export default function Home(){
 
   // Format countdown as mm:ss
   const fmtCountdown=(s)=>{if(s===null||s===undefined)return"";return`${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`;};
+  const createRoomTotal=room.total||createTeamSize;
 
   return(
     <div className="max-w-5xl mx-auto px-6 py-8 min-h-screen">
@@ -669,7 +679,7 @@ export default function Home(){
               {createHint&&<div className="bg-white/[0.03] border border-white/[0.06] text-white/45 px-3 py-2 rounded-lg mb-3 text-[10px]">{createHint}</div>}
 
               {createPhase==="select"&& !openRoom&&(
-                <SizeSelector onAction={createRoom} actionLabel={`Create Arena · ${sz}P`} disabled={isJoinBusy||isMatchBusy}/>
+                <SizeSelector selectedSize={createTeamSize} onSelect={setCreateTeamSize} onAction={createRoom} actionLabel={`Create Arena · ${createTeamSize}P`} disabled={isJoinBusy||isMatchBusy}/>
               )}
               {createPhase==="creating"&&(<div className="text-center py-10"><div className="w-8 h-8 mx-auto rounded-full border-2 border-orange-400/30 border-t-orange-400 animate-spin mb-3"/><p className="text-white/40 text-xs">Creating arena...</p></div>)}
               {createPhase==="dissolving"&&(<div className="text-center py-10"><div className="w-8 h-8 mx-auto rounded-full border-2 border-amber-400/30 border-t-amber-400 animate-spin mb-3"/><p className="text-white/40 text-xs">Cancelling room...</p></div>)}
@@ -682,13 +692,13 @@ export default function Home(){
                   <button onClick={copyCode} className={`text-[9px] px-3 py-1 rounded-full transition mb-3 ${copied?"bg-emerald-500/15 text-emerald-400":"bg-white/[0.04] text-white/25 hover:text-white/40"}`}>
                     {copied?"✓ Copied":"📋 Copy Code"}
                   </button>
-                  <TeamSlots total={sz} players={room.players} current={room.current}/>
+                  <TeamSlots total={createRoomTotal} players={room.players} current={room.current}/>
                   <div className="mt-2 inline-flex items-center gap-1.5 text-[10px]">
                     <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"/>
-                    <span className="text-white/30 font-mono">{createPaid && paymentProgress.total ? `${paymentProgress.paidCount}/${paymentProgress.total} paid` : `${room.current}/${room.total||sz} ready`}</span>
+                    <span className="text-white/30 font-mono">{createPaid && paymentProgress.total ? `${paymentProgress.paidCount}/${paymentProgress.total} paid` : `${room.current}/${createRoomTotal} ready`}</span>
                   </div>
                   {/* Room expiry countdown — only when not full */}
-                  {roomCountdown!==null&&roomCountdown>0&&room.current<(room.total||sz)&&(
+                  {roomCountdown!==null&&roomCountdown>0&&room.current<createRoomTotal&&(
                     <div className={`mt-2 flex items-center justify-center gap-1.5 ${roomCountdown<=30?"text-rose-400":"text-amber-400"}`}>
                       <span className="text-sm">⏱️</span>
                       <span className="text-sm font-mono font-bold">{fmtCountdown(roomCountdown)}</span>
@@ -822,12 +832,18 @@ export default function Home(){
               {matchErr&&<div className="bg-rose-500/10 border border-rose-500/15 text-rose-400 px-3 py-2 rounded-lg mb-3 text-[10px]">⚠️ {matchErr}</div>}
 
               {matchPhase==="select"&&(
-                <SizeSelector onAction={startMatch} actionLabel={`Find Match · ${sz}P`} disabled={isCreateBusy||isJoinBusy}/>
+                <SizeSelector selectedSize={matchTeamSize} onSelect={setMatchTeamSize} onAction={startMatch} actionLabel={`Find Match · ${matchTeamSize}P`} disabled={isCreateBusy||isJoinBusy}/>
               )}
               {matchPhase==="matching"&&(
                 <div>
-                  <MatchAnimation teamSize={sz} current={matchInfo.current} countdown={cd}/>
+                  <MatchAnimation teamSize={matchTeamSize} current={matchInfo.current} countdown={cd} status="matching"/>
                   <button onClick={cancelMatch} className="w-full mt-3 py-2 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:bg-white/[0.04] transition text-[10px] text-white/20">Cancel</button>
+                </div>
+              )}
+              {matchPhase==="preparing"&&(
+                <div>
+                  <MatchAnimation teamSize={matchTeamSize} current={matchTeamSize} status="preparing"/>
+                  <p className="mt-3 text-center text-[10px] text-white/25">Players are locked in. Preparing the payment step now.</p>
                 </div>
               )}
             </div>

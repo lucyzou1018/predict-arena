@@ -109,6 +109,7 @@ export function initSocket(httpServer) {
           }, config.game.paymentTimeout);
         }
       } catch (e) {
+        if (e?.broadcasted) return;
         socket.emit("match:error", { message: e.message || "Matchmaking failed" });
       }
     });
