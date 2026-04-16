@@ -5,8 +5,14 @@ import contractService from "./contract.js";
 import gameService from "./game.js";
 
 class RoomService {
-  constructor() { this.rooms = {}; this.io = null; }
+  constructor() { this.rooms = {}; this.pendingCreates = {}; this.io = null; }
   setIO(io) { this.io = io; }
+
+  _findSocketIdByWallet(wallet) {
+    if (!wallet || !this.io?.sockets?.sockets) return null;
+    const matchedSocket = [...this.io.sockets.sockets.values()].find((candidate) => candidate.data?.wallet === wallet);
+    return matchedSocket?.id || null;
+  }
 
   _clearRoomTimer(room) {
     if (room?.timer) clearTimeout(room.timer);
@@ -36,8 +42,28 @@ class RoomService {
     return !!this.getRoomByWallet(wallet);
   }
 
+  getPendingCreateByWallet(wallet) {
+    for (const pending of Object.values(this.pendingCreates)) {
+      if (pending?.wallet === wallet) return pending;
+    }
+    return null;
+  }
+
+  isCreatingRoom(wallet) {
+    return !!this.getPendingCreateByWallet(wallet);
+  }
+
   rebindPlayerSocket(wallet, socketId) {
     if (!wallet || !socketId) return null;
+    const pendingCreate = this.getPendingCreateByWallet(wallet);
+    if (pendingCreate) {
+      pendingCreate.socketId = socketId;
+      return {
+        inviteCode: pendingCreate.inviteCode,
+        gameId: pendingCreate.gameId,
+        phase: "creating",
+      };
+    }
     const located = this.getRoomByWallet(wallet);
     if (!located) return null;
     located.player.socketId = socketId;
@@ -56,28 +82,68 @@ class RoomService {
 
   async createRoom(maxPlayers, wallet, socketId) {
     for (const c in this.rooms) { if (this.rooms[c].players.find(p => p.wallet === wallet)) return { error: "Already in a room" }; }
+    if (this.isCreatingRoom(wallet)) return { error: "Room creation is already in progress" };
     const code = generateInviteCode();
-    const res = await query(`INSERT INTO games (mode, max_players, invite_code, state) VALUES ('room', $1, $2, 'waiting') RETURNING id`, [maxPlayers, code]);
+    const res = await query(`INSERT INTO games (mode, max_players, invite_code, state) VALUES ('room', $1, $2, 'creating') RETURNING id`, [maxPlayers, code]);
     const gameId = res.rows[0].id;
+    const pending = {
+      inviteCode: code,
+      gameId,
+      maxPlayers,
+      wallet,
+      socketId,
+      createdAt: Date.now(),
+    };
+    this.pendingCreates[code] = pending;
+    void this._completeCreateRoom(pending);
+    return { status: "pending", inviteCode: code, gameId, maxPlayers };
+  }
+
+  async _completeCreateRoom(pending) {
+    const { inviteCode: code, gameId, maxPlayers, wallet } = pending;
     try {
-      const chainGameId = await contractService.ownerCreateRoom(maxPlayers, code, wallet) || gameId;
-      await query(`UPDATE games SET chain_game_id = $1 WHERE id = $2`, [chainGameId, gameId]);
+      let chainGameId = null;
+      try {
+        chainGameId = await contractService.ownerCreateRoom(maxPlayers, code, wallet);
+      } catch (error) {
+        const message = `${error?.message || ""}`.toLowerCase();
+        if (message.includes("timed out while waiting for base sepolia") || message.includes("confirmation timed out")) {
+          chainGameId = await contractService.recoverRoomGameId(code, 180000);
+        } else {
+          throw error;
+        }
+      }
+
+      if (!chainGameId) {
+        throw new Error("Create room confirmation is still pending. Please retry in a few seconds.");
+      }
+
+      await query(`UPDATE games SET chain_game_id = $1, state = 'waiting' WHERE id = $2`, [chainGameId, gameId]);
       await query(`INSERT INTO game_players (game_id, wallet_address, paid, is_owner) VALUES ($1, $2, false, true) ON CONFLICT DO NOTHING`, [gameId, wallet]);
       const expiresAt = Date.now() + config.game.roomExpiry;
       this.rooms[code] = {
         gameId, chainGameId, maxPlayers,
-        players: [{ wallet, socketId }], owner: wallet,
-        createdAt: Date.now(), expiresAt,
+        players: [{ wallet, socketId: pending.socketId || this._findSocketIdByWallet(wallet) }], owner: wallet,
+        createdAt: pending.createdAt, expiresAt,
         timer: setTimeout(() => this._expire(code), config.game.roomExpiry),
         paid: {}, transitioning: false,
         _chainOps: [],
       };
-      return { inviteCode: code, gameId, chainGameId, maxPlayers, expiresAt };
+
+      const targetSocketId = pending.socketId || this._findSocketIdByWallet(wallet);
+      if (targetSocketId) {
+        this.io?.to(targetSocketId).emit("room:created", { inviteCode: code, gameId, chainGameId, maxPlayers, expiresAt });
+      }
     } catch (error) {
-      console.error("[Room] createRoom failed", { code, gameId, error: error?.message || error });
+      console.error("[Room] async createRoom failed", { code, gameId, error: error?.message || error });
       await query(`DELETE FROM game_players WHERE game_id = $1`, [gameId]).catch(() => {});
       await query(`DELETE FROM games WHERE id = $1`, [gameId]).catch(() => {});
-      throw error;
+      const targetSocketId = pending.socketId || this._findSocketIdByWallet(wallet);
+      if (targetSocketId) {
+        this.io?.to(targetSocketId).emit("room:error", { message: error?.message || "Create room failed" });
+      }
+    } finally {
+      delete this.pendingCreates[code];
     }
   }
 
@@ -318,6 +384,11 @@ class RoomService {
   }
 
   leaveBySocket(sid) {
+    for (const pending of Object.values(this.pendingCreates)) {
+      if (pending?.socketId === sid) {
+        pending.socketId = null;
+      }
+    }
     for (const c in this.rooms) {
       const r = this.rooms[c];
       if (r.transitioning) continue;

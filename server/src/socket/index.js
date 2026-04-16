@@ -21,6 +21,7 @@ export function initSocket(httpServer) {
       if (!walletAddress) return null;
       if (gameService.isInActiveGame(walletAddress)) return "Finish your current game first";
       if (gameService.isInRoomPayment(walletAddress)) return "Finish or cancel your current payment flow first";
+      if (roomService.isCreatingRoom(walletAddress)) return "Room creation is still being confirmed on-chain";
       if (target === "match" && roomService.isInRoom(walletAddress)) return "Finish or cancel your active room first";
       if (target === "room" && matchmakingService.isQueued(walletAddress)) return "Finish or cancel your current match first";
       return null;
@@ -117,14 +118,16 @@ export function initSocket(httpServer) {
 
     // Room
     socket.on("room:create", async d => {
+      console.log("[Room] create request", { wallet, teamSize: d.teamSize });
       if (!wallet) return socket.emit("room:error", { message: "Connect wallet first" });
       const busyMessage = getBusyMessage("room", wallet);
       if (busyMessage) return socket.emit("room:error", { message: busyMessage });
       try {
         const r = await roomService.createRoom(d.teamSize, wallet, socket.id);
-        if (r.error) return socket.emit("room:error", { message: r.error });
-        socket.emit("room:created", r);
+        if (r.error) { console.log("[Room] create returned error", r.error); return socket.emit("room:error", { message: r.error }); }
+        console.log("[Room] create queued", { code: r.inviteCode, gameId: r.gameId });
       } catch (e) {
+        console.error("[Room] create exception", e?.message || e);
         socket.emit("room:error", { message: e.message || "Create room failed" });
       }
     });
@@ -157,6 +160,10 @@ export function initSocket(httpServer) {
           if (rm) {
             try { await roomService.awaitChainReady(d.inviteCode); } catch (e) {
               console.error("[Room] chain setup failed when full", { inviteCode: d.inviteCode, error: e?.message || e });
+              const failPlayers = rm ? [...rm.players] : [];
+              for (const p of failPlayers) {
+                if (p.socketId) io.to(p.socketId).emit("room:error", { message: "On-chain setup failed. Please create a new room." });
+              }
               return;
             }
             const players = [...rm.players]; const gid = rm.gameId; const cid = rm.chainGameId;

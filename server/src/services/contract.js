@@ -510,6 +510,21 @@ class ContractService {
     return null;
   }
 
+  async recoverRoomGameId(inviteCode, timeoutMs = TX_RECOVERY_TIMEOUT_MS) {
+    if (!this.initialized || !inviteCode) return null;
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      try {
+        const gameId = await this.contract.inviteCodeToGame(inviteCode);
+        if (gameId && gameId > 0n) return Number(gameId);
+      } catch (error) {
+        if (!isRpcTimeoutLike(error)) throw error;
+      }
+      await sleep(TX_RECOVERY_POLL_MS);
+    }
+    return null;
+  }
+
   async ownerCreateGame(maxPlayers, creator) {
     if (!this.initialized) return null;
     try {
