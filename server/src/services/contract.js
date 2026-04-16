@@ -71,6 +71,7 @@ class ContractService {
     this.redisEnabled = false;
     this.instanceId = `${process.pid}:${Math.random().toString(36).slice(2, 10)}`;
     this.feeCache = null;
+    this.relayQueue = Promise.resolve();
   }
 
   async init() {
@@ -240,6 +241,19 @@ class ContractService {
     return Number(value);
   }
 
+  async _runRelaySequence(action, fn) {
+    const run = async () => {
+      if (!this.redisEnabled || !this.redis) {
+        return fn();
+      }
+      return this._withDistributedNonceLock(action, fn);
+    };
+
+    const next = this.relayQueue.then(run, run);
+    this.relayQueue = next.catch(() => {});
+    return next;
+  }
+
   async _sendContractTransaction(methodName, args, action) {
     const txRequest = await this.contract.getFunction(methodName).populateTransaction(...args);
     const relayOverrides = await this._buildRelayOverrides(methodName, txRequest);
@@ -257,34 +271,32 @@ class ContractService {
         }
       }
     }
-    return this._withDistributedNonceLock(action, async () => {
-      for (let attempt = 0; attempt < RELAY_NONCE_RETRY_LIMIT; attempt += 1) {
-        const nextNonce = await this._getNextDistributedNonce();
-        try {
-          const signedTx = await this.baseSigner.signTransaction({
-            ...request,
-            chainId: this.chainId,
-            type: 2,
-            nonce: nextNonce,
-          });
-          const tx = await this.provider.broadcastTransaction(signedTx);
-          await this._setDistributedNonce(nextNonce + 1);
-          return tx;
-        } catch (error) {
-          const pendingNonce = await this.provider.getTransactionCount(this.baseSigner.address, "pending").catch(() => nextNonce);
-          if (isNonceConflictLike(error) || isRpcTimeoutLike(error)) {
-            await this._setDistributedNonce(Math.max(nextNonce + 1, pendingNonce));
-          } else {
-            await this._setDistributedNonce(Math.max(pendingNonce, nextNonce));
-          }
-          if (isNonceConflictLike(error) && attempt < RELAY_NONCE_RETRY_LIMIT - 1) {
-            await sleep(RELAY_NONCE_RETRY_MS * (attempt + 1));
-            continue;
-          }
-          throw error;
+    for (let attempt = 0; attempt < RELAY_NONCE_RETRY_LIMIT; attempt += 1) {
+      const nextNonce = await this._getNextDistributedNonce();
+      try {
+        const signedTx = await this.baseSigner.signTransaction({
+          ...request,
+          chainId: this.chainId,
+          type: 2,
+          nonce: nextNonce,
+        });
+        const tx = await this.provider.broadcastTransaction(signedTx);
+        await this._setDistributedNonce(nextNonce + 1);
+        return tx;
+      } catch (error) {
+        const pendingNonce = await this.provider.getTransactionCount(this.baseSigner.address, "pending").catch(() => nextNonce);
+        if (isNonceConflictLike(error) || isRpcTimeoutLike(error)) {
+          await this._setDistributedNonce(Math.max(nextNonce + 1, pendingNonce));
+        } else {
+          await this._setDistributedNonce(Math.max(pendingNonce, nextNonce));
         }
+        if (isNonceConflictLike(error) && attempt < RELAY_NONCE_RETRY_LIMIT - 1) {
+          await sleep(RELAY_NONCE_RETRY_MS * (attempt + 1));
+          continue;
+        }
+        throw error;
       }
-    });
+    }
   }
 
   _extractGameIdFromReceipt(receipt, { creator = null, inviteCode = null, isRoom = null } = {}) {
@@ -348,12 +360,14 @@ class ContractService {
   async ownerCreateGame(maxPlayers, creator) {
     if (!this.initialized) return null;
     try {
-      const expectedGameId = await this._simulateUintResult("ownerCreateGame", [maxPlayers, creator]).catch(() => null);
-      const tx = await this._sendContractTransaction("ownerCreateGame", [maxPlayers, creator], "Create game");
-      const receipt = await this._waitForReceipt(tx, "Create game");
-      const gameId = this._extractGameIdFromReceipt(receipt, { creator, isRoom: false }) || expectedGameId;
-      if (gameId) return gameId;
-      throw new Error("Create game confirmed but game id could not be resolved");
+      return await this._runRelaySequence("Create game", async () => {
+        const expectedGameId = await this._simulateUintResult("ownerCreateGame", [maxPlayers, creator]).catch(() => null);
+        const tx = await this._sendContractTransaction("ownerCreateGame", [maxPlayers, creator], "Create game");
+        const receipt = await this._waitForReceipt(tx, "Create game");
+        const gameId = this._extractGameIdFromReceipt(receipt, { creator, isRoom: false }) || expectedGameId;
+        if (gameId) return gameId;
+        throw new Error("Create game confirmed but game id could not be resolved");
+      });
     } catch (error) {
       throw this._formatRpcError("Create game", error);
     }
@@ -362,15 +376,17 @@ class ContractService {
   async ownerCreateRoom(maxPlayers, inviteCode, creator) {
     if (!this.initialized) return null;
     try {
-      const expectedGameId = await this._simulateUintResult("ownerCreateRoom", [maxPlayers, inviteCode, creator]).catch(() => null);
-      const tx = await this._sendContractTransaction("ownerCreateRoom", [maxPlayers, inviteCode, creator], "Create room");
-      const receipt = await this._waitForReceipt(tx, "Create room");
-      const gameId =
-        this._extractGameIdFromReceipt(receipt, { creator, inviteCode, isRoom: true }) ||
-        expectedGameId ||
-        await this._recoverRoomGameId(inviteCode);
-      if (gameId) return gameId;
-      throw new Error("Create room confirmed but game id could not be resolved");
+      return await this._runRelaySequence("Create room", async () => {
+        const expectedGameId = await this._simulateUintResult("ownerCreateRoom", [maxPlayers, inviteCode, creator]).catch(() => null);
+        const tx = await this._sendContractTransaction("ownerCreateRoom", [maxPlayers, inviteCode, creator], "Create room");
+        const receipt = await this._waitForReceipt(tx, "Create room");
+        const gameId =
+          this._extractGameIdFromReceipt(receipt, { creator, inviteCode, isRoom: true }) ||
+          expectedGameId ||
+          await this._recoverRoomGameId(inviteCode);
+        if (gameId) return gameId;
+        throw new Error("Create room confirmed but game id could not be resolved");
+      });
     } catch (error) {
       if (isRpcTimeoutLike(error)) {
         const recoveredGameId = await this._recoverRoomGameId(inviteCode);
@@ -382,14 +398,18 @@ class ContractService {
 
   async ownerJoinGame(gameId, player) {
     if (!this.initialized) return;
-    const tx = await this._sendContractTransaction("ownerJoinGame", [gameId, player], "Join game");
-    await this._waitForReceipt(tx, "Join game");
+    await this._runRelaySequence("Join game", async () => {
+      const tx = await this._sendContractTransaction("ownerJoinGame", [gameId, player], "Join game");
+      await this._waitForReceipt(tx, "Join game");
+    });
   }
 
   async ownerJoinRoom(inviteCode, player) {
     if (!this.initialized) return;
-    const tx = await this._sendContractTransaction("ownerJoinRoom", [inviteCode, player], "Join room");
-    await this._waitForReceipt(tx, "Join room");
+    await this._runRelaySequence("Join room", async () => {
+      const tx = await this._sendContractTransaction("ownerJoinRoom", [inviteCode, player], "Join room");
+      await this._waitForReceipt(tx, "Join room");
+    });
   }
 
   async isPlayerPaid(gameId, wallet) {
@@ -428,26 +448,34 @@ class ContractService {
 
   async startGame(id, price) {
     if (!this.initialized) return null;
-    const tx = await this._sendContractTransaction("startGame", [id, price], "Start game");
-    await this._waitForReceipt(tx, "Start game");
+    await this._runRelaySequence("Start game", async () => {
+      const tx = await this._sendContractTransaction("startGame", [id, price], "Start game");
+      await this._waitForReceipt(tx, "Start game");
+    });
     const deadline = await this.contract.predictionDeadline(id);
     return Number(deadline);
   }
   async submitPredictionBySig(id, player, prediction, deadline, signature) {
     if (!this.initialized) return;
     const value = prediction === "up" ? 1 : prediction === "down" ? 2 : Number(prediction);
-    const tx = await this._sendContractTransaction("submitPredictionBySig", [id, player, value, deadline, signature], "Submit prediction");
-    await this._waitForReceipt(tx, "Submit prediction");
+    await this._runRelaySequence("Submit prediction", async () => {
+      const tx = await this._sendContractTransaction("submitPredictionBySig", [id, player, value, deadline, signature], "Submit prediction");
+      await this._waitForReceipt(tx, "Submit prediction");
+    });
   }
   async settleGame(id, price) {
     if (!this.initialized) return;
-    const tx = await this._sendContractTransaction("settleGame", [id, price], "Settle game");
-    await this._waitForReceipt(tx, "Settle game");
+    await this._runRelaySequence("Settle game", async () => {
+      const tx = await this._sendContractTransaction("settleGame", [id, price], "Settle game");
+      await this._waitForReceipt(tx, "Settle game");
+    });
   }
   async cancelGame(id) {
     if (!this.initialized) return;
-    const tx = await this._sendContractTransaction("cancelGame", [id], "Cancel game");
-    await this._waitForReceipt(tx, "Cancel game");
+    await this._runRelaySequence("Cancel game", async () => {
+      const tx = await this._sendContractTransaction("cancelGame", [id], "Cancel game");
+      await this._waitForReceipt(tx, "Cancel game");
+    });
   }
 }
 
