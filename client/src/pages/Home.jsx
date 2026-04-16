@@ -176,6 +176,22 @@ export default function Home(){
     if(joinPhaseRef.current==="waiting"||joinPhaseRef.current==="joining")setJoinPhase("payment");
   },[]);
 
+  const reloadHistory=useCallback(async(targetWallet=walletRef.current)=>{
+    if(!targetWallet)return;
+    try{
+      const response=await fetch(`${SERVER_URL}/api/users/${targetWallet}/games?limit=20`);
+      const data=await response.json();
+      const rows=Array.isArray(data.games)?data.games:[];
+      const enriched=await Promise.all(rows.map(async(game)=>{
+        if(!game?.chain_game_id||!["active","failed"].includes(game.state))return game;
+        const status=await getGameClaimStatus(game.chain_game_id,targetWallet);
+        return enrichHistoryGame(game,status);
+      }));
+      setHistory(enriched);
+      setHistoryPage(1);
+    }catch{}
+  },[getGameClaimStatus]);
+
   const handleRoomPaymentFailure=useCallback((reason="Payment timeout — team disbanded")=>{
     const wasCreateFlow =
       createPhaseRef.current==="payment"||
@@ -206,22 +222,6 @@ export default function Home(){
     setJoinErr(wasJoinFlow?reason:null);
     reloadHistory(walletRef.current);
   },[refund,reloadHistory]);
-
-  const reloadHistory=useCallback(async(targetWallet=walletRef.current)=>{
-    if(!targetWallet)return;
-    try{
-      const response=await fetch(`${SERVER_URL}/api/users/${targetWallet}/games?limit=20`);
-      const data=await response.json();
-      const rows=Array.isArray(data.games)?data.games:[];
-      const enriched=await Promise.all(rows.map(async(game)=>{
-        if(!game?.chain_game_id||!["active","failed"].includes(game.state))return game;
-        const status=await getGameClaimStatus(game.chain_game_id,targetWallet);
-        return enrichHistoryGame(game,status);
-      }));
-      setHistory(enriched);
-      setHistoryPage(1);
-    }catch{}
-  },[getGameClaimStatus]);
 
   // Carousel state
   const scrollRef=useRef(null);
