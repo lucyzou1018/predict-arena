@@ -3,8 +3,28 @@ import { query } from "../config/database.js";
 import contractService from "./contract.js";
 
 class MatchmakingService {
-  constructor() { this.queues = { 2: [], 3: [], 4: [], 5: [] }; this.timers = {}; this.io = null; }
+  constructor() { this.queues = { 2: [], 3: [], 4: [], 5: [] }; this.timers = {}; this.deadlines = {}; this.io = null; }
   setIO(io) { this.io = io; }
+
+  _clearTimer(teamSize) {
+    if (!this.timers[teamSize]) return;
+    clearTimeout(this.timers[teamSize]);
+    delete this.timers[teamSize];
+  }
+
+  _clearDeadline(teamSize) {
+    delete this.deadlines[teamSize];
+  }
+
+  _setDeadline(teamSize, timeoutMs = config.game.matchTimeout) {
+    this.deadlines[teamSize] = Date.now() + timeoutMs;
+  }
+
+  _getRemaining(teamSize) {
+    const deadline = this.deadlines[teamSize];
+    if (!deadline) return Math.ceil(config.game.matchTimeout / 1000);
+    return Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+  }
 
   getQueueEntry(wallet) {
     for (const [teamSize, queue] of Object.entries(this.queues)) {
@@ -24,24 +44,51 @@ class MatchmakingService {
     if (q.find(p => p.wallet === wallet)) return { error: "Already in queue" };
     for (const s in this.queues) { if (this.queues[s].find(p => p.wallet === wallet)) return { error: "Already in another queue" }; }
     q.push({ wallet, socketId, joinedAt: Date.now() });
+    if (q.length === 1) {
+      this._setDeadline(teamSize);
+      this._clearTimer(teamSize);
+      this.timers[teamSize] = setTimeout(() => this._timeout(teamSize), config.game.matchTimeout);
+    }
     this._broadcast(teamSize);
     if (q.length === teamSize) return this._formTeam(teamSize);
-    if (q.length === 1) { this.timers[teamSize] = setTimeout(() => this._timeout(teamSize), config.game.matchTimeout); }
-    return { status: "queued", position: q.length, total: teamSize };
+    return { status: "queued", position: q.length, total: teamSize, remaining: this._getRemaining(teamSize) };
   }
 
   removePlayer(wallet) {
-    for (const s in this.queues) { const i = this.queues[s].findIndex(p => p.wallet === wallet); if (i !== -1) { this.queues[s].splice(i, 1); this._broadcast(parseInt(s)); return true; } }
+    for (const s in this.queues) {
+      const i = this.queues[s].findIndex(p => p.wallet === wallet);
+      if (i !== -1) {
+        this.queues[s].splice(i, 1);
+        if (this.queues[s].length === 0) {
+          this._clearTimer(parseInt(s, 10));
+          this._clearDeadline(parseInt(s, 10));
+        }
+        this._broadcast(parseInt(s, 10));
+        return true;
+      }
+    }
     return false;
   }
 
   removeBySocket(sid) {
-    for (const s in this.queues) { const i = this.queues[s].findIndex(p => p.socketId === sid); if (i !== -1) { this.queues[s].splice(i, 1); this._broadcast(parseInt(s)); return; } }
+    for (const s in this.queues) {
+      const i = this.queues[s].findIndex(p => p.socketId === sid);
+      if (i !== -1) {
+        this.queues[s].splice(i, 1);
+        if (this.queues[s].length === 0) {
+          this._clearTimer(parseInt(s, 10));
+          this._clearDeadline(parseInt(s, 10));
+        }
+        this._broadcast(parseInt(s, 10));
+        return;
+      }
+    }
   }
 
   async _formTeam(teamSize) {
     const q = this.queues[teamSize]; const players = q.splice(0, teamSize);
-    if (this.timers[teamSize]) { clearTimeout(this.timers[teamSize]); delete this.timers[teamSize]; }
+    this._clearTimer(teamSize);
+    this._clearDeadline(teamSize);
     const list = players.map(p => ({ wallet: p.wallet, socketId: p.socketId }));
     for (const p of players) {
       this.io?.to(p.socketId).emit("match:full", { current: teamSize, total: teamSize, players: list.map(pl => pl.wallet), teamSize });
@@ -79,12 +126,15 @@ class MatchmakingService {
   _timeout(teamSize) {
     const q = this.queues[teamSize];
     for (const p of q) { this.io?.to(p.socketId).emit("match:failed", { reason: "匹配超时" }); }
-    this.queues[teamSize] = []; delete this.timers[teamSize];
+    this.queues[teamSize] = [];
+    this._clearTimer(teamSize);
+    this._clearDeadline(teamSize);
   }
 
   _broadcast(teamSize) {
     const q = this.queues[teamSize];
-    for (const p of q) { this.io?.to(p.socketId).emit("match:update", { current: q.length, total: teamSize, players: q.map(pl => pl.wallet) }); }
+    const remaining = this._getRemaining(teamSize);
+    for (const p of q) { this.io?.to(p.socketId).emit("match:update", { current: q.length, total: teamSize, players: q.map(pl => pl.wallet), remaining }); }
   }
 }
 export default new MatchmakingService();

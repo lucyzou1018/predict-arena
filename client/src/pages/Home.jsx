@@ -156,6 +156,15 @@ export default function Home(){
   const createCancelPendingRef=useRef(false);
   const createPhaseBeforeCancelRef=useRef("select");
 
+  const resetMatchState=useCallback((message=null,{cancelQueue=false}={})=>{
+    if(cancelQueue)emit("match:cancel");
+    setPending(null);
+    setMatchInfo({current:0});
+    setPaymentStartedAt(null);
+    setMatchPhase("select");
+    setMatchErr(message);
+  },[emit]);
+
   const enterRoomPayment=useCallback((d={})=>{
     const total=Number(d?.total||d?.players?.length||0);
     const players=Array.isArray(d?.players)?d.players:[];
@@ -505,17 +514,32 @@ export default function Home(){
 
   useEffect(()=>{
     const u=[
-      on("match:update",d=>setMatchInfo({current:d.current})),
+      on("match:update",d=>{setMatchInfo({current:d.current});if(typeof d.remaining==="number")setCd(d.remaining);}),
       on("match:full",d=>{setMatchErr(null);setMatchInfo({current:d.current||d.total||matchTeamSizeRef.current});setMatchPhase("preparing");}),
       on("match:found",d=>{setPending(d);setPaymentProgress({paidCount:0,total:d.players?.length||0});setPaymentErr(null);setPaymentStartedAt(Date.now());if(mockMode){mockPay().then(()=>{updateGame({gameId:d.gameId,chainGameId:d.chainGameId,mode:"random",teamSize:d.teamSize||matchTeamSizeRef.current,players:d.players,phase:"predicting"});nav("/game");});}else setMatchPhase("payment");}),
-      on("match:failed",()=>{setMatchErr("No opponents found. Try again.");setMatchPhase("select");setMatchInfo({current:0});setPending(null);setPaymentStartedAt(null);}),
-      on("match:error",d=>{setMatchErr(d.message);setMatchPhase("select");setMatchInfo({current:0});setPending(null);setPaymentStartedAt(null);}),
+      on("match:failed",()=>resetMatchState("No opponents found. Try again.")),
+      on("match:error",d=>resetMatchState(d.message)),
+      on("disconnect",()=>{
+        if(matchPhaseRef.current==="matching"||matchPhaseRef.current==="preparing"){
+          resetMatchState("Connection lost during matchmaking. Please try again.");
+        }
+      }),
     ];
     return()=>u.forEach(f=>f());
-  },[on,mockMode,mockPay,updateGame,nav]);
+  },[on,mockMode,mockPay,updateGame,nav,resetMatchState]);
+
+  useEffect(()=>{
+    if(matchPhase!=="matching"||cd!==0)return;
+    const timer=setTimeout(()=>{
+      if(matchPhaseRef.current==="matching"){
+        resetMatchState("No opponents found. Try again.",{cancelQueue:true});
+      }
+    },1200);
+    return()=>clearTimeout(timer);
+  },[matchPhase,cd,resetMatchState]);
 
   const startMatch=()=>{if(isCreateBusy||isJoinBusy){setMatchErr("Finish or cancel current action first");return;}if(isMatchBusy){setMatchErr("Already matching");return;}if(!mockMode && (!wallet || !provider || !signer)){connect({type:"random-match"});return;}setPending(null);setMatchErr(null);setMatchPhase("matching");setMatchInfo({current:1});emit("match:join",{teamSize:matchTeamSize});};
-  const cancelMatch=()=>{emit("match:cancel");setPending(null);setMatchInfo({current:0});setMatchPhase("select");};
+  const cancelMatch=()=>resetMatchState(null,{cancelQueue:true});
   const payMatch=useCallback(async()=>{if(!pending)return;try{setPaymentErr(null);if(!pending.gameId||!pending.chainGameId||!wallet)throw new Error("Missing game id");await payForGame(pending.chainGameId);emit("room:payment:confirm",{gameId:pending.gameId,chainGameId:pending.chainGameId,wallet});setMatchPhase("paid_waiting");}catch(e){const msg=formatPaymentUiError(e?.message||"Payment failed");setMatchErr(msg);setPaymentErr(msg);setMatchPhase("select");}},[pending,payForGame,emit,wallet]);
   const claimHistoryReward=useCallback(async(game)=>{
     if(!game?.claimable||!game?.chain_game_id)return;
@@ -540,11 +564,13 @@ export default function Home(){
   // Payment modal — room payment keeps the modal open while waiting for everyone
   const isRoomPaymentPhase=(createPhase==="payment")||(joinPhase==="payment");
   const isRoomPaidWaiting=(createPhase==="paid_waiting")||(joinPhase==="paid_waiting");
+  const isMatchPreparing=matchPhase==="preparing";
   const isMatchPaymentPhase=matchPhase==="payment";
   const isMatchPaidWaiting=matchPhase==="paid_waiting";
   const isWaitingPaymentPhase=isRoomPaidWaiting||isMatchPaidWaiting;
-  const showPayment=isRoomPaymentPhase||isWaitingPaymentPhase||isMatchPaymentPhase;
-  const paymentModalMode=isWaitingPaymentPhase?"waiting":"confirm";
+  const showPayment=isRoomPaymentPhase||isWaitingPaymentPhase||isMatchPreparing||isMatchPaymentPhase;
+  const paymentModalMode=isWaitingPaymentPhase?"waiting":isMatchPreparing?"preparing":"confirm";
+  const preparingMatchTotal=matchInfo.current||matchTeamSize;
   const onPayConfirm=createPhase==="payment"?payCreate:joinPhase==="payment"?payJoin:payMatch;
   const onPayCancel=()=>{
     if(createPhase==="payment")cancelCreate();
@@ -872,11 +898,15 @@ export default function Home(){
         mode={paymentModalMode}
         title={isWaitingPaymentPhase
           ?"Payment Confirmed"
+          :isMatchPreparing
+            ?"Match Found"
           :isRoomPaymentPhase
             ?"Room Full — Pay to Start"
             :"Enter Match"}
         subtitle={isWaitingPaymentPhase
           ?`Your entry is confirmed. Waiting for the remaining players to pay before the prediction begins automatically.`
+          :isMatchPreparing
+            ?`All ${preparingMatchTotal} players are ready. We're preparing the payment step now.`
           :isRoomPaymentPhase
             ?`All ${paymentProgress.total} players joined! Pay 1 USDC within ${paymentCountdown||PAYMENT_TIMEOUT}s to start the prediction.`
             :"Pay entry fee to enter this match"}
@@ -885,6 +915,8 @@ export default function Home(){
         error={paymentErr}
         hint={isWaitingPaymentPhase
           ?`You have already paid. The match will start as soon as all ${paymentProgress.total||0} players confirm.${shouldUseMockPayment?" Local mock payment enabled.":""}`
+          :isMatchPreparing
+            ?"Creating the on-chain match now. This dialog will switch to `Pay 1 USDC` automatically as soon as setup finishes."
           :isRoomPaymentPhase
             ?`${paymentProgress.paidCount}/${paymentProgress.total} paid${shouldUseMockPayment?" · local mock payment enabled":""}`
             :shouldUseMockPayment
@@ -893,7 +925,7 @@ export default function Home(){
         countdown={(isRoomPaymentPhase||isWaitingPaymentPhase||isMatchPaymentPhase)?paymentCountdown:null}
         countdownLabel={(isRoomPaymentPhase||isWaitingPaymentPhase||isMatchPaymentPhase)?"Match starts automatically once everyone pays before the timer expires.":null}
         paidCount={paymentProgress.paidCount}
-        totalCount={paymentProgress.total}
+        totalCount={isMatchPreparing?preparingMatchTotal:paymentProgress.total}
       />
 
       {/* Bottom row */}
