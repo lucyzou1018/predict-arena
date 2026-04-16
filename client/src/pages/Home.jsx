@@ -451,9 +451,12 @@ export default function Home(){
       }),
       on("room:joined",d=>{
         if(d.error){setJoinErr(d.error);if(joinPaidRef.current){refund(ENTRY_FEE);setJoinPaid(false);}setJoinPhase("select");return;}
-        setJoinRoom({current:d.current,total:d.total,players:d.players});
+        const total=d.total||d.players?.length||0;
+        const current=d.current||d.players?.length||0;
+        setJoinRoom({current,total,players:d.players});
         if(d.expiresAt)setJoinExpiresAt(d.expiresAt);
-        setJoinPhase("waiting");
+        if(d.status==="full"){enterRoomPayment(d);setJoinPhase("payment");}
+        else setJoinPhase("waiting");
       }),
       on("game:start",d=>{
         updateGame({gameId:d.gameId,chainGameId:d.chainGameId||d.gameId,mode:"room",teamSize:d.players.length,players:d.players,phase:"predicting",basePrice:d.basePrice,countdown:Math.round((d.predictTimeout||30000)/1000),predictSafeBuffer:Math.round((d.predictSafeBuffer||5000)/1000),predictionDeadline:d.predictionDeadline||null});
