@@ -17,6 +17,8 @@ contract BtcPredictArena {
         keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
     bytes32 private constant PREDICTION_INTENT_TYPEHASH =
         keccak256("PredictionIntent(uint256 gameId,address player,uint8 prediction,uint256 deadline)");
+    bytes32 private constant ROOM_PAYMENT_AUTH_TYPEHASH =
+        keccak256("RoomPaymentAuth(bytes32 inviteCodeHash,uint8 maxPlayers,address roomOwner,address player,bytes32 playersHash,uint256 deadline)");
     bytes32 private constant NAME_HASH = keccak256("BtcPredictArena");
     bytes32 private constant VERSION_HASH = keccak256("1");
     uint256 private constant SECP256K1N_DIV_2 =
@@ -99,16 +101,14 @@ contract BtcPredictArena {
         return gid;
     }
 
-    function createRoomAndPay(uint8 _maxPlayers, string calldata _inviteCode) external returns (uint256) {
-        require(_maxPlayers >= 2 && _maxPlayers <= 5, "Invalid team size");
-        require(bytes(_inviteCode).length > 0, "Empty invite code");
-        require(inviteCodeToGame[_inviteCode] == 0, "Invite code taken");
-        uint256 gid = _createGame(_maxPlayers, true, _inviteCode, msg.sender);
-        inviteCodeToGame[_inviteCode] = gid;
-        _joinWithoutPayment(gid, msg.sender);
-        _collectPayment(gid, msg.sender);
-        _openPaymentIfFull(gid);
-        return gid;
+    function createRoomAndPay(
+        uint8 _maxPlayers,
+        string calldata _inviteCode,
+        address[] calldata _players,
+        uint256 _deadline,
+        bytes calldata _authSignature
+    ) external returns (uint256) {
+        return _payForReservedRoom(_maxPlayers, _inviteCode, msg.sender, _players, _deadline, _authSignature);
     }
 
     function ownerCreateGame(uint8 _maxPlayers, address _creator) external onlyOwner returns (uint256) {
@@ -149,15 +149,15 @@ contract BtcPredictArena {
         _openPaymentIfFull(gid);
     }
 
-    function joinRoomAndPay(string calldata _inviteCode) external returns (uint256) {
-        uint256 gid = inviteCodeToGame[_inviteCode];
-        require(gid > 0, "Room not found");
-        Game storage g = games[gid];
-        require(g.state == GameState.Created, "Room not joinable");
-        _joinWithoutPayment(gid, msg.sender);
-        _collectPayment(gid, msg.sender);
-        _openPaymentIfFull(gid);
-        return gid;
+    function joinRoomAndPay(
+        string calldata _inviteCode,
+        uint8 _maxPlayers,
+        address _roomOwner,
+        address[] calldata _players,
+        uint256 _deadline,
+        bytes calldata _authSignature
+    ) external returns (uint256) {
+        return _payForReservedRoom(_maxPlayers, _inviteCode, _roomOwner, _players, _deadline, _authSignature);
     }
 
     function ownerJoinGame(uint256 _gameId, address _player) external onlyOwner gameExists(_gameId) {
@@ -409,6 +409,86 @@ contract BtcPredictArena {
         require(usdc.transferFrom(player, address(this), paymentAmount), "Payment failed");
         pp.hasPaid = true;
         emit PlayerPaid(_gameId, player);
+    }
+
+    function _payForReservedRoom(
+        uint8 _maxPlayers,
+        string calldata _inviteCode,
+        address _roomOwner,
+        address[] calldata _players,
+        uint256 _deadline,
+        bytes calldata _authSignature
+    ) internal returns (uint256) {
+        require(_maxPlayers >= 2 && _maxPlayers <= 5, "Invalid team size");
+        require(bytes(_inviteCode).length > 0, "Empty invite code");
+        require(_roomOwner != address(0), "Invalid creator");
+        _assertRoomRoster(_maxPlayers, _roomOwner, msg.sender, _players);
+        _verifyRoomPaymentAuth(_inviteCode, _maxPlayers, _roomOwner, msg.sender, _players, _deadline, _authSignature);
+
+        uint256 gid = inviteCodeToGame[_inviteCode];
+        if (gid == 0) {
+            gid = _createGame(_maxPlayers, true, _inviteCode, _roomOwner);
+            inviteCodeToGame[_inviteCode] = gid;
+        } else {
+            Game storage existing = games[gid];
+            require(existing.isRoom, "Room not found");
+            require(existing.maxPlayers == _maxPlayers, "Room size mismatch");
+            require(existing.state == GameState.Created || existing.state == GameState.Payment, "Room not joinable");
+        }
+
+        if (!_isPlayer(gid, msg.sender)) {
+            Game storage g = games[gid];
+            require(g.state == GameState.Created || g.state == GameState.Payment, "Room not joinable");
+            _joinWithoutPayment(gid, msg.sender);
+            _openPaymentIfFull(gid);
+        }
+
+        _collectPayment(gid, msg.sender);
+        _openPaymentIfFull(gid);
+        return gid;
+    }
+
+    function _assertRoomRoster(
+        uint8 _maxPlayers,
+        address _roomOwner,
+        address _player,
+        address[] calldata _players
+    ) internal pure {
+        require(_players.length == _maxPlayers, "Roster mismatch");
+        bool ownerIncluded = false;
+        bool playerIncluded = false;
+        for (uint256 i = 0; i < _players.length; i++) {
+            address current = _players[i];
+            require(current != address(0), "Invalid player");
+            if (current == _roomOwner) ownerIncluded = true;
+            if (current == _player) playerIncluded = true;
+        }
+        require(ownerIncluded, "Owner not in room");
+        require(playerIncluded, "Player not in room");
+    }
+
+    function _verifyRoomPaymentAuth(
+        string calldata _inviteCode,
+        uint8 _maxPlayers,
+        address _roomOwner,
+        address _player,
+        address[] calldata _players,
+        uint256 _deadline,
+        bytes calldata _authSignature
+    ) internal view {
+        require(block.timestamp <= _deadline, "Payment authorization expired");
+        bytes32 structHash = keccak256(abi.encode(
+            ROOM_PAYMENT_AUTH_TYPEHASH,
+            keccak256(bytes(_inviteCode)),
+            _maxPlayers,
+            _roomOwner,
+            _player,
+            keccak256(abi.encodePacked(_players)),
+            _deadline
+        ));
+        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", domainSeparator(), structHash));
+        address signer = _recoverSigner(digest, _authSignature);
+        require(signer == owner, "Invalid room payment auth");
     }
 
     function _submitPrediction(uint256 _gameId, address _player, Prediction _prediction) internal {

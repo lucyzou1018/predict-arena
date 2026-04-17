@@ -209,7 +209,7 @@ class GameService {
     }
 
     if (!targetChainGameId) {
-      throw new Error("On-chain room is still opening. Wait for the host payment first.");
+      throw new Error("On-chain room payment is still syncing. Please retry in a moment.");
     }
 
     if (session && !session.chainGameId) {

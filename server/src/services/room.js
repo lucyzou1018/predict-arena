@@ -112,7 +112,6 @@ class RoomService {
     for (const c in this.rooms) { if (c !== code && this.rooms[c].players.find(p => p.wallet === wallet)) return { error: "已在其他房间中" }; }
     r.players.push({ wallet, socketId });
     await query(`INSERT INTO game_players (game_id, wallet_address, paid) VALUES ($1, $2, false) ON CONFLICT DO NOTHING`, [r.gameId, wallet]);
-    this._broadcast(code);
     if (r.players.length === r.maxPlayers) {
       await query(`UPDATE games SET state = 'payment' WHERE id = $1`, [r.gameId]);
       return {
@@ -128,6 +127,7 @@ class RoomService {
         paymentTimeout: config.game.paymentTimeout,
       };
     }
+    this._broadcast(code);
     return { status: "joined", gameId: r.gameId, current: r.players.length, total: r.maxPlayers, players: r.players.map(p => p.wallet), expiresAt: r.expiresAt };
   }
 

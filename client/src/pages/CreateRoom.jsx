@@ -27,6 +27,9 @@ export default function CreateRoom(){
       gameId:d?.gameId||prev?.gameId||null,
       chainGameId:d?.chainGameId||prev?.chainGameId||null,
       inviteCode:d?.inviteCode||prev?.inviteCode||code,
+      maxPlayers:d?.total||prev?.maxPlayers||total,
+      owner:d?.owner||prev?.owner||wallet||null,
+      auth:d?.auth||prev?.auth||null,
       players:players.length?players:(prev?.players||[]),
       paymentTimeout:d?.paymentTimeout||prev?.paymentTimeout||PAYMENT_TIMEOUT*1000,
     }));
@@ -65,7 +68,7 @@ export default function CreateRoom(){
     on("room:created",d=>{cancelPending.current=false;phaseBeforeCancel.current="select";setHint(null);setCode(d.inviteCode);setRoomExpiresAt(d.expiresAt);setRoom({current:1,players:[wallet]});setPhase("waiting");}),
     on("room:update",d=>{setRoom({current:d.current,players:d.players});if(d.expiresAt)setRoomExpiresAt(d.expiresAt);if(d.status==="full"||(d.total&&d.current>=d.total))openPayment(d);}),
     on("room:full",d=>{openPayment(d);}),
-    on("room:payment:opened",d=>{openPayment({...d,paymentOpen:true});}),
+    on("room:payment:opened",d=>{setRoomFullInfo(prev=>prev?{...prev,chainGameId:d.chainGameId||prev.chainGameId}:prev);}),
     on("room:error",d=>{if(cancelPending.current){cancelPending.current=false;setPhase(phaseBeforeCancel.current==="paid_waiting"?"paid_waiting":"waiting");}setHint(null);setErr(d.message);}),
     on("room:dissolved",d=>{const selfCancelled=cancelPending.current;cancelPending.current=false;phaseBeforeCancel.current="select";setHint(null);if(paid){refund(ENTRY_FEE);setPaid(false);}setErr(selfCancelled?null:(d?.reason||null));setCode("");setRoom({current:0,players:[]});setPhase("select");setRoomExpiresAt(null);setRoomCountdown(null);setPaymentStartedAt(null);setPaymentCountdown(null);setRoomFullInfo(null);setPaymentProgress({paidCount:0,total:0});}),
     on("room:expired",()=>{setRoomExpiresAt(null);setRoomCountdown(null);setPhase("expired");}),
@@ -84,7 +87,7 @@ export default function CreateRoom(){
   },[paymentCountdown,phase,handlePaymentFailure]);
 
   const create=()=>{cancelPending.current=false;phaseBeforeCancel.current="select";setErr(null);setHint(null);emit("room:create",{teamSize:sz});};
-  const payRoom=useCallback(async()=>{try{const paymentResult=await payForRoomEntry({inviteCode:code,maxPlayers:sz,isOwner:true});if(paymentResult?.approved&&!paymentResult?.paid)return;if(roomFullInfo&&paymentResult?.chainGameId){setRoomFullInfo(prev=>prev?{...prev,chainGameId:paymentResult.chainGameId}:prev);}setPaid(true);if(roomFullInfo){emit("room:payment:confirm",{gameId:roomFullInfo.gameId,chainGameId:paymentResult?.chainGameId||roomFullInfo.chainGameId||null,inviteCode:code,wallet});setPhase("paid_waiting");}}catch(e){setErr(e?.message||"Payment failed");}},[payForRoomEntry,roomFullInfo,code,emit,sz,wallet]);
+  const payRoom=useCallback(async()=>{try{const paymentResult=await payForRoomEntry({inviteCode:code,maxPlayers:roomFullInfo?.maxPlayers||sz,isOwner:true,auth:roomFullInfo?.auth});if(paymentResult?.approved&&!paymentResult?.paid)return;if(roomFullInfo&&paymentResult?.chainGameId){setRoomFullInfo(prev=>prev?{...prev,chainGameId:paymentResult.chainGameId}:prev);}setPaid(true);if(roomFullInfo){emit("room:payment:confirm",{gameId:roomFullInfo.gameId,chainGameId:paymentResult?.chainGameId||roomFullInfo.chainGameId||null,inviteCode:code,wallet});setPhase("paid_waiting");}}catch(e){setErr(e?.message||"Payment failed");}},[payForRoomEntry,roomFullInfo,code,emit,sz,wallet]);
   const beginCancel=()=>{cancelPending.current=true;phaseBeforeCancel.current=phase;setErr(null);setHint("Cancelling room...");setRoomCountdown(null);emit("room:dissolve",{inviteCode:code});setPhase("dissolving");};
   const cancel=()=>{beginCancel();};
   const dissolve=()=>{beginCancel();};

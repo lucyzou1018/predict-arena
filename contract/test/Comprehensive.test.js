@@ -44,6 +44,35 @@ describe("BtcPredictArena - Comprehensive Tests", function () {
     return gid;
   }
 
+  async function signRoomPaymentAuth({ inviteCode, maxPlayers, roomOwner, player, players, deadline }) {
+    const chainId = (await ethers.provider.getNetwork()).chainId;
+    const domain = {
+      name: "BtcPredictArena",
+      version: "1",
+      chainId,
+      verifyingContract: await arena.getAddress(),
+    };
+    const types = {
+      RoomPaymentAuth: [
+        { name: "inviteCodeHash", type: "bytes32" },
+        { name: "maxPlayers", type: "uint8" },
+        { name: "roomOwner", type: "address" },
+        { name: "player", type: "address" },
+        { name: "playersHash", type: "bytes32" },
+        { name: "deadline", type: "uint256" },
+      ],
+    };
+    const value = {
+      inviteCodeHash: ethers.keccak256(ethers.toUtf8Bytes(inviteCode)),
+      maxPlayers,
+      roomOwner,
+      player,
+      playersHash: ethers.keccak256(ethers.concat(players.map((address) => ethers.zeroPadValue(address, 32)))),
+      deadline,
+    };
+    return owner.signTypedData(domain, types, value);
+  }
+
   async function payAll(gid, players) {
     for (const p of players) await arena.connect(p).payForGame(gid);
   }
@@ -173,8 +202,18 @@ describe("BtcPredictArena - Comprehensive Tests", function () {
     });
 
     it("createRoomAndPay creates the room and marks creator paid in one tx", async function () {
+      const deadline = (await time.latest()) + 600;
+      const players = [p1.address, p2.address, p3.address];
+      const signature = await signRoomPaymentAuth({
+        inviteCode: "ATOM01",
+        maxPlayers: 3,
+        roomOwner: p1.address,
+        player: p1.address,
+        players,
+        deadline,
+      });
       const balBefore = await usdc.balanceOf(p1.address);
-      await expect(arena.connect(p1).createRoomAndPay(3, "ATOM01"))
+      await expect(arena.connect(p1).createRoomAndPay(3, "ATOM01", players, deadline, signature))
         .to.emit(arena, "GameCreated").withArgs(1, 3, true, "ATOM01", p1.address)
         .and.to.emit(arena, "PlayerPaid").withArgs(1, p1.address);
 
@@ -255,10 +294,29 @@ describe("BtcPredictArena - Comprehensive Tests", function () {
     });
 
     it("joinRoomAndPay joins, pays, and opens payment when the room becomes full", async function () {
-      await arena.connect(p1).createRoomAndPay(2, "JPAY01");
+      const deadline = (await time.latest()) + 600;
+      const players = [p1.address, p2.address];
+      const hostSig = await signRoomPaymentAuth({
+        inviteCode: "JPAY01",
+        maxPlayers: 2,
+        roomOwner: p1.address,
+        player: p1.address,
+        players,
+        deadline,
+      });
+      const joinSig = await signRoomPaymentAuth({
+        inviteCode: "JPAY01",
+        maxPlayers: 2,
+        roomOwner: p1.address,
+        player: p2.address,
+        players,
+        deadline,
+      });
+
+      await arena.connect(p1).createRoomAndPay(2, "JPAY01", players, deadline, hostSig);
       const balBefore = await usdc.balanceOf(p2.address);
 
-      await expect(arena.connect(p2).joinRoomAndPay("JPAY01"))
+      await expect(arena.connect(p2).joinRoomAndPay("JPAY01", 2, p1.address, players, deadline, joinSig))
         .to.emit(arena, "PlayerJoined").withArgs(1, p2.address)
         .and.to.emit(arena, "PlayerPaid").withArgs(1, p2.address)
         .and.to.emit(arena, "PaymentOpened").withArgs(1);
@@ -272,6 +330,29 @@ describe("BtcPredictArena - Comprehensive Tests", function () {
       expect(joinerState[1]).to.equal(true);
       expect(await usdc.balanceOf(p2.address)).to.equal(balBefore - ENTRY);
       expect(await arena.allPlayersPaid(1)).to.equal(true);
+    });
+
+    it("joinRoomAndPay can be the first payment and still creates the on-chain room", async function () {
+      const deadline = (await time.latest()) + 600;
+      const players = [p1.address, p2.address, p3.address];
+      const joinSig = await signRoomPaymentAuth({
+        inviteCode: "JFIRST",
+        maxPlayers: 3,
+        roomOwner: p1.address,
+        player: p2.address,
+        players,
+        deadline,
+      });
+
+      await expect(arena.connect(p2).joinRoomAndPay("JFIRST", 3, p1.address, players, deadline, joinSig))
+        .to.emit(arena, "GameCreated").withArgs(1, 3, true, "JFIRST", p1.address)
+        .and.to.emit(arena, "PlayerJoined").withArgs(1, p2.address)
+        .and.to.emit(arena, "PlayerPaid").withArgs(1, p2.address);
+
+      const info = await arena.getGameInfo(1);
+      expect(info[2]).to.equal(0);
+      expect(info[3]).to.equal(1n);
+      expect(await arena.inviteCodeToGame("JFIRST")).to.equal(1n);
     });
 
     it("ownerJoinGame rejects on a room", async function () {
@@ -370,8 +451,26 @@ describe("BtcPredictArena - Comprehensive Tests", function () {
 
     it("cancelGame refunds players who already used atomic room payments", async function () {
       const atomicGid = Number(await arena.nextGameId());
-      await arena.connect(p1).createRoomAndPay(3, "RFUND1");
-      await arena.connect(p2).joinRoomAndPay("RFUND1");
+      const deadline = (await time.latest()) + 600;
+      const players = [p1.address, p2.address, p3.address];
+      const hostSig = await signRoomPaymentAuth({
+        inviteCode: "RFUND1",
+        maxPlayers: 3,
+        roomOwner: p1.address,
+        player: p1.address,
+        players,
+        deadline,
+      });
+      const joinSig = await signRoomPaymentAuth({
+        inviteCode: "RFUND1",
+        maxPlayers: 3,
+        roomOwner: p1.address,
+        player: p2.address,
+        players,
+        deadline,
+      });
+      await arena.connect(p1).createRoomAndPay(3, "RFUND1", players, deadline, hostSig);
+      await arena.connect(p2).joinRoomAndPay("RFUND1", 3, p1.address, players, deadline, joinSig);
 
       const p1AfterPay = await usdc.balanceOf(p1.address);
       const p2AfterPay = await usdc.balanceOf(p2.address);

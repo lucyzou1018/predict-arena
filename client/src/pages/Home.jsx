@@ -24,8 +24,8 @@ function formatPaymentUiError(message){
   if(text.includes("allowance")){
     return "Token approval finished, but the payment transaction is not ready yet. Please wait a moment and try again.";
   }
-  if(text.includes("host has not opened on-chain payment")||text.includes("wait for the host payment first")){
-    return "Waiting for the host to open on-chain payment. Please try again in a moment.";
+  if(text.includes("room payment is still syncing on-chain")||text.includes("on-chain room payment is still syncing")){
+    return "Room payment is still syncing on-chain. Please retry in a moment.";
   }
   return message;
 }
@@ -173,16 +173,14 @@ export default function Home(){
     const total=Number(d?.total||d?.players?.length||0);
     const players=Array.isArray(d?.players)?d.players:[];
     if(!total)return;
-    const paymentOpen=d?.paymentOpen??!!d?.chainGameId;
     const ownerWallet=d?.owner?.toLowerCase?.()||null;
-    const isOwnerPayment=!!ownerWallet&&ownerWallet===walletRef.current;
     setRoomFullInfo(prev=>({
       gameId:d?.gameId||prev?.gameId||null,
       chainGameId:d?.chainGameId||prev?.chainGameId||null,
       inviteCode:d?.inviteCode||prev?.inviteCode||roomCodeRef.current||joinCodeRef.current||"",
       maxPlayers:d?.total||prev?.maxPlayers||total,
       owner:ownerWallet||prev?.owner||null,
-      paymentOpen,
+      auth:d?.auth||prev?.auth||null,
       players:players.length?players:(prev?.players||[]),
       paymentTimeout:d?.paymentTimeout||prev?.paymentTimeout||PAYMENT_TIMEOUT*1000,
     }));
@@ -197,10 +195,10 @@ export default function Home(){
       if(joinPhaseRef.current==="waiting"||joinPhaseRef.current==="joining"||joinPhaseRef.current==="preparing")setJoinRoom({current:total,total:d?.total||total,players});
     }
     if(createPhaseRef.current==="waiting"||createPhaseRef.current==="creating"||createPhaseRef.current==="preparing"){
-      setCreatePhase((paymentOpen||isOwnerPayment)?(createPaidRef.current?"paid_waiting":"payment"):"preparing");
+      setCreatePhase(createPaidRef.current?"paid_waiting":"payment");
     }
     if(joinPhaseRef.current==="waiting"||joinPhaseRef.current==="joining"||joinPhaseRef.current==="preparing"){
-      setJoinPhase(paymentOpen?(joinPaidRef.current?"paid_waiting":"payment"):"preparing");
+      setJoinPhase(joinPaidRef.current?"paid_waiting":"payment");
     }
   },[]);
 
@@ -343,16 +341,10 @@ export default function Home(){
         const current=d.room.current_players||players.length||1;
         const expiresAt=(d.room.expires_at?new Date(d.room.expires_at).getTime():new Date(d.room.created_at).getTime()+300000);
         const isExpired=expiresAt<=Date.now();
-        const isPreparingPhase=d.room.phase==="preparing";
         const isPaymentPhase=d.room.phase==="payment"||d.room.phase==="paid_waiting";
         const paymentStartedAt=d.room.payment_started_at?new Date(d.room.payment_started_at).getTime():null;
-        if(isPreparingPhase){
-          setRoomFullInfo({gameId:d.room.game_id||d.room.id,chainGameId:d.room.chain_game_id||null,inviteCode:code,maxPlayers:total,owner:d.room.owner||null,paymentOpen:!!d.room.payment_open,players,paymentTimeout:d.room.payment_timeout_ms});
-          setPaymentProgress({paidCount:d.room.paid_count||0,total:d.room.total_players||total});
-          setPaymentStartedAt(null);
-        }
         if(isPaymentPhase){
-          setRoomFullInfo({gameId:d.room.game_id||d.room.id,chainGameId:d.room.chain_game_id||null,inviteCode:code,maxPlayers:total,owner:d.room.owner||null,paymentOpen:!!d.room.payment_open,players,paymentTimeout:d.room.payment_timeout_ms});
+          setRoomFullInfo({gameId:d.room.game_id||d.room.id,chainGameId:d.room.chain_game_id||null,inviteCode:code,maxPlayers:total,owner:d.room.owner||null,auth:d.room.auth||null,players,paymentTimeout:d.room.payment_timeout_ms});
           setPaymentProgress({paidCount:d.room.paid_count||0,total:d.room.total_players||total});
           setPaymentStartedAt(paymentStartedAt);
         }
@@ -360,10 +352,7 @@ export default function Home(){
           setCreateTeamSize(total);
           setRoomCode(code);
           setRoom({current,total,players});
-          if(isPreparingPhase){
-            setCreatePhase("preparing");
-            setRoomExpiresAt(null);
-          } else if(isPaymentPhase){
+          if(isPaymentPhase){
             setCreatePaid(d.room.phase==="paid_waiting");
             setCreatePhase(d.room.phase);
             setRoomExpiresAt(null);
@@ -376,10 +365,7 @@ export default function Home(){
         } else {
           setJoinCode(code);
           setJoinRoom({current,total,players});
-          if(isPreparingPhase){
-            setJoinPhase("preparing");
-            setJoinExpiresAt(null);
-          } else if(isPaymentPhase){
+          if(isPaymentPhase){
             setJoinPaid(d.room.phase==="paid_waiting");
             setJoinPhase(d.room.phase);
             setJoinExpiresAt(null);
@@ -447,7 +433,7 @@ export default function Home(){
         enterRoomPayment(d);
       }),
       on("room:payment:opened",d=>{
-        enterRoomPayment({...d,paymentOpen:true});
+        setRoomFullInfo(prev=>prev?{...prev,chainGameId:d.chainGameId||prev.chainGameId}:prev);
       }),
       on("room:error",d=>{
         if(createTimeoutRef.current){clearTimeout(createTimeoutRef.current);createTimeoutRef.current=null;}
@@ -510,7 +496,7 @@ export default function Home(){
         if(joinTimeoutRef.current){clearTimeout(joinTimeoutRef.current);joinTimeoutRef.current=null;}
         setJoinErr(d?.message||"Room not found or expired");setJoinPhase("select");
       }),
-      on("room:payment:update",d=>{setPaymentProgress({paidCount:d.paidCount,total:d.total});if(d.chainGameId){setRoomFullInfo(prev=>prev?{...prev,chainGameId:d.chainGameId,paymentOpen:true}:prev);}}),
+      on("room:payment:update",d=>{setPaymentProgress({paidCount:d.paidCount,total:d.total});if(d.chainGameId){setRoomFullInfo(prev=>prev?{...prev,chainGameId:d.chainGameId}:prev);}}),
       on("room:payment:failed",d=>{
         if(createTimeoutRef.current){clearTimeout(createTimeoutRef.current);createTimeoutRef.current=null;}
         createCancelPendingRef.current=false;
@@ -551,7 +537,7 @@ export default function Home(){
       :null;
 
   const createRoom=()=>{if(isJoinBusy||isMatchBusy){setCreateErr("Finish or cancel current action first");return;}if(isCreateBusy){setCreateErr("Already creating a room");return;}if(!mockMode && (!wallet || !provider || !signer)){connect({type:"create-room"});return;}createCancelPendingRef.current=false;createPhaseBeforeCancelRef.current="select";setCreateErr(null);setCreateHint(null);setCreatePhase("creating");if(createTimeoutRef.current)clearTimeout(createTimeoutRef.current);createTimeoutRef.current=setTimeout(()=>{createTimeoutRef.current=null;if(createPhaseRef.current==="creating")setCreateHint("Base Sepolia is taking longer than usual. Waiting for on-chain confirmation...");},12000);emit("room:create",{teamSize:createTeamSize});};
-  const payCreate=useCallback(async()=>{try{setPaymentErr(null);setPaymentNotice(null);if(!roomFullInfo?.gameId||!wallet)throw new Error("Missing game id");const paymentResult=await payForRoomEntry({inviteCode:roomCode,maxPlayers:roomFullInfo?.maxPlayers||createTeamSizeRef.current,isOwner:true});if(paymentResult?.approved&&!paymentResult?.paid){const notice="USDC approval confirmed. Tap `Pay 1 USDC` one more time to complete the entry.";setCreateErr(null);setPaymentNotice(notice);return;}if(paymentResult?.chainGameId){setRoomFullInfo(prev=>prev?{...prev,chainGameId:paymentResult.chainGameId,paymentOpen:true}:prev);}setCreatePaid(true);setCreateErr(null);emit("room:payment:confirm",{gameId:roomFullInfo.gameId,chainGameId:paymentResult?.chainGameId||roomFullInfo?.chainGameId||null,inviteCode:roomCode,wallet});setCreatePhase("paid_waiting");}catch(e){const msg=formatPaymentUiError(e?.message||"Payment failed");setCreateErr(msg);setPaymentErr(msg);}},[payForRoomEntry,roomFullInfo,roomCode,emit,wallet]);
+  const payCreate=useCallback(async()=>{try{setPaymentErr(null);setPaymentNotice(null);if(!roomFullInfo?.gameId||!wallet)throw new Error("Missing game id");const paymentResult=await payForRoomEntry({inviteCode:roomCode,maxPlayers:roomFullInfo?.maxPlayers||createTeamSizeRef.current,isOwner:true,auth:roomFullInfo?.auth});if(paymentResult?.approved&&!paymentResult?.paid){const notice="USDC approval confirmed. Tap `Pay 1 USDC` one more time to complete the entry.";setCreateErr(null);setPaymentNotice(notice);return;}if(paymentResult?.chainGameId){setRoomFullInfo(prev=>prev?{...prev,chainGameId:paymentResult.chainGameId}:prev);}setCreatePaid(true);setCreateErr(null);emit("room:payment:confirm",{gameId:roomFullInfo.gameId,chainGameId:paymentResult?.chainGameId||roomFullInfo?.chainGameId||null,inviteCode:roomCode,wallet});setCreatePhase("paid_waiting");}catch(e){const msg=formatPaymentUiError(e?.message||"Payment failed");setCreateErr(msg);setPaymentErr(msg);}},[payForRoomEntry,roomFullInfo,roomCode,emit,wallet]);
   const beginCreateRoomCancel=()=>{createCancelPendingRef.current=true;createPhaseBeforeCancelRef.current=createPhaseRef.current;setCreateErr(null);setCreateHint("Cancelling room...");setRoomCountdown(null);setCreatePhase("dissolving");emit("room:dissolve",{inviteCode:roomCodeRef.current||roomCode});};
   const cancelCreate=()=>{beginCreateRoomCancel();};
   const dissolveRoom=()=>{beginCreateRoomCancel();};
@@ -561,7 +547,7 @@ export default function Home(){
   // Join flow: confirm dialog (no payment), then join directly
   const submitJoin=()=>{if(isCreateBusy||isMatchBusy){setJoinErr("Finish or cancel current action first");return;}if(isJoinBusy){setJoinErr("Already in join flow");return;}if(!mockMode && (!wallet || !provider || !signer)){connect({type:"join-room",code:joinCode});return;}if(joinCode.length<6)return setJoinErr("Enter complete 6-digit code");setJoinErr(null);setJoinPhase("validating");if(joinTimeoutRef.current)clearTimeout(joinTimeoutRef.current);joinTimeoutRef.current=setTimeout(()=>{setJoinErr("Invalid room code or server not responding");setJoinPhase("select");},4000);emit("room:validate",{inviteCode:joinCode.toUpperCase()});};
   const confirmJoin=()=>{emit("room:join",{inviteCode:joinCode.toUpperCase()});setJoinPhase("joining");};
-  const payJoin=useCallback(async()=>{try{setPaymentErr(null);setPaymentNotice(null);if(!roomFullInfo?.gameId||!wallet)throw new Error("Missing game id");const paymentResult=await payForRoomEntry({inviteCode:roomFullInfo.inviteCode||joinCode,isOwner:false});if(paymentResult?.approved&&!paymentResult?.paid){const notice="USDC approval confirmed. Tap `Pay 1 USDC` one more time to complete the entry.";setJoinErr(null);setPaymentNotice(notice);return;}if(paymentResult?.chainGameId){setRoomFullInfo(prev=>prev?{...prev,chainGameId:paymentResult.chainGameId,paymentOpen:true}:prev);}setJoinPaid(true);setJoinErr(null);emit("room:payment:confirm",{gameId:roomFullInfo.gameId,chainGameId:paymentResult?.chainGameId||roomFullInfo?.chainGameId||null,inviteCode:roomFullInfo.inviteCode||joinCode,wallet});setJoinPhase("paid_waiting");}catch(e){const msg=formatPaymentUiError(e?.message||"Payment failed");setJoinErr(msg);setPaymentErr(msg);}},[joinCode,payForRoomEntry,emit,roomFullInfo,wallet]);
+  const payJoin=useCallback(async()=>{try{setPaymentErr(null);setPaymentNotice(null);if(!roomFullInfo?.gameId||!wallet)throw new Error("Missing game id");const paymentResult=await payForRoomEntry({inviteCode:roomFullInfo.inviteCode||joinCode,isOwner:false,auth:roomFullInfo?.auth});if(paymentResult?.approved&&!paymentResult?.paid){const notice="USDC approval confirmed. Tap `Pay 1 USDC` one more time to complete the entry.";setJoinErr(null);setPaymentNotice(notice);return;}if(paymentResult?.chainGameId){setRoomFullInfo(prev=>prev?{...prev,chainGameId:paymentResult.chainGameId}:prev);}setJoinPaid(true);setJoinErr(null);emit("room:payment:confirm",{gameId:roomFullInfo.gameId,chainGameId:paymentResult?.chainGameId||roomFullInfo?.chainGameId||null,inviteCode:roomFullInfo.inviteCode||joinCode,wallet});setJoinPhase("paid_waiting");}catch(e){const msg=formatPaymentUiError(e?.message||"Payment failed");setJoinErr(msg);setPaymentErr(msg);}},[joinCode,payForRoomEntry,emit,roomFullInfo,wallet]);
   const leaveRoom=()=>{emit("room:leave");if(joinPaid){refund(ENTRY_FEE);setJoinPaid(false);}setJoinPhase("select");setJoinExpiresAt(null);};
 
   // ===== QUICK MATCH =====
@@ -626,7 +612,6 @@ export default function Home(){
   const isWaitingPaymentPhase=isRoomPaidWaiting||isMatchPaidWaiting;
   const showPayment=isRoomPreparing||isRoomPaymentPhase||isWaitingPaymentPhase||isMatchPreparing||isMatchPaymentPhase;
   const paymentModalMode=isWaitingPaymentPhase?"waiting":(isRoomPreparing||isMatchPreparing)?"preparing":"confirm";
-  const waitingForHostPayment = joinPhase==="preparing";
   const preparingMatchTotal=matchInfo.current||matchTeamSize;
   const onPayConfirm=createPhase==="payment"?payCreate:joinPhase==="payment"?payJoin:payMatch;
   const onPayCancel=()=>{
@@ -873,7 +858,7 @@ export default function Home(){
                   <TeamSlots total={joinRoom.total} players={joinRoom.players}/>
                   <div className="mt-2 inline-flex items-center gap-1.5 text-[10px]">
                     <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"/>
-                    <span className="text-white/30 font-mono">{joinPhase==="preparing" ? "Waiting for host payment..." : joinPaid && paymentProgress.total ? `${paymentProgress.paidCount}/${paymentProgress.total} paid` : `${joinRoom.current}/${joinRoom.total} waiting`}</span>
+                    <span className="text-white/30 font-mono">{joinPhase==="preparing" ? "Preparing payment..." : joinPaid && paymentProgress.total ? `${paymentProgress.paidCount}/${paymentProgress.total} paid` : `${joinRoom.current}/${joinRoom.total} waiting`}</span>
                   </div>
                   {/* Join room expiry countdown */}
                   {joinCountdown!==null&&joinCountdown>0&&joinRoom.current<joinRoom.total&&(
@@ -957,7 +942,7 @@ export default function Home(){
         title={isWaitingPaymentPhase
           ?"Payment Confirmed"
           :isRoomPreparing
-            ?(waitingForHostPayment?"Waiting For Host Payment":"Preparing Payment")
+            ?"Preparing Payment"
           :isMatchPreparing
             ?"Match Found"
           :isRoomPaymentPhase
@@ -966,9 +951,7 @@ export default function Home(){
         subtitle={isWaitingPaymentPhase
           ?`Your entry is confirmed. Waiting for the remaining players to pay before the prediction begins automatically.`
           :isRoomPreparing
-            ?(waitingForHostPayment
-              ?`All ${paymentProgress.total||0} players are ready. The host needs to pay first to open the on-chain room.`
-              :`All ${paymentProgress.total||0} players are ready. We're preparing the payment step now.`)
+            ?`All ${paymentProgress.total||0} players are ready. We're preparing the payment step now.`
           :isMatchPreparing
             ?`All ${preparingMatchTotal} players are ready. We're preparing the payment step now.`
           :isRoomPaymentPhase
@@ -981,9 +964,7 @@ export default function Home(){
         hint={isWaitingPaymentPhase
           ?`You have already paid. The match will start as soon as all ${paymentProgress.total||0} players confirm.${shouldUseMockPayment?" Local mock payment enabled.":""}`
           :isRoomPreparing
-            ?(waitingForHostPayment
-              ?"The host payment opens the on-chain room first. Your `Pay 1 USDC` button will appear here automatically right after that."
-              :"Creating the on-chain game now. If this takes too long, the room will reset automatically.")
+            ?"Creating the on-chain game now. If this takes too long, the room will reset automatically."
           :isMatchPreparing
             ?"Creating the on-chain match now. This dialog will switch to `Pay 1 USDC` automatically as soon as setup finishes."
           :isRoomPaymentPhase
@@ -991,21 +972,6 @@ export default function Home(){
             :shouldUseMockPayment
               ?"Local mock payment enabled for this environment."
               :"You'll confirm this payment in your wallet."}
-        amountCaption={isRoomPreparing&&waitingForHostPayment
-          ?"Your payment unlocks right after the host opens the room on-chain"
-          :null}
-        preparingTitle={isRoomPreparing&&waitingForHostPayment
-          ?"Waiting for the host payment"
-          :null}
-        preparingMessage={isRoomPreparing&&waitingForHostPayment
-          ?"The host pays first to create the on-chain room. As soon as that confirms, this dialog will switch to `Pay 1 USDC` for you."
-          :null}
-        preparingPrimaryLabel={isRoomPreparing&&waitingForHostPayment
-          ?"Room Full"
-          :undefined}
-        preparingSecondaryLabel={isRoomPreparing&&waitingForHostPayment
-          ?"Waiting for Host"
-          :undefined}
         countdown={(isRoomPaymentPhase||isWaitingPaymentPhase||isMatchPaymentPhase)?paymentCountdown:null}
         countdownLabel={(isRoomPaymentPhase||isWaitingPaymentPhase||isMatchPaymentPhase)?"Match starts automatically once everyone pays before the timer expires.":null}
         paidCount={paymentProgress.paidCount}

@@ -5,6 +5,7 @@ import config from "../config/index.js";
 import roomService from "../services/room.js";
 import gameService from "../services/game.js";
 import contractService from "../services/contract.js";
+import roomPaymentAuthService from "../services/roomPaymentAuth.js";
 const router = Router();
 const norm = (wallet = "") => wallet.toLowerCase();
 
@@ -54,10 +55,16 @@ router.get("/users/:wallet/open-room", async (req, res) => {
     const me = gp.rows.find((row) => norm(row.wallet_address) === wallet);
     const payment = gameService.getRoomPayment(room.gameId);
     const paidCount = gp.rows.filter((row) => row.paid === true).length;
-    const paymentOpen = !!(payment?.chainGameId || room.chainGameId);
-    const phase = payment
-      ? (paymentOpen ? (me?.paid ? "paid_waiting" : "payment") : (me?.is_owner ? "payment" : "preparing"))
-      : "waiting";
+    const auth = payment && !me?.paid
+      ? await roomPaymentAuthService.build({
+          inviteCode,
+          maxPlayers: room.maxPlayers,
+          roomOwner: room.owner,
+          player: wallet,
+          players: room.players.map((p) => p.wallet),
+        }).catch(() => null)
+      : null;
+    const phase = payment ? (me?.paid ? "paid_waiting" : "payment") : "waiting";
     return res.json({
       room: {
         id: room.gameId,
@@ -73,11 +80,12 @@ router.get("/users/:wallet/open-room", async (req, res) => {
         owner: room.owner,
         players: room.players.map((p) => p.wallet),
         phase,
-        payment_open: paymentOpen,
+        payment_open: true,
         payment_started_at: payment?.startedAt || null,
         payment_timeout_ms: config.game.paymentTimeout,
         paid_count: paidCount,
         total_players: room.players.length,
+        auth,
       },
     });
   }
@@ -94,6 +102,12 @@ router.get("/users/:wallet/open-room", async (req, res) => {
               ),
               '[]'::json
             ) as players,
+            (
+              SELECT x.wallet_address
+              FROM game_players x
+              WHERE x.game_id = g.id AND x.is_owner = true
+              LIMIT 1
+            ) as owner_wallet,
             (
               SELECT MAX(x.paid_at)
               FROM game_players x
@@ -129,16 +143,25 @@ router.get("/users/:wallet/open-room", async (req, res) => {
       return res.json({ room: null });
     }
   }
+  const auth = row.state === "payment" && !row.paid
+    ? await roomPaymentAuthService.build({
+        inviteCode: row.invite_code,
+        maxPlayers: row.max_players,
+        roomOwner: row.owner_wallet,
+        player: wallet,
+        players: Array.isArray(row.players) ? row.players : [],
+      }).catch(() => null)
+    : null;
   const room = {
     ...row,
     game_id: row.id,
     total_players: row.current_players,
     payment_timeout_ms: config.game.paymentTimeout,
-    phase: row.state === "payment"
-      ? (row.chain_game_id ? (row.paid ? "paid_waiting" : "payment") : (row.is_owner ? "payment" : "preparing"))
-      : "waiting",
-    payment_open: !!row.chain_game_id,
+    phase: row.state === "payment" ? (row.paid ? "paid_waiting" : "payment") : "waiting",
+    payment_open: row.state === "payment",
+    owner: row.owner_wallet,
     players: Array.isArray(row.players) ? row.players : [],
+    auth,
   };
   res.json({ room });
 });

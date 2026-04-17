@@ -5,6 +5,7 @@ import matchmakingService from "../services/matchmaking.js";
 import roomService from "../services/room.js";
 import gameService from "../services/game.js";
 import contractService from "../services/contract.js";
+import roomPaymentAuthService from "../services/roomPaymentAuth.js";
 import priceService from "../services/price.js";
 
 export function initSocket(httpServer) {
@@ -154,7 +155,6 @@ export function initSocket(httpServer) {
       try {
         const r = await roomService.joinRoom(d.inviteCode, wallet, socket.id);
         if (r.error) return socket.emit("room:error", { message: r.error });
-        socket.emit("room:joined", r);
         if (r.status === "full") {
           const rm = roomService.getRoom(d.inviteCode);
           if (!rm) return;
@@ -169,18 +169,28 @@ export function initSocket(httpServer) {
             await roomService._abortPaymentRoom(d.inviteCode, "Payment timeout");
           }, config.game.paymentTimeout);
           for (const p of players) {
+            const auth = await roomPaymentAuthService.build({
+              inviteCode: d.inviteCode,
+              maxPlayers: rm.maxPlayers,
+              roomOwner: rm.owner,
+              player: p.wallet,
+              players: players.map((entry) => entry.wallet),
+            });
+            if (!p.socketId) continue;
             io.to(p.socketId).emit("room:full", {
               gameId: gid,
               chainGameId: cid,
-              paymentOpen: !!cid,
               owner: rm.owner,
               current: players.length,
               total: rm.maxPlayers,
               players: players.map(x => x.wallet),
               inviteCode: d.inviteCode,
               paymentTimeout: config.game.paymentTimeout,
+              auth,
             });
           }
+        } else {
+          socket.emit("room:joined", r);
         }
       } catch (e) {
         socket.emit("room:error", { message: e.message || "Join room failed" });

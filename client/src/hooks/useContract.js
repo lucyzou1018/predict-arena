@@ -63,16 +63,25 @@ function mapContractError(err) {
     return "USDC transfer failed. Check your USDC balance and approval.";
   }
   if (reason.includes("invite code taken")) {
-    return "This room is already opening on-chain. Please wait a moment and try again.";
+    return "This room is already opening on-chain. Please try paying again in a moment.";
   }
   if (reason.includes("room not found")) {
-    return "The host has not opened on-chain payment yet. Wait for the host payment first.";
+    return "Room payment is still syncing on-chain. Please retry in a moment.";
   }
   if (reason.includes("room not joinable")) {
     return "This room is no longer accepting on-chain payments.";
   }
   if (reason.includes("already joined")) {
     return "This wallet is already attached to the room on-chain. Try paying again.";
+  }
+  if (reason.includes("invalid room payment auth")) {
+    return "Room payment authorization expired. Refresh the room and try again.";
+  }
+  if (reason.includes("payment authorization expired")) {
+    return "Room payment authorization expired. Refresh the room and try again.";
+  }
+  if (reason.includes("player not in room") || reason.includes("owner not in room") || reason.includes("roster mismatch")) {
+    return "Room player list is out of date. Refresh the room and try again.";
   }
   if (reason.includes("not a player")) {
     return "Wallet is not registered as a player for this game.";
@@ -199,7 +208,7 @@ export function useContract() {
     }
   }, [ensureTokenApproval, ensureWalletReady, getArena, mockPay, shouldUseMockPayment]);
 
-  const payForRoomEntry = useCallback(async ({ inviteCode, maxPlayers = null, isOwner = false } = {}) => {
+  const payForRoomEntry = useCallback(async ({ inviteCode, maxPlayers = null, isOwner = false, auth = null } = {}) => {
     if (shouldUseMockPayment) return mockPay();
 
     await ensureWalletReady();
@@ -207,11 +216,16 @@ export function useContract() {
     const arena = getArena();
     if (!arena) throw new Error("Wallet not connected");
     if (!inviteCode) throw new Error("Missing invite code");
+    if (!auth?.signature || !Array.isArray(auth?.players) || !auth?.deadline) {
+      throw new Error("Room payment authorization expired. Refresh the room and try again.");
+    }
 
     setLoading(true);
     try {
       let amount = ethers.parseUnits(ENTRY_FEE.toString(), 6);
       let existingGameId = 0;
+      const authMaxPlayers = Number(auth?.maxPlayers || maxPlayers || 0);
+      const authRoomOwner = auth?.roomOwner || wallet;
 
       try {
         existingGameId = Number(await arena.inviteCodeToGame(inviteCode));
@@ -234,29 +248,11 @@ export function useContract() {
         return { approved: true, paid: false, chainGameId: existingGameId || null };
       }
 
-      if (existingGameId > 0) {
-        const players = await arena.getGamePlayers(existingGameId).catch(() => []);
-        const isPlayer = players.some((player) => `${player}`.toLowerCase() === wallet?.toLowerCase());
-
-        if (isPlayer) {
-          const [, hasPaid] = await arena.getPlayerPrediction(existingGameId, wallet);
-          if (hasPaid) {
-            return { approved: true, paid: true, chainGameId: existingGameId };
-          }
-          await (await arena.payForGame(existingGameId)).wait();
-          return { approved: true, paid: true, chainGameId: existingGameId };
-        }
-
-        if (isOwner) {
-          throw new Error("This room is already opening on-chain. Please wait a moment and try again.");
-        }
-      }
-
       if (isOwner) {
-        if (!maxPlayers) throw new Error("Missing room size");
-        await (await arena.createRoomAndPay(maxPlayers, inviteCode)).wait();
+        if (!authMaxPlayers) throw new Error("Missing room size");
+        await (await arena.createRoomAndPay(authMaxPlayers, inviteCode, auth.players, auth.deadline, auth.signature)).wait();
       } else {
-        await (await arena.joinRoomAndPay(inviteCode)).wait();
+        await (await arena.joinRoomAndPay(inviteCode, authMaxPlayers, authRoomOwner, auth.players, auth.deadline, auth.signature)).wait();
       }
 
       const chainGameId = existingGameId || await waitForInviteCodeGameId(arena, inviteCode);
