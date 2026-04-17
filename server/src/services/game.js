@@ -162,8 +162,17 @@ class GameService {
     return recovered.rowCount;
   }
 
-  startRoomPayment(gameId, inviteCode, players) {
-    this.roomPayments[gameId] = { inviteCode, players, startedAt: Date.now(), paid: new Set(), timer: null };
+  startRoomPayment(gameId, inviteCode, players, owner = null, chainGameId = null) {
+    this.roomPayments[gameId] = {
+      inviteCode,
+      owner,
+      players,
+      chainGameId: chainGameId || null,
+      paymentOpen: !!chainGameId,
+      startedAt: Date.now(),
+      paid: new Set(),
+      timer: null,
+    };
     return this.roomPayments[gameId];
   }
 
@@ -177,8 +186,37 @@ class GameService {
     delete this.roomPayments[gameId];
   }
 
-  async confirmRoomPayment(gameId, chainGameId, wallet) {
-    const targetChainGameId = chainGameId || gameId;
+  async confirmRoomPayment(gameId, chainGameId, wallet, inviteCode = null) {
+    const session = this.getRoomPayment(gameId);
+    let targetChainGameId = chainGameId || session?.chainGameId || null;
+    let paymentOpened = false;
+
+    if (!targetChainGameId && inviteCode) {
+      targetChainGameId = await contractService.recoverRoomGameId(inviteCode, 12000);
+      if (targetChainGameId) {
+        paymentOpened = true;
+        if (session) {
+          session.chainGameId = targetChainGameId;
+          session.paymentOpen = true;
+        }
+        await query(
+          `UPDATE games
+           SET chain_game_id = $1
+           WHERE id = $2 AND (chain_game_id IS NULL OR chain_game_id <> $1)`,
+          [targetChainGameId, gameId],
+        );
+      }
+    }
+
+    if (!targetChainGameId) {
+      throw new Error("On-chain room is still opening. Wait for the host payment first.");
+    }
+
+    if (session && !session.chainGameId) {
+      session.chainGameId = targetChainGameId;
+      session.paymentOpen = true;
+    }
+
     let paidOnChain = contractService.isMockMode();
     if (!paidOnChain) {
       for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -194,7 +232,13 @@ class GameService {
     const allPaidChain = contractService.isMockMode() ? true : await contractService.allPlayersPaid(targetChainGameId);
     const allPaid = allPaidDb && allPaidChain;
     if (allPaid) await query("UPDATE games SET state='payment' WHERE id=$1", [gameId]);
-    return { allPaid, paidCount: r.rows.filter(x => x.paid).length, total: r.rows.length };
+    return {
+      allPaid,
+      paidCount: r.rows.filter(x => x.paid).length,
+      total: r.rows.length,
+      chainGameId: targetChainGameId,
+      paymentOpened,
+    };
   }
 
   async startGame(gameId, chainGameId, players) {

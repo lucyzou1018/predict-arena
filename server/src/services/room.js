@@ -4,9 +4,6 @@ import { generateInviteCode } from "../utils/inviteCode.js";
 import contractService from "./contract.js";
 import gameService from "./game.js";
 
-const ROOM_CHAIN_PREP_TIMEOUT_MS = parseInt(process.env.ROOM_CHAIN_PREP_TIMEOUT_MS || "15000", 10);
-const ROOM_CHAIN_PREP_FAILURE_MESSAGE = "Chain is busy. Please retry this room.";
-
 class RoomService {
   constructor() { this.rooms = {}; this.pendingCreates = {}; this.io = null; }
   setIO(io) { this.io = io; }
@@ -70,7 +67,9 @@ class RoomService {
       inviteCode: located.inviteCode,
       gameId: located.room.gameId,
       chainGameId: located.room.chainGameId,
-      phase: payment ? "payment" : located.room.preparing ? "preparing" : "waiting",
+      phase: payment
+        ? ((payment.chainGameId || located.room.chainGameId || wallet === located.room.owner) ? "payment" : "preparing")
+        : "waiting",
     };
   }
 
@@ -106,127 +105,6 @@ class RoomService {
     return { status: "created", inviteCode: code, gameId, chainGameId: null, maxPlayers, expiresAt };
   }
 
-  _prepareTimeoutOptions(room, totalOps) {
-    const remainingMs = Math.max(3000, ROOM_CHAIN_PREP_TIMEOUT_MS - (Date.now() - (room.prepareStartedAt || Date.now())));
-    const perOpConfirmMs = Math.max(2500, Math.floor(remainingMs / Math.max(totalOps, 1)));
-    const perOpRecoveryMs = Math.max(1000, Math.floor(perOpConfirmMs / 2));
-    return { confirmTimeoutMs: perOpConfirmMs, recoveryTimeoutMs: perOpRecoveryMs };
-  }
-
-  _emitRoomPreparing(code, room) {
-    const payload = {
-      inviteCode: code,
-      gameId: room.gameId,
-      chainGameId: room.chainGameId,
-      current: room.players.length,
-      total: room.maxPlayers,
-      players: room.players.map((player) => player.wallet),
-      timeoutMs: ROOM_CHAIN_PREP_TIMEOUT_MS,
-    };
-    for (const player of room.players) {
-      if (player?.socketId) this.io?.to(player.socketId).emit("room:preparing", payload);
-    }
-  }
-
-  _scheduleOrphanRoomCleanup(code) {
-    void contractService.recoverRoomGameId(code, 120000).then((gameId) => {
-      if (!gameId) return;
-      return contractService.cancelGame(gameId).catch((error) => {
-        console.error("[Room] orphaned chain room cleanup failed", { code, gameId, error: error?.message || error });
-      });
-    }).catch((error) => {
-      console.error("[Room] orphaned chain room recovery failed", { code, error: error?.message || error });
-    });
-  }
-
-  async prepareRoomPayment(code) {
-    const room = this.rooms[code];
-    if (!room) throw new Error("Room not found");
-    if (room.players.length < room.maxPlayers) throw new Error("Room is not full yet");
-    if (gameService.getRoomPayment(room.gameId)) {
-      return {
-        inviteCode: code,
-        gameId: room.gameId,
-        chainGameId: room.chainGameId,
-        current: room.players.length,
-        total: room.maxPlayers,
-        players: room.players.map((player) => player.wallet),
-        paymentTimeout: config.game.paymentTimeout,
-      };
-    }
-    if (room._preparePromise) return room._preparePromise;
-
-    room.transitioning = true;
-    room.preparing = true;
-    room.prepareStartedAt = Date.now();
-    this._clearRoomTimer(room);
-    this._emitRoomPreparing(code, room);
-
-    const preparePromise = (async () => {
-      let chainGameId = room.chainGameId || null;
-      try {
-        const playersSnapshot = room.players.map((player) => ({ ...player }));
-        const nonOwners = playersSnapshot.filter((player) => player.wallet !== room.owner);
-        if (!chainGameId) {
-          chainGameId = await contractService.ownerCreateRoom(
-            room.maxPlayers,
-            code,
-            room.owner,
-            this._prepareTimeoutOptions(room, nonOwners.length + 1),
-          );
-        }
-        if (!chainGameId) throw new Error(ROOM_CHAIN_PREP_FAILURE_MESSAGE);
-        room.chainGameId = chainGameId;
-        await query(`UPDATE games SET chain_game_id = $1, state = 'waiting' WHERE id = $2`, [chainGameId, room.gameId]);
-
-        for (const player of nonOwners) {
-          if (!this.rooms[code] || !this.rooms[code].players.find((entry) => entry.wallet === player.wallet)) {
-            continue;
-          }
-          await contractService.ownerJoinRoom(
-            code,
-            player.wallet,
-            this._prepareTimeoutOptions(room, Math.max(1, nonOwners.length)),
-          );
-        }
-
-        const currentRoom = this.rooms[code];
-        if (!currentRoom) throw new Error(ROOM_CHAIN_PREP_FAILURE_MESSAGE);
-        currentRoom.transitioning = false;
-        currentRoom.preparing = false;
-        currentRoom.prepareStartedAt = null;
-        return {
-          inviteCode: code,
-          gameId: currentRoom.gameId,
-          chainGameId: currentRoom.chainGameId,
-          current: currentRoom.players.length,
-          total: currentRoom.maxPlayers,
-          players: currentRoom.players.map((player) => player.wallet),
-          paymentTimeout: config.game.paymentTimeout,
-        };
-      } catch (error) {
-        console.error("[Room] prepareRoomPayment failed", { code, error: error?.message || error });
-        if (!chainGameId) this._scheduleOrphanRoomCleanup(code);
-        room.transitioning = false;
-        room.preparing = false;
-        room.prepareStartedAt = null;
-        await this._closeRoom(code, ROOM_CHAIN_PREP_FAILURE_MESSAGE, "failed");
-        throw error;
-      } finally {
-        const currentRoom = this.rooms[code];
-        if (currentRoom) {
-          currentRoom.transitioning = false;
-          currentRoom.preparing = false;
-          currentRoom.prepareStartedAt = null;
-          currentRoom._preparePromise = null;
-        }
-      }
-    })();
-
-    room._preparePromise = preparePromise;
-    return preparePromise;
-  }
-
   async joinRoom(code, wallet, socketId) {
     const r = this.rooms[code]; if (!r) return { error: "房间不存在" }; if (r.players.length >= r.maxPlayers) return { error: "房间已满" };
     if (r.transitioning) return { error: "房间正在更新，请稍后重试" };
@@ -236,11 +114,14 @@ class RoomService {
     await query(`INSERT INTO game_players (game_id, wallet_address, paid) VALUES ($1, $2, false) ON CONFLICT DO NOTHING`, [r.gameId, wallet]);
     this._broadcast(code);
     if (r.players.length === r.maxPlayers) {
+      await query(`UPDATE games SET state = 'payment' WHERE id = $1`, [r.gameId]);
       return {
         status: "full",
         inviteCode: code,
         gameId: r.gameId,
         chainGameId: r.chainGameId,
+        paymentOpen: !!r.chainGameId,
+        owner: r.owner,
         current: r.players.length,
         total: r.maxPlayers,
         players: r.players.map((p) => p.wallet),
@@ -254,6 +135,18 @@ class RoomService {
     const r = this.rooms[code];
     if (!r) return;
     if (r._preparePromise) await r._preparePromise;
+  }
+
+  setChainGameId(code, chainGameId) {
+    const room = this.rooms[code];
+    if (!room || !chainGameId) return null;
+    room.chainGameId = chainGameId;
+    const payment = gameService.getRoomPayment(room.gameId);
+    if (payment) {
+      payment.chainGameId = chainGameId;
+      payment.paymentOpen = true;
+    }
+    return room;
   }
 
   clearRoomExpiry(code) {
@@ -558,12 +451,13 @@ class RoomService {
       inviteCode: code,
       gameId: r.gameId,
       chainGameId: r.chainGameId,
+      paymentOpen: !!r.chainGameId,
       current: r.players.length,
       total: r.maxPlayers,
       players: r.players.map(pl => pl.wallet),
       owner: r.owner,
       expiresAt: isFull ? null : r.expiresAt,
-      status: r.preparing ? "preparing" : isFull ? "full" : "waiting",
+      status: isFull ? "full" : "waiting",
       paymentTimeout: config.game.paymentTimeout,
     };
     for (const p of r.players) {

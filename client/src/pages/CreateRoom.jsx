@@ -3,7 +3,7 @@ import{useSocket}from"../hooks/useSocket";import{useGame}from"../context/GameCon
 import{TeamSlots,PaymentModal}from"../components";import{TEAM_SIZES,ENTRY_FEE,PAYMENT_TIMEOUT}from"../config/constants";
 export default function CreateRoom(){
   const nav=useNavigate();const{emit,on}=useSocket();const{updateGame}=useGame();
-  const{wallet,refund}=useWallet();const{mockPay,loading}=useContract();
+  const{wallet,refund}=useWallet();const{payForRoomEntry,loading}=useContract();
   const[phase,setPhase]=useState("select");const[sz,setSz]=useState(2);
   const[code,setCode]=useState("");const[room,setRoom]=useState({current:0,players:[]});
   const[err,setErr]=useState(null);const[copied,setCopied]=useState(false);const[paid,setPaid]=useState(false);
@@ -35,7 +35,7 @@ export default function CreateRoom(){
     setRoomExpiresAt(null);
     setRoomCountdown(null);
     if(players.length)setRoom({current:total,players});
-    setPhase(current=>current==="waiting"||current==="creating"?"payment":current);
+    setPhase(current=>current==="waiting"||current==="creating"||current==="preparing"?"payment":current);
   };
 
   const handlePaymentFailure=useCallback((reason="Payment timeout — team disbanded")=>{
@@ -65,8 +65,9 @@ export default function CreateRoom(){
     on("room:created",d=>{cancelPending.current=false;phaseBeforeCancel.current="select";setHint(null);setCode(d.inviteCode);setRoomExpiresAt(d.expiresAt);setRoom({current:1,players:[wallet]});setPhase("waiting");}),
     on("room:update",d=>{setRoom({current:d.current,players:d.players});if(d.expiresAt)setRoomExpiresAt(d.expiresAt);if(d.status==="full"||(d.total&&d.current>=d.total))openPayment(d);}),
     on("room:full",d=>{openPayment(d);}),
+    on("room:payment:opened",d=>{openPayment({...d,paymentOpen:true});}),
     on("room:error",d=>{if(cancelPending.current){cancelPending.current=false;setPhase(phaseBeforeCancel.current==="paid_waiting"?"paid_waiting":"waiting");}setHint(null);setErr(d.message);}),
-    on("room:dissolved",d=>{const selfCancelled=cancelPending.current;cancelPending.current=false;phaseBeforeCancel.current="select";setHint(null);if(paid){refund(ENTRY_FEE);setPaid(false);}setErr(selfCancelled?null:(d?.reason||null));setCode("");setRoom({current:0,players:[]});setPhase("select");setRoomExpiresAt(null);setPaymentStartedAt(null);}),
+    on("room:dissolved",d=>{const selfCancelled=cancelPending.current;cancelPending.current=false;phaseBeforeCancel.current="select";setHint(null);if(paid){refund(ENTRY_FEE);setPaid(false);}setErr(selfCancelled?null:(d?.reason||null));setCode("");setRoom({current:0,players:[]});setPhase("select");setRoomExpiresAt(null);setRoomCountdown(null);setPaymentStartedAt(null);setPaymentCountdown(null);setRoomFullInfo(null);setPaymentProgress({paidCount:0,total:0});}),
     on("room:expired",()=>{setRoomExpiresAt(null);setRoomCountdown(null);setPhase("expired");}),
     on("room:payment:update",d=>{setPaymentProgress({paidCount:d.paidCount,total:d.total});}),
     on("room:payment:failed",d=>{handlePaymentFailure(d?.reason||"Payment timeout — team disbanded");}),
@@ -83,9 +84,10 @@ export default function CreateRoom(){
   },[paymentCountdown,phase,handlePaymentFailure]);
 
   const create=()=>{cancelPending.current=false;phaseBeforeCancel.current="select";setErr(null);setHint(null);emit("room:create",{teamSize:sz});};
-  const payRoom=useCallback(async()=>{try{await mockPay();setPaid(true);if(roomFullInfo){emit("room:payment:confirm",{gameId:roomFullInfo.gameId,inviteCode:code});setPhase("paid_waiting");}}catch{setErr("Payment failed");}},[mockPay,roomFullInfo,code,emit]);
-  const cancel=()=>{cancelPending.current=true;phaseBeforeCancel.current=phase;setErr(null);setHint("Cancelling room...");emit("room:dissolve",{inviteCode:code});setPhase("dissolving");};
-  const dissolve=()=>{cancelPending.current=true;phaseBeforeCancel.current=phase;setErr(null);setHint("Cancelling room...");emit("room:dissolve",{inviteCode:code});setPhase("dissolving");};
+  const payRoom=useCallback(async()=>{try{const paymentResult=await payForRoomEntry({inviteCode:code,maxPlayers:sz,isOwner:true});if(paymentResult?.approved&&!paymentResult?.paid)return;if(roomFullInfo&&paymentResult?.chainGameId){setRoomFullInfo(prev=>prev?{...prev,chainGameId:paymentResult.chainGameId}:prev);}setPaid(true);if(roomFullInfo){emit("room:payment:confirm",{gameId:roomFullInfo.gameId,chainGameId:paymentResult?.chainGameId||roomFullInfo.chainGameId||null,inviteCode:code,wallet});setPhase("paid_waiting");}}catch(e){setErr(e?.message||"Payment failed");}},[payForRoomEntry,roomFullInfo,code,emit,sz,wallet]);
+  const beginCancel=()=>{cancelPending.current=true;phaseBeforeCancel.current=phase;setErr(null);setHint("Cancelling room...");setRoomCountdown(null);emit("room:dissolve",{inviteCode:code});setPhase("dissolving");};
+  const cancel=()=>{beginCancel();};
+  const dissolve=()=>{beginCancel();};
   const clearExpired=()=>{setPhase("select");setCode("");setRoom({current:0,players:[]});setErr(null);};
   const cp=()=>{navigator.clipboard.writeText(code);setCopied(true);setTimeout(()=>setCopied(false),2000);};
   const fmtCountdown=(s)=>`${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`;

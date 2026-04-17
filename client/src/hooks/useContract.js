@@ -62,6 +62,18 @@ function mapContractError(err) {
   if (reason.includes("payment failed")) {
     return "USDC transfer failed. Check your USDC balance and approval.";
   }
+  if (reason.includes("invite code taken")) {
+    return "This room is already opening on-chain. Please wait a moment and try again.";
+  }
+  if (reason.includes("room not found")) {
+    return "The host has not opened on-chain payment yet. Wait for the host payment first.";
+  }
+  if (reason.includes("room not joinable")) {
+    return "This room is no longer accepting on-chain payments.";
+  }
+  if (reason.includes("already joined")) {
+    return "This wallet is already attached to the room on-chain. Try paying again.";
+  }
   if (reason.includes("not a player")) {
     return "Wallet is not registered as a player for this game.";
   }
@@ -79,6 +91,16 @@ async function waitForAllowance(token, wallet, spender, required, retries = 5, d
     if (i < retries - 1) await new Promise((resolve) => setTimeout(resolve, delayMs));
   }
   return token.allowance(wallet, spender);
+}
+
+async function waitForInviteCodeGameId(arena, inviteCode, retries = 8, delayMs = 500) {
+  for (let i = 0; i < retries; i += 1) {
+    const gameId = await arena.inviteCodeToGame(inviteCode);
+    if (gameId > 0n) return Number(gameId);
+    if (i < retries - 1) await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+  const finalGameId = await arena.inviteCodeToGame(inviteCode);
+  return finalGameId > 0n ? Number(finalGameId) : null;
 }
 
 export function useContract() {
@@ -111,6 +133,31 @@ export function useContract() {
     return true;
   }, [mockMode, setBalance]);
 
+  const ensureTokenApproval = useCallback(async (amount, preferredUsdc = USDC_ADDRESS) => {
+    let resolvedUsdc = preferredUsdc;
+    try {
+      const arena = getArena();
+      const contractUsdc = await arena?.usdc?.();
+      if (ethers.isAddress(contractUsdc)) resolvedUsdc = contractUsdc;
+    } catch {
+      resolvedUsdc = preferredUsdc;
+    }
+
+    const token = new ethers.Contract(resolvedUsdc, ERC20_ABI, signer);
+    const allowance = await token.allowance(wallet, CONTRACT_ADDRESS);
+
+    if (allowance < amount) {
+      await (await token.approve(CONTRACT_ADDRESS, ethers.MaxUint256)).wait();
+      const refreshedAllowance = await waitForAllowance(token, wallet, CONTRACT_ADDRESS, amount);
+      if (refreshedAllowance < amount) {
+        throw new Error("Token approval has not finished syncing yet. Please wait a moment and try again.");
+      }
+      return { approvedOnly: true, resolvedUsdc };
+    }
+
+    return { approvedOnly: false, resolvedUsdc };
+  }, [getArena, signer, wallet]);
+
   const payForGame = useCallback(async (gameId) => {
     if (shouldUseMockPayment) return mockPay();
 
@@ -122,7 +169,6 @@ export function useContract() {
     setLoading(true);
     try {
       let amount = ethers.parseUnits(ENTRY_FEE.toString(), 6);
-      let resolvedUsdc = USDC_ADDRESS;
       const gameInfo = await arena.getGameInfo(gameId);
       const onchainGameId = Number(gameInfo?.[0] ?? 0);
       const onchainState = Number(gameInfo?.[2] ?? -1);
@@ -135,25 +181,12 @@ export function useContract() {
       }
 
       try {
-        const [contractUsdc, snapshotAmount] = await Promise.all([
-          arena.usdc(),
-          arena.gameEntryFee(gameId),
-        ]);
-        if (ethers.isAddress(contractUsdc)) resolvedUsdc = contractUsdc;
+        const snapshotAmount = await arena.gameEntryFee(gameId);
         if (snapshotAmount > 0) amount = snapshotAmount;
-      } catch {
-        resolvedUsdc = USDC_ADDRESS;
-      }
+      } catch {}
 
-      const token = new ethers.Contract(resolvedUsdc, ERC20_ABI, signer);
-      const allowance = await token.allowance(wallet, CONTRACT_ADDRESS);
-
-      if (allowance < amount) {
-        await (await token.approve(CONTRACT_ADDRESS, ethers.MaxUint256)).wait();
-        const refreshedAllowance = await waitForAllowance(token, wallet, CONTRACT_ADDRESS, amount);
-        if (refreshedAllowance < amount) {
-          throw new Error("Token approval has not finished syncing yet. Please wait a moment and try again.");
-        }
+      const { approvedOnly } = await ensureTokenApproval(amount);
+      if (approvedOnly) {
         return { approved: true, paid: false };
       }
 
@@ -164,7 +197,76 @@ export function useContract() {
     } finally {
       setLoading(false);
     }
-  }, [ensureWalletReady, getArena, mockPay, shouldUseMockPayment, signer, wallet]);
+  }, [ensureTokenApproval, ensureWalletReady, getArena, mockPay, shouldUseMockPayment]);
+
+  const payForRoomEntry = useCallback(async ({ inviteCode, maxPlayers = null, isOwner = false } = {}) => {
+    if (shouldUseMockPayment) return mockPay();
+
+    await ensureWalletReady();
+
+    const arena = getArena();
+    if (!arena) throw new Error("Wallet not connected");
+    if (!inviteCode) throw new Error("Missing invite code");
+
+    setLoading(true);
+    try {
+      let amount = ethers.parseUnits(ENTRY_FEE.toString(), 6);
+      let existingGameId = 0;
+
+      try {
+        existingGameId = Number(await arena.inviteCodeToGame(inviteCode));
+      } catch {
+        existingGameId = 0;
+      }
+
+      try {
+        if (existingGameId > 0) {
+          const snapshotAmount = await arena.gameEntryFee(existingGameId);
+          if (snapshotAmount > 0) amount = snapshotAmount;
+        } else {
+          const liveEntryFee = await arena.entryFee();
+          if (liveEntryFee > 0) amount = liveEntryFee;
+        }
+      } catch {}
+
+      const { approvedOnly } = await ensureTokenApproval(amount);
+      if (approvedOnly) {
+        return { approved: true, paid: false, chainGameId: existingGameId || null };
+      }
+
+      if (existingGameId > 0) {
+        const players = await arena.getGamePlayers(existingGameId).catch(() => []);
+        const isPlayer = players.some((player) => `${player}`.toLowerCase() === wallet?.toLowerCase());
+
+        if (isPlayer) {
+          const [, hasPaid] = await arena.getPlayerPrediction(existingGameId, wallet);
+          if (hasPaid) {
+            return { approved: true, paid: true, chainGameId: existingGameId };
+          }
+          await (await arena.payForGame(existingGameId)).wait();
+          return { approved: true, paid: true, chainGameId: existingGameId };
+        }
+
+        if (isOwner) {
+          throw new Error("This room is already opening on-chain. Please wait a moment and try again.");
+        }
+      }
+
+      if (isOwner) {
+        if (!maxPlayers) throw new Error("Missing room size");
+        await (await arena.createRoomAndPay(maxPlayers, inviteCode)).wait();
+      } else {
+        await (await arena.joinRoomAndPay(inviteCode)).wait();
+      }
+
+      const chainGameId = existingGameId || await waitForInviteCodeGameId(arena, inviteCode);
+      return { approved: true, paid: true, chainGameId };
+    } catch (err) {
+      throw new Error(mapContractError(err));
+    } finally {
+      setLoading(false);
+    }
+  }, [ensureTokenApproval, ensureWalletReady, getArena, mockPay, shouldUseMockPayment, wallet]);
 
   const claimReward = useCallback(async (gameId) => {
     if (!gameId) throw new Error("Missing game id");
@@ -343,6 +445,7 @@ export function useContract() {
 
   return {
     payForGame,
+    payForRoomEntry,
     claimReward,
     claimGameFunds,
     getPlayerState,

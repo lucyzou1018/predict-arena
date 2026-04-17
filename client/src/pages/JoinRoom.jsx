@@ -3,7 +3,7 @@ import{useSocket}from"../hooks/useSocket";import{useGame}from"../context/GameCon
 import{TeamSlots,PaymentModal}from"../components";import{ENTRY_FEE,PAYMENT_TIMEOUT}from"../config/constants";
 export default function JoinRoom(){
   const nav=useNavigate();const{emit,on}=useSocket();const{updateGame}=useGame();
-  const{wallet,connect,refund}=useWallet();const{mockPay,loading}=useContract();
+  const{wallet,connect,refund}=useWallet();const{payForRoomEntry,loading}=useContract();
   const[phase,setPhase]=useState("input");const[code,setCode]=useState("");
   const[room,setRoom]=useState({current:0,total:0,players:[]});const[err,setErr]=useState(null);const[paid,setPaid]=useState(false);
   const[validInfo,setValidInfo]=useState(null);
@@ -32,7 +32,10 @@ export default function JoinRoom(){
     setRoomExpiresAt(null);
     setRoomCountdown(null);
     if(players.length)setRoom({current:total,total:d?.total||total,players});
-    setPhase(current=>current==="waiting"||current==="joining"?"payment":current);
+    setPhase(current=>{
+      if(current!=="waiting"&&current!=="joining"&&current!=="preparing")return current;
+      return (d?.paymentOpen??!!d?.chainGameId)?"payment":"preparing";
+    });
   };
 
   const handlePaymentFailure=useCallback((reason="Payment timeout — team disbanded")=>{
@@ -72,8 +75,9 @@ export default function JoinRoom(){
       if(d.status==="full"||(d.total&&d.current>=d.total))openPayment(d);
     }),
     on("room:full",d=>{openPayment(d);}),
+    on("room:payment:opened",d=>{openPayment({...d,paymentOpen:true});}),
     on("room:error",d=>{setErr(d.message);if(paid){refund(ENTRY_FEE);setPaid(false);}setPhase("input");}),
-    on("room:dissolved",d=>{if(paid){refund(ENTRY_FEE);setPaid(false);}setErr(d.reason);setPhase("input");setRoomExpiresAt(null);setPaymentStartedAt(null);}),
+    on("room:dissolved",d=>{if(paid){refund(ENTRY_FEE);setPaid(false);}setErr(d.reason);setPhase("input");setRoom({current:0,total:0,players:[]});setRoomExpiresAt(null);setRoomCountdown(null);setPaymentStartedAt(null);setPaymentCountdown(null);setRoomFullInfo(null);setPaymentProgress({paidCount:0,total:0});}),
     on("room:expired",()=>{setRoomExpiresAt(null);setRoomCountdown(null);setErr("Room expired — team not filled in time");setPhase("input");}),
     on("room:payment:update",d=>{setPaymentProgress({paidCount:d.paidCount,total:d.total});}),
     on("room:payment:failed",d=>{handlePaymentFailure(d?.reason||"Payment timeout — team disbanded");}),
@@ -91,7 +95,7 @@ export default function JoinRoom(){
 
   const join=()=>{if(!wallet){connect();return;}if(code.length<6)return setErr("Enter complete 6-digit code");setErr(null);emit("room:validate",{inviteCode:code.toUpperCase()});};
   const confirmJoin=()=>{emit("room:join",{inviteCode:code.toUpperCase()});setPhase("joining");};
-  const payRoom=useCallback(async()=>{try{await mockPay();setPaid(true);if(roomFullInfo){emit("room:payment:confirm",{gameId:roomFullInfo.gameId,inviteCode:roomFullInfo.inviteCode||code});setPhase("paid_waiting");}}catch{setErr("Payment failed");}},[code,mockPay,emit,roomFullInfo]);
+  const payRoom=useCallback(async()=>{try{const paymentResult=await payForRoomEntry({inviteCode:roomFullInfo?.inviteCode||code,isOwner:false});if(paymentResult?.approved&&!paymentResult?.paid)return;if(roomFullInfo&&paymentResult?.chainGameId){setRoomFullInfo(prev=>prev?{...prev,chainGameId:paymentResult.chainGameId,paymentOpen:true}:prev);}setPaid(true);if(roomFullInfo){emit("room:payment:confirm",{gameId:roomFullInfo.gameId,chainGameId:paymentResult?.chainGameId||roomFullInfo.chainGameId||null,inviteCode:roomFullInfo.inviteCode||code,wallet});setPhase("paid_waiting");}}catch(e){setErr(e?.message||"Payment failed");}},[code,payForRoomEntry,emit,roomFullInfo,wallet]);
   const leave=()=>{emit("room:leave");if(paid){refund(ENTRY_FEE);setPaid(false);}setPhase("input");setRoomExpiresAt(null);};
   const fmtCountdown=(s)=>`${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`;
 
@@ -118,7 +122,7 @@ export default function JoinRoom(){
       </div>
     </div>}
     {phase==="joining"&&<div className="text-center py-10"><div className="w-8 h-8 mx-auto rounded-full border-2 border-orange-400/30 border-t-orange-400 animate-spin mb-3"/><p className="text-white/40 text-xs">Joining arena...</p></div>}
-    <PaymentModal visible={phase==="payment"} onConfirm={payRoom} onCancel={leave} loading={loading} title="Room Full — Pay to Start" subtitle={`All ${paymentProgress.total} players joined! Pay 1 USDC to start.`} hint={`${paymentProgress.paidCount}/${paymentProgress.total} paid`} countdown={paymentCountdown}/>
+    <PaymentModal visible={phase==="payment"||phase==="preparing"} onConfirm={payRoom} onCancel={leave} loading={loading} mode={phase==="preparing"?"preparing":"confirm"} title="Room Full — Pay to Start" subtitle={phase==="preparing"?"Waiting for host to open on-chain payment.":"All players joined! Pay 1 USDC to start."} hint={phase==="preparing"?"The host payment opens the on-chain room first. Your `Pay 1 USDC` action will appear automatically here.":`${paymentProgress.paidCount}/${paymentProgress.total} paid`} countdown={paymentCountdown}/>
     {(phase==="waiting"||phase==="paid_waiting")&&<div className="card text-center">
       <p className="text-white/20 text-xs mb-1">Joined Arena</p>
       <p className="text-xl font-mono font-black text-gradient tracking-widest mb-3">{code}</p>

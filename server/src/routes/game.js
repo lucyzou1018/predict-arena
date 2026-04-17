@@ -54,7 +54,10 @@ router.get("/users/:wallet/open-room", async (req, res) => {
     const me = gp.rows.find((row) => norm(row.wallet_address) === wallet);
     const payment = gameService.getRoomPayment(room.gameId);
     const paidCount = gp.rows.filter((row) => row.paid === true).length;
-    const preparing = !payment && room.preparing === true;
+    const paymentOpen = !!(payment?.chainGameId || room.chainGameId);
+    const phase = payment
+      ? (paymentOpen ? (me?.paid ? "paid_waiting" : "payment") : (me?.is_owner ? "payment" : "preparing"))
+      : "waiting";
     return res.json({
       room: {
         id: room.gameId,
@@ -63,13 +66,15 @@ router.get("/users/:wallet/open-room", async (req, res) => {
         invite_code: inviteCode,
         max_players: room.maxPlayers,
         current_players: room.players.length,
-        state: payment ? "payment" : preparing ? "preparing" : "waiting",
+        state: payment ? "payment" : "waiting",
         created_at: new Date(room.createdAt).toISOString(),
         expires_at: room.expiresAt,
         is_owner: !!me?.is_owner,
+        owner: room.owner,
         players: room.players.map((p) => p.wallet),
-        phase: payment ? (me?.paid ? "paid_waiting" : "payment") : preparing ? "preparing" : "waiting",
-        payment_started_at: payment?.startedAt || room.prepareStartedAt || null,
+        phase,
+        payment_open: paymentOpen,
+        payment_started_at: payment?.startedAt || null,
         payment_timeout_ms: config.game.paymentTimeout,
         paid_count: paidCount,
         total_players: room.players.length,
@@ -129,7 +134,10 @@ router.get("/users/:wallet/open-room", async (req, res) => {
     game_id: row.id,
     total_players: row.current_players,
     payment_timeout_ms: config.game.paymentTimeout,
-    phase: row.state === "payment" ? (row.paid ? "paid_waiting" : "payment") : "waiting",
+    phase: row.state === "payment"
+      ? (row.chain_game_id ? (row.paid ? "paid_waiting" : "payment") : (row.is_owner ? "payment" : "preparing"))
+      : "waiting",
+    payment_open: !!row.chain_game_id,
     players: Array.isArray(row.players) ? row.players : [],
   };
   res.json({ room });
