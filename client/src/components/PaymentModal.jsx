@@ -15,6 +15,11 @@ export function PaymentModal({
   paidCount=0,
   totalCount=0,
   countdownLabel=null,
+  amountCaption=null,
+  preparingTitle=null,
+  preparingMessage=null,
+  preparingPrimaryLabel="Match Locked",
+  preparingSecondaryLabel="Preparing...",
 }){
   if(!visible)return null;
   const isWaiting=mode==="waiting";
@@ -30,7 +35,13 @@ export function PaymentModal({
       </div>
       {amount&&<div className={`border rounded-xl p-4 mb-3 text-center ${isWaiting?"bg-gradient-to-br from-emerald-500/[0.08] to-teal-500/[0.05] border-emerald-500/20":"bg-gradient-to-br from-amber-500/[0.08] to-orange-500/[0.06] border-amber-500/20"}`}>
         <div className="text-3xl font-black text-gradient">{amount}</div>
-        <p className="text-white/20 text-[10px] mt-1">{isWaiting?"Your payment is locked in for this round":isPreparing?"Payment will unlock as soon as setup finishes":"Platform fee included"}</p>
+        <p className="text-white/20 text-[10px] mt-1">{amountCaption||(
+          isWaiting
+            ?"Your payment is locked in for this round"
+            :isPreparing
+              ?"Payment will unlock as soon as setup finishes"
+              :"Platform fee included"
+        )}</p>
       </div>}
       {totalCount>0&&!isPreparing&&<div className={`rounded-xl border p-3 mb-3 ${isWaiting?"bg-emerald-500/[0.06] border-emerald-500/15":"bg-white/[0.03] border-white/[0.06]"}`}>
         <div className="flex items-center justify-between text-[10px] uppercase tracking-[0.2em] text-white/35 mb-2">
@@ -46,8 +57,8 @@ export function PaymentModal({
         <div className="flex items-center gap-3">
           <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse"/>
           <div className="min-w-0">
-            <p className="text-[11px] font-bold text-amber-200/90">Preparing on-chain payment step</p>
-            <p className="text-[10px] text-white/30 mt-1">The `Pay 1 USDC` action will appear automatically in this dialog.</p>
+            <p className="text-[11px] font-bold text-amber-200/90">{preparingTitle||"Preparing on-chain payment step"}</p>
+            <p className="text-[10px] text-white/30 mt-1">{preparingMessage||"The `Pay 1 USDC` action will appear automatically in this dialog."}</p>
           </div>
         </div>
       </div>}
@@ -63,8 +74,8 @@ export function PaymentModal({
       {hint&&<p className="text-white/25 text-[11px] text-center mb-4">{hint}</p>}
       {isPreparing?(
         <div className="grid grid-cols-2 gap-2">
-          <button disabled className="py-2.5 rounded-xl bg-amber-500/15 border border-amber-500/20 text-amber-300 text-xs font-bold">Match Locked</button>
-          <button disabled className="py-2.5 rounded-xl bg-white/[0.03] border border-white/[0.08] text-white/45 text-xs font-bold">Preparing...</button>
+          <button disabled className="py-2.5 rounded-xl bg-amber-500/15 border border-amber-500/20 text-amber-300 text-xs font-bold">{preparingPrimaryLabel}</button>
+          <button disabled className="py-2.5 rounded-xl bg-white/[0.03] border border-white/[0.08] text-white/45 text-xs font-bold">{preparingSecondaryLabel}</button>
         </div>
       ):isWaiting?(
         <div className="grid grid-cols-2 gap-2">

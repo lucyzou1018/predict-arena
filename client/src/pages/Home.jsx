@@ -626,6 +626,7 @@ export default function Home(){
   const isWaitingPaymentPhase=isRoomPaidWaiting||isMatchPaidWaiting;
   const showPayment=isRoomPreparing||isRoomPaymentPhase||isWaitingPaymentPhase||isMatchPreparing||isMatchPaymentPhase;
   const paymentModalMode=isWaitingPaymentPhase?"waiting":(isRoomPreparing||isMatchPreparing)?"preparing":"confirm";
+  const waitingForHostPayment = joinPhase==="preparing";
   const preparingMatchTotal=matchInfo.current||matchTeamSize;
   const onPayConfirm=createPhase==="payment"?payCreate:joinPhase==="payment"?payJoin:payMatch;
   const onPayCancel=()=>{
@@ -872,7 +873,7 @@ export default function Home(){
                   <TeamSlots total={joinRoom.total} players={joinRoom.players}/>
                   <div className="mt-2 inline-flex items-center gap-1.5 text-[10px]">
                     <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"/>
-                    <span className="text-white/30 font-mono">{joinPhase==="preparing" ? "Preparing payment..." : joinPaid && paymentProgress.total ? `${paymentProgress.paidCount}/${paymentProgress.total} paid` : `${joinRoom.current}/${joinRoom.total} waiting`}</span>
+                    <span className="text-white/30 font-mono">{joinPhase==="preparing" ? "Waiting for host payment..." : joinPaid && paymentProgress.total ? `${paymentProgress.paidCount}/${paymentProgress.total} paid` : `${joinRoom.current}/${joinRoom.total} waiting`}</span>
                   </div>
                   {/* Join room expiry countdown */}
                   {joinCountdown!==null&&joinCountdown>0&&joinRoom.current<joinRoom.total&&(
@@ -956,7 +957,7 @@ export default function Home(){
         title={isWaitingPaymentPhase
           ?"Payment Confirmed"
           :isRoomPreparing
-            ?"Preparing Payment"
+            ?(waitingForHostPayment?"Waiting For Host Payment":"Preparing Payment")
           :isMatchPreparing
             ?"Match Found"
           :isRoomPaymentPhase
@@ -965,7 +966,9 @@ export default function Home(){
         subtitle={isWaitingPaymentPhase
           ?`Your entry is confirmed. Waiting for the remaining players to pay before the prediction begins automatically.`
           :isRoomPreparing
-            ?`All ${paymentProgress.total||0} players are ready. We're preparing the payment step now.`
+            ?(waitingForHostPayment
+              ?`All ${paymentProgress.total||0} players are ready. The host needs to pay first to open the on-chain room.`
+              :`All ${paymentProgress.total||0} players are ready. We're preparing the payment step now.`)
           :isMatchPreparing
             ?`All ${preparingMatchTotal} players are ready. We're preparing the payment step now.`
           :isRoomPaymentPhase
@@ -978,7 +981,9 @@ export default function Home(){
         hint={isWaitingPaymentPhase
           ?`You have already paid. The match will start as soon as all ${paymentProgress.total||0} players confirm.${shouldUseMockPayment?" Local mock payment enabled.":""}`
           :isRoomPreparing
-            ?"Creating the on-chain game now. If this takes too long, the room will reset automatically."
+            ?(waitingForHostPayment
+              ?"The host payment opens the on-chain room first. Your `Pay 1 USDC` button will appear here automatically right after that."
+              :"Creating the on-chain game now. If this takes too long, the room will reset automatically.")
           :isMatchPreparing
             ?"Creating the on-chain match now. This dialog will switch to `Pay 1 USDC` automatically as soon as setup finishes."
           :isRoomPaymentPhase
@@ -986,6 +991,21 @@ export default function Home(){
             :shouldUseMockPayment
               ?"Local mock payment enabled for this environment."
               :"You'll confirm this payment in your wallet."}
+        amountCaption={isRoomPreparing&&waitingForHostPayment
+          ?"Your payment unlocks right after the host opens the room on-chain"
+          :null}
+        preparingTitle={isRoomPreparing&&waitingForHostPayment
+          ?"Waiting for the host payment"
+          :null}
+        preparingMessage={isRoomPreparing&&waitingForHostPayment
+          ?"The host pays first to create the on-chain room. As soon as that confirms, this dialog will switch to `Pay 1 USDC` for you."
+          :null}
+        preparingPrimaryLabel={isRoomPreparing&&waitingForHostPayment
+          ?"Room Full"
+          :undefined}
+        preparingSecondaryLabel={isRoomPreparing&&waitingForHostPayment
+          ?"Waiting for Host"
+          :undefined}
         countdown={(isRoomPaymentPhase||isWaitingPaymentPhase||isMatchPaymentPhase)?paymentCountdown:null}
         countdownLabel={(isRoomPaymentPhase||isWaitingPaymentPhase||isMatchPaymentPhase)?"Match starts automatically once everyone pays before the timer expires.":null}
         paidCount={paymentProgress.paidCount}
