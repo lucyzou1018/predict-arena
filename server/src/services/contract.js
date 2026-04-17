@@ -482,10 +482,12 @@ class ContractService {
     return null;
   }
 
-  async _waitForReceipt(tx, label) {
+  async _waitForReceipt(tx, label, options = {}) {
     if (!tx?.hash) throw new Error(`${label} transaction hash missing`);
+    const confirmTimeoutMs = options.confirmTimeoutMs || TX_CONFIRM_TIMEOUT_MS;
+    const recoveryTimeoutMs = options.recoveryTimeoutMs || TX_RECOVERY_TIMEOUT_MS;
     try {
-      const receipt = await this.provider.waitForTransaction(tx.hash, 1, TX_CONFIRM_TIMEOUT_MS);
+      const receipt = await this.provider.waitForTransaction(tx.hash, 1, confirmTimeoutMs);
       if (receipt) {
         if (receipt.status === 0) throw new Error(`${label} transaction reverted on-chain`);
         return receipt;
@@ -495,7 +497,7 @@ class ContractService {
       console.warn(`[Contract] ${label} wait timed out`, { hash: tx.hash, error: error?.message || error });
     }
 
-    const deadline = Date.now() + TX_RECOVERY_TIMEOUT_MS;
+    const deadline = Date.now() + recoveryTimeoutMs;
     while (Date.now() < deadline) {
       try {
         const receipt = await this._getReceiptFromAnyProvider(tx.hash);
@@ -523,8 +525,8 @@ class ContractService {
     throw new Error(`${label} confirmation timed out. Please retry.`);
   }
 
-  async _recoverRoomGameId(inviteCode) {
-    const deadline = Date.now() + TX_RECOVERY_TIMEOUT_MS;
+  async _recoverRoomGameId(inviteCode, timeoutMs = TX_RECOVERY_TIMEOUT_MS) {
+    const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       try {
         const gameId = await this._readWithRpcFallback((provider) =>
@@ -572,7 +574,7 @@ class ContractService {
     }
   }
 
-  async ownerCreateRoom(maxPlayers, inviteCode, creator) {
+  async ownerCreateRoom(maxPlayers, inviteCode, creator, options = {}) {
     if (!this.initialized) { console.warn("[Contract] ownerCreateRoom skipped: not initialized"); return null; }
     console.log("[Contract] ownerCreateRoom starting", { inviteCode, creator });
     try {
@@ -581,17 +583,17 @@ class ContractService {
         const expectedGameId = await this._simulateUintResult("ownerCreateRoom", [maxPlayers, inviteCode, creator]).catch(() => null);
         console.log("[Contract] ownerCreateRoom sending tx", { inviteCode, expectedGameId });
         const tx = await this._sendContractTransaction("ownerCreateRoom", [maxPlayers, inviteCode, creator], "Create room");
-        const receipt = await this._waitForReceipt(tx, "Create room");
+        const receipt = await this._waitForReceipt(tx, "Create room", options);
         const gameId =
           this._extractGameIdFromReceipt(receipt, { creator, inviteCode, isRoom: true }) ||
           expectedGameId ||
-          await this._recoverRoomGameId(inviteCode);
+          await this._recoverRoomGameId(inviteCode, options.recoveryTimeoutMs);
         if (gameId) return gameId;
         throw new Error("Create room confirmed but game id could not be resolved");
       });
     } catch (error) {
       if (isRpcTimeoutLike(error)) {
-        const recoveredGameId = await this._recoverRoomGameId(inviteCode);
+        const recoveredGameId = await this._recoverRoomGameId(inviteCode, options.recoveryTimeoutMs);
         if (recoveredGameId) return recoveredGameId;
       }
       throw this._formatRpcError("Create room", error);
@@ -606,11 +608,11 @@ class ContractService {
     });
   }
 
-  async ownerJoinRoom(inviteCode, player) {
+  async ownerJoinRoom(inviteCode, player, options = {}) {
     if (!this.initialized) return;
     await this._runRelaySequence("Join room", async () => {
       const tx = await this._sendContractTransaction("ownerJoinRoom", [inviteCode, player], "Join room");
-      await this._waitForReceipt(tx, "Join room");
+      await this._waitForReceipt(tx, "Join room", options);
     });
   }
 

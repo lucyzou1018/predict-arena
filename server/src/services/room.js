@@ -4,6 +4,9 @@ import { generateInviteCode } from "../utils/inviteCode.js";
 import contractService from "./contract.js";
 import gameService from "./game.js";
 
+const ROOM_CHAIN_PREP_TIMEOUT_MS = parseInt(process.env.ROOM_CHAIN_PREP_TIMEOUT_MS || "15000", 10);
+const ROOM_CHAIN_PREP_FAILURE_MESSAGE = "Chain is busy. Please retry this room.";
+
 class RoomService {
   constructor() { this.rooms = {}; this.pendingCreates = {}; this.io = null; }
   setIO(io) { this.io = io; }
@@ -55,15 +58,6 @@ class RoomService {
 
   rebindPlayerSocket(wallet, socketId) {
     if (!wallet || !socketId) return null;
-    const pendingCreate = this.getPendingCreateByWallet(wallet);
-    if (pendingCreate) {
-      pendingCreate.socketId = socketId;
-      return {
-        inviteCode: pendingCreate.inviteCode,
-        gameId: pendingCreate.gameId,
-        phase: "creating",
-      };
-    }
     const located = this.getRoomByWallet(wallet);
     if (!located) return null;
     located.player.socketId = socketId;
@@ -76,75 +70,161 @@ class RoomService {
       inviteCode: located.inviteCode,
       gameId: located.room.gameId,
       chainGameId: located.room.chainGameId,
-      phase: payment ? "payment" : "waiting",
+      phase: payment ? "payment" : located.room.preparing ? "preparing" : "waiting",
     };
   }
 
   async createRoom(maxPlayers, wallet, socketId) {
     for (const c in this.rooms) { if (this.rooms[c].players.find(p => p.wallet === wallet)) return { error: "Already in a room" }; }
-    if (this.isCreatingRoom(wallet)) return { error: "Room creation is already in progress" };
     const code = generateInviteCode();
-    const res = await query(`INSERT INTO games (mode, max_players, invite_code, state) VALUES ('room', $1, $2, 'creating') RETURNING id`, [maxPlayers, code]);
+    const createdAt = Date.now();
+    const expiresAt = createdAt + config.game.roomExpiry;
+    const res = await query(`INSERT INTO games (mode, max_players, invite_code, state) VALUES ('room', $1, $2, 'waiting') RETURNING id`, [maxPlayers, code]);
     const gameId = res.rows[0].id;
-    const pending = {
-      inviteCode: code,
+    await query(
+      `INSERT INTO game_players (game_id, wallet_address, paid, is_owner)
+       VALUES ($1, $2, false, true)
+       ON CONFLICT DO NOTHING`,
+      [gameId, wallet]
+    );
+    const room = {
       gameId,
+      chainGameId: null,
       maxPlayers,
-      wallet,
-      socketId,
-      createdAt: Date.now(),
+      players: [{ wallet, socketId }],
+      owner: wallet,
+      createdAt,
+      expiresAt,
+      timer: setTimeout(() => this._expire(code), config.game.roomExpiry),
+      paid: {},
+      transitioning: false,
+      preparing: false,
+      prepareStartedAt: null,
+      _preparePromise: null,
     };
-    this.pendingCreates[code] = pending;
-    void this._completeCreateRoom(pending);
-    return { status: "pending", inviteCode: code, gameId, maxPlayers };
+    this.rooms[code] = room;
+    return { status: "created", inviteCode: code, gameId, chainGameId: null, maxPlayers, expiresAt };
   }
 
-  async _completeCreateRoom(pending) {
-    const { inviteCode: code, gameId, maxPlayers, wallet } = pending;
-    try {
-      let chainGameId = null;
+  _prepareTimeoutOptions(room, totalOps) {
+    const remainingMs = Math.max(3000, ROOM_CHAIN_PREP_TIMEOUT_MS - (Date.now() - (room.prepareStartedAt || Date.now())));
+    const perOpConfirmMs = Math.max(2500, Math.floor(remainingMs / Math.max(totalOps, 1)));
+    const perOpRecoveryMs = Math.max(1000, Math.floor(perOpConfirmMs / 2));
+    return { confirmTimeoutMs: perOpConfirmMs, recoveryTimeoutMs: perOpRecoveryMs };
+  }
+
+  _emitRoomPreparing(code, room) {
+    const payload = {
+      inviteCode: code,
+      gameId: room.gameId,
+      chainGameId: room.chainGameId,
+      current: room.players.length,
+      total: room.maxPlayers,
+      players: room.players.map((player) => player.wallet),
+      timeoutMs: ROOM_CHAIN_PREP_TIMEOUT_MS,
+    };
+    for (const player of room.players) {
+      if (player?.socketId) this.io?.to(player.socketId).emit("room:preparing", payload);
+    }
+  }
+
+  _scheduleOrphanRoomCleanup(code) {
+    void contractService.recoverRoomGameId(code, 120000).then((gameId) => {
+      if (!gameId) return;
+      return contractService.cancelGame(gameId).catch((error) => {
+        console.error("[Room] orphaned chain room cleanup failed", { code, gameId, error: error?.message || error });
+      });
+    }).catch((error) => {
+      console.error("[Room] orphaned chain room recovery failed", { code, error: error?.message || error });
+    });
+  }
+
+  async prepareRoomPayment(code) {
+    const room = this.rooms[code];
+    if (!room) throw new Error("Room not found");
+    if (room.players.length < room.maxPlayers) throw new Error("Room is not full yet");
+    if (gameService.getRoomPayment(room.gameId)) {
+      return {
+        inviteCode: code,
+        gameId: room.gameId,
+        chainGameId: room.chainGameId,
+        current: room.players.length,
+        total: room.maxPlayers,
+        players: room.players.map((player) => player.wallet),
+        paymentTimeout: config.game.paymentTimeout,
+      };
+    }
+    if (room._preparePromise) return room._preparePromise;
+
+    room.transitioning = true;
+    room.preparing = true;
+    room.prepareStartedAt = Date.now();
+    this._clearRoomTimer(room);
+    this._emitRoomPreparing(code, room);
+
+    const preparePromise = (async () => {
+      let chainGameId = room.chainGameId || null;
       try {
-        chainGameId = await contractService.ownerCreateRoom(maxPlayers, code, wallet);
+        const playersSnapshot = room.players.map((player) => ({ ...player }));
+        const nonOwners = playersSnapshot.filter((player) => player.wallet !== room.owner);
+        if (!chainGameId) {
+          chainGameId = await contractService.ownerCreateRoom(
+            room.maxPlayers,
+            code,
+            room.owner,
+            this._prepareTimeoutOptions(room, nonOwners.length + 1),
+          );
+        }
+        if (!chainGameId) throw new Error(ROOM_CHAIN_PREP_FAILURE_MESSAGE);
+        room.chainGameId = chainGameId;
+        await query(`UPDATE games SET chain_game_id = $1, state = 'waiting' WHERE id = $2`, [chainGameId, room.gameId]);
+
+        for (const player of nonOwners) {
+          if (!this.rooms[code] || !this.rooms[code].players.find((entry) => entry.wallet === player.wallet)) {
+            continue;
+          }
+          await contractService.ownerJoinRoom(
+            code,
+            player.wallet,
+            this._prepareTimeoutOptions(room, Math.max(1, nonOwners.length)),
+          );
+        }
+
+        const currentRoom = this.rooms[code];
+        if (!currentRoom) throw new Error(ROOM_CHAIN_PREP_FAILURE_MESSAGE);
+        currentRoom.transitioning = false;
+        currentRoom.preparing = false;
+        currentRoom.prepareStartedAt = null;
+        return {
+          inviteCode: code,
+          gameId: currentRoom.gameId,
+          chainGameId: currentRoom.chainGameId,
+          current: currentRoom.players.length,
+          total: currentRoom.maxPlayers,
+          players: currentRoom.players.map((player) => player.wallet),
+          paymentTimeout: config.game.paymentTimeout,
+        };
       } catch (error) {
-        const message = `${error?.message || ""}`.toLowerCase();
-        if (message.includes("timed out while waiting for base sepolia") || message.includes("confirmation timed out")) {
-          chainGameId = await contractService.recoverRoomGameId(code, 180000);
-        } else {
-          throw error;
+        console.error("[Room] prepareRoomPayment failed", { code, error: error?.message || error });
+        if (!chainGameId) this._scheduleOrphanRoomCleanup(code);
+        room.transitioning = false;
+        room.preparing = false;
+        room.prepareStartedAt = null;
+        await this._closeRoom(code, ROOM_CHAIN_PREP_FAILURE_MESSAGE, "failed");
+        throw error;
+      } finally {
+        const currentRoom = this.rooms[code];
+        if (currentRoom) {
+          currentRoom.transitioning = false;
+          currentRoom.preparing = false;
+          currentRoom.prepareStartedAt = null;
+          currentRoom._preparePromise = null;
         }
       }
+    })();
 
-      if (!chainGameId) {
-        throw new Error("Create room confirmation is still pending. Please retry in a few seconds.");
-      }
-
-      await query(`UPDATE games SET chain_game_id = $1, state = 'waiting' WHERE id = $2`, [chainGameId, gameId]);
-      await query(`INSERT INTO game_players (game_id, wallet_address, paid, is_owner) VALUES ($1, $2, false, true) ON CONFLICT DO NOTHING`, [gameId, wallet]);
-      const expiresAt = Date.now() + config.game.roomExpiry;
-      this.rooms[code] = {
-        gameId, chainGameId, maxPlayers,
-        players: [{ wallet, socketId: pending.socketId || this._findSocketIdByWallet(wallet) }], owner: wallet,
-        createdAt: pending.createdAt, expiresAt,
-        timer: setTimeout(() => this._expire(code), config.game.roomExpiry),
-        paid: {}, transitioning: false,
-        _chainOps: [],
-      };
-
-      const targetSocketId = pending.socketId || this._findSocketIdByWallet(wallet);
-      if (targetSocketId) {
-        this.io?.to(targetSocketId).emit("room:created", { inviteCode: code, gameId, chainGameId, maxPlayers, expiresAt });
-      }
-    } catch (error) {
-      console.error("[Room] async createRoom failed", { code, gameId, error: error?.message || error });
-      await query(`DELETE FROM game_players WHERE game_id = $1`, [gameId]).catch(() => {});
-      await query(`DELETE FROM games WHERE id = $1`, [gameId]).catch(() => {});
-      const targetSocketId = pending.socketId || this._findSocketIdByWallet(wallet);
-      if (targetSocketId) {
-        this.io?.to(targetSocketId).emit("room:error", { message: error?.message || "Create room failed" });
-      }
-    } finally {
-      delete this.pendingCreates[code];
-    }
+    room._preparePromise = preparePromise;
+    return preparePromise;
   }
 
   async joinRoom(code, wallet, socketId) {
@@ -155,13 +235,6 @@ class RoomService {
     r.players.push({ wallet, socketId });
     await query(`INSERT INTO game_players (game_id, wallet_address, paid) VALUES ($1, $2, false) ON CONFLICT DO NOTHING`, [r.gameId, wallet]);
     this._broadcast(code);
-    // Chain join fires in background
-    const joinPromise = contractService.ownerJoinRoom(code, wallet).catch((error) => {
-      console.error("[Room] chain joinRoom failed", { code, wallet, error: error?.message || error });
-      throw error;
-    });
-    if (!r._chainOps) r._chainOps = [];
-    r._chainOps.push(joinPromise);
     if (r.players.length === r.maxPlayers) {
       return {
         status: "full",
@@ -179,8 +252,8 @@ class RoomService {
 
   async awaitChainReady(code) {
     const r = this.rooms[code];
-    if (!r?._chainOps?.length) return;
-    await Promise.all(r._chainOps);
+    if (!r) return;
+    if (r._preparePromise) await r._preparePromise;
   }
 
   clearRoomExpiry(code) {
@@ -211,9 +284,11 @@ class RoomService {
     query(`UPDATE games SET state = $1 WHERE id = $2`, [state, gameId]).catch((error) => {
       console.error("[Room] failed to update game state on close", { code, gameId, state, error: error?.message || error });
     });
-    contractService.cancelGame(chainGameId).catch((error) => {
-      console.error("[Room] background cancelGame failed", { code, chainGameId, error: error?.message || error });
-    });
+    if (chainGameId) {
+      contractService.cancelGame(chainGameId).catch((error) => {
+        console.error("[Room] background cancelGame failed", { code, chainGameId, error: error?.message || error });
+      });
+    }
     return true;
   }
 
@@ -247,6 +322,65 @@ class RoomService {
 
     room.transitioning = true;
     this._clearRoomTimer(room);
+
+    if (!room.chainGameId) {
+      try {
+        await withTransaction(async (db) => {
+          await db.query(
+            `UPDATE games
+             SET state = 'cancelled', error_message = $1
+             WHERE id = $2`,
+            [leaveReason, room.gameId],
+          );
+
+          const nextGame = await db.query(
+            `INSERT INTO games (mode, max_players, invite_code, state, created_at)
+             VALUES ('room', $1, $2, 'waiting', $3)
+             RETURNING id`,
+            [room.maxPlayers, code, new Date(room.createdAt)],
+          );
+
+          newGameId = nextGame.rows[0].id;
+
+          for (const player of remainingPlayers) {
+            await db.query(
+              `INSERT INTO game_players (game_id, wallet_address, paid, is_owner)
+               VALUES ($1, $2, false, $3)`,
+              [newGameId, player.wallet, player.wallet === newOwner],
+            );
+          }
+        });
+
+        const rebuiltRoom = {
+          gameId: newGameId,
+          chainGameId: null,
+          maxPlayers: room.maxPlayers,
+          players: remainingPlayers,
+          owner: newOwner,
+          createdAt: room.createdAt,
+          expiresAt: room.expiresAt,
+          timer: null,
+          paid: {},
+          transitioning: false,
+          preparing: false,
+          prepareStartedAt: null,
+          _preparePromise: null,
+        };
+        this.rooms[code] = rebuiltRoom;
+        this._scheduleRoomExpiry(code, remainingMs);
+        gameService.clearRoomPayment(room.gameId);
+        this._broadcast(code);
+        return true;
+      } catch (error) {
+        console.error("[Room] waiting room local rebuild failed", { inviteCode: code, removedWallet, error: error?.message || error });
+        for (const player of remainingPlayers) {
+          if (player?.socketId) this.io?.to(player.socketId).emit("room:dissolved", { reason: fallbackReason });
+        }
+        delete this.rooms[code];
+        gameService.clearRoomPayment(room.gameId);
+        return false;
+      }
+    }
 
     try {
       await contractService.cancelGame(room.chainGameId);
@@ -300,7 +434,9 @@ class RoomService {
         timer: null,
         paid: {},
         transitioning: false,
-        _chainOps: [],
+        preparing: false,
+        prepareStartedAt: null,
+        _preparePromise: null,
       };
       this._scheduleRoomExpiry(code, remainingMs);
       gameService.clearRoomPayment(room.gameId);
@@ -384,11 +520,6 @@ class RoomService {
   }
 
   leaveBySocket(sid) {
-    for (const pending of Object.values(this.pendingCreates)) {
-      if (pending?.socketId === sid) {
-        pending.socketId = null;
-      }
-    }
     for (const c in this.rooms) {
       const r = this.rooms[c];
       if (r.transitioning) continue;
@@ -432,7 +563,7 @@ class RoomService {
       players: r.players.map(pl => pl.wallet),
       owner: r.owner,
       expiresAt: isFull ? null : r.expiresAt,
-      status: isFull ? "full" : "waiting",
+      status: r.preparing ? "preparing" : isFull ? "full" : "waiting",
       paymentTimeout: config.game.paymentTimeout,
     };
     for (const p of r.players) {

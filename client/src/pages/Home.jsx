@@ -184,11 +184,11 @@ export default function Home(){
     setRoomExpiresAt(null);setRoomCountdown(null);
     setJoinExpiresAt(null);setJoinCountdown(null);
     if(players.length){
-      if(createPhaseRef.current==="waiting"||createPhaseRef.current==="creating")setRoom({current:total,total:d?.total||total,players});
-      if(joinPhaseRef.current==="waiting"||joinPhaseRef.current==="joining")setJoinRoom({current:total,total:d?.total||total,players});
+      if(createPhaseRef.current==="waiting"||createPhaseRef.current==="creating"||createPhaseRef.current==="preparing")setRoom({current:total,total:d?.total||total,players});
+      if(joinPhaseRef.current==="waiting"||joinPhaseRef.current==="joining"||joinPhaseRef.current==="preparing")setJoinRoom({current:total,total:d?.total||total,players});
     }
-    if(createPhaseRef.current==="waiting"||createPhaseRef.current==="creating")setCreatePhase("payment");
-    if(joinPhaseRef.current==="waiting"||joinPhaseRef.current==="joining")setJoinPhase("payment");
+    if(createPhaseRef.current==="waiting"||createPhaseRef.current==="creating"||createPhaseRef.current==="preparing")setCreatePhase("payment");
+    if(joinPhaseRef.current==="waiting"||joinPhaseRef.current==="joining"||joinPhaseRef.current==="preparing")setJoinPhase("payment");
   },[]);
 
   const reloadHistory=useCallback(async(targetWallet=walletRef.current)=>{
@@ -330,8 +330,14 @@ export default function Home(){
         const current=d.room.current_players||players.length||1;
         const expiresAt=(d.room.expires_at?new Date(d.room.expires_at).getTime():new Date(d.room.created_at).getTime()+300000);
         const isExpired=expiresAt<=Date.now();
+        const isPreparingPhase=d.room.phase==="preparing";
         const isPaymentPhase=d.room.phase==="payment"||d.room.phase==="paid_waiting";
         const paymentStartedAt=d.room.payment_started_at?new Date(d.room.payment_started_at).getTime():null;
+        if(isPreparingPhase){
+          setRoomFullInfo({gameId:d.room.game_id||d.room.id,chainGameId:d.room.chain_game_id||null,inviteCode:code,players,paymentTimeout:d.room.payment_timeout_ms});
+          setPaymentProgress({paidCount:d.room.paid_count||0,total:d.room.total_players||total});
+          setPaymentStartedAt(null);
+        }
         if(isPaymentPhase){
           setRoomFullInfo({gameId:d.room.game_id||d.room.id,chainGameId:d.room.chain_game_id||d.room.game_id||d.room.id,inviteCode:code,players,paymentTimeout:d.room.payment_timeout_ms});
           setPaymentProgress({paidCount:d.room.paid_count||0,total:d.room.total_players||total});
@@ -341,7 +347,10 @@ export default function Home(){
           setCreateTeamSize(total);
           setRoomCode(code);
           setRoom({current,total,players});
-          if(isPaymentPhase){
+          if(isPreparingPhase){
+            setCreatePhase("preparing");
+            setRoomExpiresAt(null);
+          } else if(isPaymentPhase){
             setCreatePaid(d.room.phase==="paid_waiting");
             setCreatePhase(d.room.phase);
             setRoomExpiresAt(null);
@@ -354,7 +363,10 @@ export default function Home(){
         } else {
           setJoinCode(code);
           setJoinRoom({current,total,players});
-          if(isPaymentPhase){
+          if(isPreparingPhase){
+            setJoinPhase("preparing");
+            setJoinExpiresAt(null);
+          } else if(isPaymentPhase){
             setJoinPaid(d.room.phase==="paid_waiting");
             setJoinPhase(d.room.phase);
             setJoinExpiresAt(null);
@@ -388,18 +400,35 @@ export default function Home(){
         setCreatePhase("waiting");
       }),
       on("room:update",d=>{
-        if(createPhaseRef.current==="waiting"||createPhaseRef.current==="paid_waiting"){
+        if(createPhaseRef.current==="waiting"||createPhaseRef.current==="paid_waiting"||createPhaseRef.current==="preparing"){
           const total=d.total||roomRef.current.total||createTeamSizeRef.current||d.players?.length||0;
           setCreateTeamSize(total||createTeamSizeRef.current);
           setRoom({current:d.current,total,players:d.players});
           if(d.expiresAt)setRoomExpiresAt(d.expiresAt);
         }
-        if(joinPhaseRef.current==="waiting"||joinPhaseRef.current==="paid_waiting"){
+        if(joinPhaseRef.current==="waiting"||joinPhaseRef.current==="paid_waiting"||joinPhaseRef.current==="preparing"){
           const total=d.total||joinRoomRef.current.total||d.players?.length||0;
           setJoinRoom({current:d.current,total,players:d.players});
           if(d.expiresAt)setJoinExpiresAt(d.expiresAt);
         }
         if((d.status==="full"||(d.total&&d.current>=d.total))&&d.chainGameId)enterRoomPayment(d);
+      }),
+      on("room:preparing",d=>{
+        const total=d.total||d.players?.length||0;
+        setPaymentErr(null);
+        setPaymentNotice(null);
+        setPaymentProgress({paidCount:0,total});
+        setRoomFullInfo(prev=>({
+          gameId:d.gameId||prev?.gameId||null,
+          chainGameId:d.chainGameId||prev?.chainGameId||null,
+          inviteCode:d.inviteCode||prev?.inviteCode||roomCodeRef.current||joinCodeRef.current||"",
+          players:Array.isArray(d.players)?d.players:(prev?.players||[]),
+          paymentTimeout:d.timeoutMs||prev?.paymentTimeout||PAYMENT_TIMEOUT*1000,
+        }));
+        setRoomExpiresAt(null);
+        setJoinExpiresAt(null);
+        if(createPhaseRef.current==="waiting"||createPhaseRef.current==="creating")setCreatePhase("preparing");
+        if(joinPhaseRef.current==="waiting"||joinPhaseRef.current==="joining")setJoinPhase("preparing");
       }),
       on("room:full",d=>{
         enterRoomPayment(d);
@@ -412,10 +441,10 @@ export default function Home(){
           setCreatePhase(createPhaseBeforeCancelRef.current==="paid_waiting"?"paid_waiting":"waiting");
         }
         setCreateHint(null);
-        if(createPhaseRef.current==="creating"||createPhaseRef.current==="waiting"||createPhaseRef.current==="payment"||createPhaseRef.current==="paid_waiting") {setCreateErr(uiMsg);setPaymentErr(uiMsg);}
+        if(createPhaseRef.current==="creating"||createPhaseRef.current==="waiting"||createPhaseRef.current==="preparing"||createPhaseRef.current==="payment"||createPhaseRef.current==="paid_waiting") {setCreateErr(uiMsg);setPaymentErr(uiMsg);}
         if(createPhaseRef.current==="dissolving") {setCreateErr(uiMsg);}
-        if(joinPhaseRef.current==="select"||joinPhaseRef.current==="waiting"||joinPhaseRef.current==="joining"||joinPhaseRef.current==="payment"||joinPhaseRef.current==="paid_waiting") {setJoinErr(uiMsg);setPaymentErr(uiMsg);if(joinPhaseRef.current!=="payment"&&joinPhaseRef.current!=="paid_waiting")setJoinPhase("select");}
-        setCreatePhase(prev=>prev==="creating"?"select":prev);
+        if(joinPhaseRef.current==="select"||joinPhaseRef.current==="waiting"||joinPhaseRef.current==="joining"||joinPhaseRef.current==="preparing"||joinPhaseRef.current==="payment"||joinPhaseRef.current==="paid_waiting") {setJoinErr(uiMsg);setPaymentErr(uiMsg);if(joinPhaseRef.current!=="payment"&&joinPhaseRef.current!=="paid_waiting")setJoinPhase("select");}
+        setCreatePhase(prev=>(prev==="creating"||prev==="preparing")?"select":prev);
       }),
       on("room:dissolved",d=>{
         const wasCreateFlow = createPhaseRef.current!=="select" || !!roomCodeRef.current;
@@ -479,8 +508,15 @@ export default function Home(){
         setJoinRoom({current,total,players:d.players});
         if(d.expiresAt)setJoinExpiresAt(d.expiresAt);
         if(d.status==="full"){
-          enterRoomPayment(d);
-          setJoinPhase("payment");
+          setPaymentProgress({paidCount:0,total});
+          setRoomFullInfo(prev=>({
+            gameId:d.gameId||prev?.gameId||null,
+            chainGameId:d.chainGameId||prev?.chainGameId||null,
+            inviteCode:d.inviteCode||prev?.inviteCode||joinCodeRef.current||"",
+            players:d.players||prev?.players||[],
+            paymentTimeout:d.paymentTimeout||prev?.paymentTimeout||PAYMENT_TIMEOUT*1000,
+          }));
+          setJoinPhase("preparing");
         } else if(joinPhaseRef.current!=="payment"&&joinPhaseRef.current!=="paid_waiting"){
           setJoinPhase("waiting");
         }
@@ -573,14 +609,15 @@ export default function Home(){
   },[claimGameFunds,reloadHistory]);
 
   // Payment modal — room payment keeps the modal open while waiting for everyone
+  const isRoomPreparing=(createPhase==="preparing")||(joinPhase==="preparing");
   const isRoomPaymentPhase=(createPhase==="payment")||(joinPhase==="payment");
   const isRoomPaidWaiting=(createPhase==="paid_waiting")||(joinPhase==="paid_waiting");
   const isMatchPreparing=matchPhase==="preparing";
   const isMatchPaymentPhase=matchPhase==="payment";
   const isMatchPaidWaiting=matchPhase==="paid_waiting";
   const isWaitingPaymentPhase=isRoomPaidWaiting||isMatchPaidWaiting;
-  const showPayment=isRoomPaymentPhase||isWaitingPaymentPhase||isMatchPreparing||isMatchPaymentPhase;
-  const paymentModalMode=isWaitingPaymentPhase?"waiting":isMatchPreparing?"preparing":"confirm";
+  const showPayment=isRoomPreparing||isRoomPaymentPhase||isWaitingPaymentPhase||isMatchPreparing||isMatchPaymentPhase;
+  const paymentModalMode=isWaitingPaymentPhase?"waiting":(isRoomPreparing||isMatchPreparing)?"preparing":"confirm";
   const preparingMatchTotal=matchInfo.current||matchTeamSize;
   const onPayConfirm=createPhase==="payment"?payCreate:joinPhase==="payment"?payJoin:payMatch;
   const onPayCancel=()=>{
@@ -721,7 +758,7 @@ export default function Home(){
               )}
               {createPhase==="creating"&&(<div className="text-center py-10"><div className="w-8 h-8 mx-auto rounded-full border-2 border-orange-400/30 border-t-orange-400 animate-spin mb-3"/><p className="text-white/40 text-xs">Creating arena...</p></div>)}
               {createPhase==="dissolving"&&(<div className="text-center py-10"><div className="w-8 h-8 mx-auto rounded-full border-2 border-amber-400/30 border-t-amber-400 animate-spin mb-3"/><p className="text-white/40 text-xs">Cancelling room...</p></div>)}
-              {(createPhase==="waiting"||createPhase==="paid_waiting")&&(
+              {(createPhase==="waiting"||createPhase==="paid_waiting"||createPhase==="preparing")&&(
                 <div className="text-center">
                   <p className="text-white/20 text-[8px] uppercase tracking-[0.3em] mb-2">Arena Code</p>
                   <div className="bg-white/[0.04] border border-white/[0.06] rounded-xl px-4 py-3 mb-3">
@@ -733,7 +770,7 @@ export default function Home(){
                   <TeamSlots total={createRoomTotal} players={room.players} current={room.current}/>
                   <div className="mt-2 inline-flex items-center gap-1.5 text-[10px]">
                     <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"/>
-                    <span className="text-white/30 font-mono">{createPaid && paymentProgress.total ? `${paymentProgress.paidCount}/${paymentProgress.total} paid` : `${room.current}/${createRoomTotal} ready`}</span>
+                    <span className="text-white/30 font-mono">{createPhase==="preparing" ? "Preparing payment..." : createPaid && paymentProgress.total ? `${paymentProgress.paidCount}/${paymentProgress.total} paid` : `${room.current}/${createRoomTotal} ready`}</span>
                   </div>
                   {/* Room expiry countdown — only when not full */}
                   {roomCountdown!==null&&roomCountdown>0&&room.current<createRoomTotal&&(
@@ -751,7 +788,7 @@ export default function Home(){
                       <span className="text-[9px] text-white/25 ml-1">payment countdown</span>
                     </div>
                   )}
-                  <button onClick={dissolveRoom} className="mt-3 w-full py-2 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:bg-rose-500/[0.06] hover:text-rose-400 transition text-[10px] text-white/20">Cancel</button>
+                  <button onClick={dissolveRoom} disabled={createPhase==="preparing"} className="mt-3 w-full py-2 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:bg-rose-500/[0.06] hover:text-rose-400 transition text-[10px] text-white/20 disabled:opacity-30 disabled:cursor-not-allowed">Cancel</button>
                 </div>
               )}
               {/* Expired state — highlighted Expired button */}
@@ -818,7 +855,7 @@ export default function Home(){
                   </div>
                 </div>
               )}
-              {(joinPhase==="waiting"||joinPhase==="paid_waiting")&&(
+              {(joinPhase==="waiting"||joinPhase==="paid_waiting"||joinPhase==="preparing")&&(
                 <div className="text-center">
                   <p className="text-white/20 text-[8px] uppercase tracking-[0.3em] mb-2">Joined Arena</p>
                   <div className="bg-white/[0.04] border border-white/[0.06] rounded-xl px-4 py-3 mb-3">
@@ -827,7 +864,7 @@ export default function Home(){
                   <TeamSlots total={joinRoom.total} players={joinRoom.players}/>
                   <div className="mt-2 inline-flex items-center gap-1.5 text-[10px]">
                     <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"/>
-                    <span className="text-white/30 font-mono">{joinPaid && paymentProgress.total ? `${paymentProgress.paidCount}/${paymentProgress.total} paid` : `${joinRoom.current}/${joinRoom.total} waiting`}</span>
+                    <span className="text-white/30 font-mono">{joinPhase==="preparing" ? "Preparing payment..." : joinPaid && paymentProgress.total ? `${paymentProgress.paidCount}/${paymentProgress.total} paid` : `${joinRoom.current}/${joinRoom.total} waiting`}</span>
                   </div>
                   {/* Join room expiry countdown */}
                   {joinCountdown!==null&&joinCountdown>0&&joinRoom.current<joinRoom.total&&(
@@ -845,7 +882,7 @@ export default function Home(){
                       <span className="text-[9px] text-white/25 ml-1">payment countdown</span>
                     </div>
                   )}
-                  <button onClick={leaveRoom} className="mt-3 w-full py-2 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:bg-rose-500/[0.06] hover:text-rose-400 transition text-[10px] text-white/20">Leave</button>
+                  <button onClick={leaveRoom} disabled={joinPhase==="preparing"} className="mt-3 w-full py-2 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:bg-rose-500/[0.06] hover:text-rose-400 transition text-[10px] text-white/20 disabled:opacity-30 disabled:cursor-not-allowed">Leave</button>
                 </div>
               )}
             </div>
@@ -910,6 +947,8 @@ export default function Home(){
         mode={paymentModalMode}
         title={isWaitingPaymentPhase
           ?"Payment Confirmed"
+          :isRoomPreparing
+            ?"Preparing Payment"
           :isMatchPreparing
             ?"Match Found"
           :isRoomPaymentPhase
@@ -917,6 +956,8 @@ export default function Home(){
             :"Enter Match"}
         subtitle={isWaitingPaymentPhase
           ?`Your entry is confirmed. Waiting for the remaining players to pay before the prediction begins automatically.`
+          :isRoomPreparing
+            ?`All ${paymentProgress.total||0} players are ready. We're preparing the payment step now.`
           :isMatchPreparing
             ?`All ${preparingMatchTotal} players are ready. We're preparing the payment step now.`
           :isRoomPaymentPhase
@@ -928,6 +969,8 @@ export default function Home(){
         notice={paymentNotice}
         hint={isWaitingPaymentPhase
           ?`You have already paid. The match will start as soon as all ${paymentProgress.total||0} players confirm.${shouldUseMockPayment?" Local mock payment enabled.":""}`
+          :isRoomPreparing
+            ?"Creating the on-chain game now. If this takes too long, the room will reset automatically."
           :isMatchPreparing
             ?"Creating the on-chain match now. This dialog will switch to `Pay 1 USDC` automatically as soon as setup finishes."
           :isRoomPaymentPhase

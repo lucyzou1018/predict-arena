@@ -54,6 +54,7 @@ router.get("/users/:wallet/open-room", async (req, res) => {
     const me = gp.rows.find((row) => norm(row.wallet_address) === wallet);
     const payment = gameService.getRoomPayment(room.gameId);
     const paidCount = gp.rows.filter((row) => row.paid === true).length;
+    const preparing = !payment && room.preparing === true;
     return res.json({
       room: {
         id: room.gameId,
@@ -62,13 +63,13 @@ router.get("/users/:wallet/open-room", async (req, res) => {
         invite_code: inviteCode,
         max_players: room.maxPlayers,
         current_players: room.players.length,
-        state: payment ? "payment" : "waiting",
+        state: payment ? "payment" : preparing ? "preparing" : "waiting",
         created_at: new Date(room.createdAt).toISOString(),
         expires_at: room.expiresAt,
         is_owner: !!me?.is_owner,
         players: room.players.map((p) => p.wallet),
-        phase: payment ? (me?.paid ? "paid_waiting" : "payment") : "waiting",
-        payment_started_at: payment?.startedAt || null,
+        phase: payment ? (me?.paid ? "paid_waiting" : "payment") : preparing ? "preparing" : "waiting",
+        payment_started_at: payment?.startedAt || room.prepareStartedAt || null,
         payment_timeout_ms: config.game.paymentTimeout,
         paid_count: paidCount,
         total_players: room.players.length,

@@ -21,7 +21,6 @@ export function initSocket(httpServer) {
       if (!walletAddress) return null;
       if (gameService.isInActiveGame(walletAddress)) return "Finish your current game first";
       if (gameService.isInRoomPayment(walletAddress)) return "Finish or cancel your current payment flow first";
-      if (roomService.isCreatingRoom(walletAddress)) return "Room creation is still being confirmed on-chain";
       if (target === "match" && roomService.isInRoom(walletAddress)) return "Finish or cancel your active room first";
       if (target === "room" && matchmakingService.isQueued(walletAddress)) return "Finish or cancel your current match first";
       return null;
@@ -125,7 +124,8 @@ export function initSocket(httpServer) {
       try {
         const r = await roomService.createRoom(d.teamSize, wallet, socket.id);
         if (r.error) { console.log("[Room] create returned error", r.error); return socket.emit("room:error", { message: r.error }); }
-        console.log("[Room] create queued", { code: r.inviteCode, gameId: r.gameId });
+        console.log("[Room] create accepted", { code: r.inviteCode, gameId: r.gameId });
+        socket.emit("room:created", r);
       } catch (e) {
         console.error("[Room] create exception", e?.message || e);
         socket.emit("room:error", { message: e.message || "Create room failed" });
@@ -156,17 +156,13 @@ export function initSocket(httpServer) {
         if (r.error) return socket.emit("room:error", { message: r.error });
         socket.emit("room:joined", r);
         if (r.status === "full") {
-          const rm = roomService.getRoom(d.inviteCode);
-          if (rm) {
-            try { await roomService.awaitChainReady(d.inviteCode); } catch (e) {
-              console.error("[Room] chain setup failed when full", { inviteCode: d.inviteCode, error: e?.message || e });
-              const failPlayers = rm ? [...rm.players] : [];
-              for (const p of failPlayers) {
-                if (p.socketId) io.to(p.socketId).emit("room:error", { message: "On-chain setup failed. Please create a new room." });
-              }
-              return;
-            }
-            const players = [...rm.players]; const gid = rm.gameId; const cid = rm.chainGameId;
+          try {
+            const prepared = await roomService.prepareRoomPayment(d.inviteCode);
+            const rm = roomService.getRoom(d.inviteCode);
+            if (!rm) return;
+            const players = [...rm.players];
+            const gid = rm.gameId;
+            const cid = rm.chainGameId || prepared?.chainGameId;
             const session = gameService.startRoomPayment(gid, d.inviteCode, players);
             roomService.clearRoomExpiry(d.inviteCode);
             session.timer = setTimeout(async () => {
@@ -174,7 +170,18 @@ export function initSocket(httpServer) {
               if (!current) return;
               await roomService._abortPaymentRoom(d.inviteCode, "Payment timeout");
             }, config.game.paymentTimeout);
-            for (const p of players) { io.to(p.socketId).emit("room:full", { gameId: gid, chainGameId: cid, players: players.map(x => x.wallet), inviteCode: d.inviteCode, paymentTimeout: config.game.paymentTimeout }); }
+            for (const p of players) {
+              io.to(p.socketId).emit("room:full", {
+                gameId: gid,
+                chainGameId: cid,
+                players: players.map(x => x.wallet),
+                inviteCode: d.inviteCode,
+                paymentTimeout: config.game.paymentTimeout,
+              });
+            }
+          } catch (e) {
+            console.error("[Room] full room prepare failed", { inviteCode: d.inviteCode, error: e?.message || e });
+            return;
           }
         }
       } catch (e) {
