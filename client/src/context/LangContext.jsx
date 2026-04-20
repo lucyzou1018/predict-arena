@@ -1363,12 +1363,6 @@ const DICT = {
     "home.payment.walletHint": "请在钱包中确认本次支付。",
     "home.payment.countdownLabel": "所有玩家在计时结束前完成支付后,对局将自动开始。",
 
-    "home.err.rpcTimeout": "Base Sepolia RPC 在等待确认时超时,请稍后重试。",
-    "home.err.paymentNotConfirmed": "支付已发送,但服务器仍在同步确认,请稍候。",
-    "home.err.configStale": "支付配置已过期,请刷新页面后重试。",
-    "home.err.allowancePending": "授权已完成,但支付交易尚未就绪,请稍后再试。",
-    "home.err.roomSyncing": "房间支付仍在链上同步,请稍后重试。",
-
     "game.share.text": "有不一样的 BTC 判断? 来 AlphaMatch 对照一下。 📈📉 https://predict-arena-test.vercel.app/arena",
     "game.preparing.title": "准备对局",
     "game.preparing.desc": "玩家全部就绪后开始",
