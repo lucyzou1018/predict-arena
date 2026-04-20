@@ -28,7 +28,7 @@ export function PaymentModal({
   const remainingPlayers=Math.max(0,totalCount-paidCount);
   const progressPct=totalCount?Math.min(100,Math.round((paidCount/totalCount)*100)):0;
   return<div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-xl">
-    <div className={`max-w-sm w-full max-h-[calc(100vh-2rem)] overflow-y-auto overscroll-contain animate-slideUp rounded-2xl border shadow-2xl p-6 ${isWaiting?"border-emerald-500/20 bg-gradient-to-br from-[#102016] via-[#131a14] to-[#0f130f] shadow-emerald-950/30":"border-violet-500/20 bg-gradient-to-br from-[#14112a] via-[#100d22] to-[#0c0a1d] shadow-violet-900/20"}`}>
+    <div className={`max-w-sm w-full max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain animate-slideUp rounded-2xl border shadow-2xl p-5 sm:p-6 ${isWaiting?"border-emerald-500/20 bg-gradient-to-br from-[#102016] via-[#131a14] to-[#0f130f] shadow-emerald-950/30":"border-violet-500/20 bg-gradient-to-br from-[#14112a] via-[#100d22] to-[#0c0a1d] shadow-violet-900/20"}`}>
       <div className="text-center mb-4">
         <div className={`w-14 h-14 mx-auto mb-3 rounded-2xl border flex items-center justify-center text-2xl ${isWaiting?"bg-gradient-to-br from-emerald-500/15 to-teal-500/15 border-emerald-500/20":"bg-gradient-to-br from-indigo-500/15 to-violet-500/15 border-violet-500/20 animate-float"}`}>{isWaiting?"✅":isPreparing?"⚔️":"💰"}</div>
         <h3 className="text-lg font-black">{title}</h3>

@@ -4,6 +4,7 @@ import { useSocket } from "../hooks/useSocket";
 import { useGame } from "../context/GameContext";
 import { useContract } from "../hooks/useContract";
 import { useWallet } from "../context/WalletContext";
+import { useT } from "../context/LangContext";
 import { PredictButtons, CountdownRing, SettlementReveal } from "../components";
 import { PREDICT_TIMEOUT, PREDICT_SAFE_BUFFER, SERVER_URL, SETTLE_DELAY } from "../config/constants";
 
@@ -36,6 +37,7 @@ function clearStoredPrediction(gameId, wallet) {
 
 export default function GamePlay() {
   const nav = useNavigate();
+  const t = useT();
   const { on, emit } = useSocket();
   const { gameState, updateGame, resetGame } = useGame();
   const { wallet } = useWallet();
@@ -871,7 +873,7 @@ export default function GamePlay() {
             )}
 
             <div className="flex gap-2 mt-4">
-              <button onClick={() => nav("/arena")} className="flex-1 py-2.5 rounded-xl bg-violet-500/[0.06] border border-violet-500/15 hover:bg-violet-500/[0.1] transition text-xs text-white/60">Arena</button>
+              <button onClick={() => nav("/arena")} className="flex-1 py-2.5 rounded-xl bg-violet-500/[0.06] border border-violet-500/15 hover:bg-violet-500/[0.1] transition text-xs text-white/60">{t("result.confirm")}</button>
               <button onClick={handleShareToX} className="flex-1 btn-primary !py-2.5 font-black !text-sm">Share to 𝕏</button>
             </div>
           </div>

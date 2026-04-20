@@ -11,18 +11,18 @@ export function Header(){
   const goDashboard=()=>{if(wallet)nav("/arena");else nav("/login?next=/arena")};
   const goGetStarted=()=>nav("/login?next=/arena");
   return(
-    <header className="sticky top-0 z-50 bg-[#081432]/[0.01] backdrop-blur-2xl border-b border-white/[0.06]">
-      <div className="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+    <header className="sticky top-0 z-50 bg-[#081432]/[0.01] backdrop-blur-2xl border-b border-white/[0.06]" style={{paddingTop:"var(--safe-top)"}}>
+      <div className="max-w-7xl mx-auto px-3 sm:px-6 py-3 flex items-center justify-between gap-2">
         {/* Left: Logo + primary nav (matches Landing order) */}
-        <div className="flex items-center gap-6">
-          <button onClick={()=>nav("/")} className="hover:opacity-80 transition">
+        <div className="flex items-center gap-2 sm:gap-6 min-w-0">
+          <button onClick={()=>nav("/")} className="hover:opacity-80 transition shrink-0">
             <span className="font-black text-sm tracking-tight">ALPHA<span className="text-gradient">MATCH</span></span>
           </button>
-          <button onClick={()=>nav("/how-to-play")} className={`text-xs px-4 py-1.5 rounded-lg transition font-semibold ${loc.pathname==="/how-to-play"?"bg-gradient-to-r from-indigo-500 via-violet-500 to-blue-500 text-white shadow-lg shadow-violet-500/25":"text-white/40 hover:text-white/60 hover:bg-white/[0.06]"}`}>{t("nav.howToPlay")}</button>
-          <button onClick={goDashboard} className={`text-xs px-4 py-1.5 rounded-lg transition font-semibold ${loc.pathname==="/arena"?"bg-gradient-to-r from-indigo-500 via-violet-500 to-blue-500 text-white shadow-lg shadow-violet-500/25":"text-white/40 hover:text-white/60 hover:bg-white/[0.06]"}`}>{t("nav.dashboard")}</button>
+          <button onClick={()=>nav("/how-to-play")} className={`text-xs px-2.5 sm:px-4 py-1.5 rounded-lg transition font-semibold whitespace-nowrap ${loc.pathname==="/how-to-play"?"bg-gradient-to-r from-indigo-500 via-violet-500 to-blue-500 text-white shadow-lg shadow-violet-500/25":"text-white/40 hover:text-white/60 hover:bg-white/[0.06]"}`}>{t("nav.howToPlay")}</button>
+          <button onClick={goDashboard} className={`text-xs px-2.5 sm:px-4 py-1.5 rounded-lg transition font-semibold whitespace-nowrap ${loc.pathname==="/arena"?"bg-gradient-to-r from-indigo-500 via-violet-500 to-blue-500 text-white shadow-lg shadow-violet-500/25":"text-white/40 hover:text-white/60 hover:bg-white/[0.06]"}`}>{t("nav.dashboard")}</button>
         </div>
         {/* Right: chain switch + wallet action */}
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 shrink-0">
           <NavActions/>
           {wallet&&!mockMode&&!chainOk&&(
             <button onClick={()=>switchChain()} className="text-xs px-4 py-1.5 rounded-lg transition font-semibold bg-rose-500/10 border border-rose-500/20 text-rose-300 hover:bg-rose-500/15">
@@ -39,8 +39,8 @@ export function Header(){
                     <path d="M5 21c0-3.6 3.1-6.2 7-6.2s7 2.6 7 6.2" fill="rgba(255,255,255,0.95)"/>
                   </svg>
                 </span>
-                {mockMode&&<span className="text-[9px] bg-violet-500/10 border border-violet-500/20 text-violet-300 px-1.5 py-0.5 rounded-full font-mono font-bold">{balance}</span>}
-                <span className="font-mono">{short}</span>
+                {mockMode&&<span className="hidden sm:inline text-[9px] bg-violet-500/10 border border-violet-500/20 text-violet-300 px-1.5 py-0.5 rounded-full font-mono font-bold">{balance}</span>}
+                <span className="font-mono hidden sm:inline">{short}</span>
                 <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="opacity-40"><polyline points="6 9 12 15 18 9"/></svg>
               </button>
             ):(

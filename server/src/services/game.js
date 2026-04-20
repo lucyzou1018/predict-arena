@@ -379,7 +379,7 @@ class GameService {
       players: resolvedPlayers,
       predictions: {},
       predictionIntents: {},
-      basePrice: info.basePrice || priceService.getPrice() || 0,
+      basePrice: info.basePrice ? Number(info.basePrice) / 100 : (priceService.getPrice() || 0),
       phase: "predicting",
       startedAt,
       predictionDeadline: Number(predictionDeadline),
