@@ -24,7 +24,7 @@ export default function WalletMenu() {
         <div className="text-[10px] text-white/30 mb-1">{walletName || "Wallet"}</div>
         <div className="text-xs font-mono text-white/60">{short}</div>
         {mockMode && (
-          <div className="mt-1.5 text-[10px] text-amber-400/70">
+          <div className="mt-1.5 text-[10px] text-violet-300/80">
             Balance: <span className="font-mono font-bold">{balance} USDC</span>
           </div>
         )}

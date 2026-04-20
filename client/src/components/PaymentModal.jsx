@@ -20,6 +20,7 @@ export function PaymentModal({
   preparingMessage=null,
   preparingPrimaryLabel="Match Locked",
   preparingSecondaryLabel="Preparing...",
+  singleAction=false,
 }){
   if(!visible)return null;
   const isWaiting=mode==="waiting";
@@ -27,13 +28,13 @@ export function PaymentModal({
   const remainingPlayers=Math.max(0,totalCount-paidCount);
   const progressPct=totalCount?Math.min(100,Math.round((paidCount/totalCount)*100)):0;
   return<div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-xl">
-    <div className={`max-w-sm w-full max-h-[calc(100vh-2rem)] overflow-y-auto overscroll-contain animate-slideUp rounded-2xl border shadow-2xl p-6 ${isWaiting?"border-emerald-500/20 bg-gradient-to-br from-[#102016] via-[#131a14] to-[#0f130f] shadow-emerald-950/30":"border-amber-500/20 bg-gradient-to-br from-[#22160f] via-[#17110d] to-[#120d0a] shadow-orange-900/20"}`}>
+    <div className={`max-w-sm w-full max-h-[calc(100vh-2rem)] overflow-y-auto overscroll-contain animate-slideUp rounded-2xl border shadow-2xl p-6 ${isWaiting?"border-emerald-500/20 bg-gradient-to-br from-[#102016] via-[#131a14] to-[#0f130f] shadow-emerald-950/30":"border-violet-500/20 bg-gradient-to-br from-[#14112a] via-[#100d22] to-[#0c0a1d] shadow-violet-900/20"}`}>
       <div className="text-center mb-4">
-        <div className={`w-14 h-14 mx-auto mb-3 rounded-2xl border flex items-center justify-center text-2xl ${isWaiting?"bg-gradient-to-br from-emerald-500/15 to-teal-500/15 border-emerald-500/20":"bg-gradient-to-br from-amber-500/15 to-orange-500/15 border-orange-500/15 animate-float"}`}>{isWaiting?"✅":isPreparing?"⚔️":"💰"}</div>
+        <div className={`w-14 h-14 mx-auto mb-3 rounded-2xl border flex items-center justify-center text-2xl ${isWaiting?"bg-gradient-to-br from-emerald-500/15 to-teal-500/15 border-emerald-500/20":"bg-gradient-to-br from-indigo-500/15 to-violet-500/15 border-violet-500/20 animate-float"}`}>{isWaiting?"✅":isPreparing?"⚔️":"💰"}</div>
         <h3 className="text-lg font-black">{title}</h3>
         <p className="text-white/35 text-xs mt-1">{subtitle}</p>
       </div>
-      {amount&&<div className={`border rounded-xl p-4 mb-3 text-center ${isWaiting?"bg-gradient-to-br from-emerald-500/[0.08] to-teal-500/[0.05] border-emerald-500/20":"bg-gradient-to-br from-amber-500/[0.08] to-orange-500/[0.06] border-amber-500/20"}`}>
+      {amount&&<div className={`border rounded-xl p-4 mb-3 text-center ${isWaiting?"bg-gradient-to-br from-emerald-500/[0.08] to-teal-500/[0.05] border-emerald-500/20":"bg-gradient-to-br from-indigo-500/[0.1] to-violet-500/[0.08] border-violet-500/20"}`}>
         <div className="text-3xl font-black text-gradient">{amount}</div>
         <p className="text-white/20 text-[10px] mt-1">{amountCaption||(
           isWaiting
@@ -49,32 +50,34 @@ export function PaymentModal({
           <span>{paidCount}/{totalCount} paid</span>
         </div>
         <div className="h-2 rounded-full bg-black/20 overflow-hidden mb-2">
-          <div className={`h-full rounded-full transition-all duration-500 ${isWaiting?"bg-gradient-to-r from-emerald-400 to-teal-400":"bg-gradient-to-r from-amber-400 to-orange-500"}`} style={{width:`${progressPct}%`}}/>
+          <div className={`h-full rounded-full transition-all duration-500 ${isWaiting?"bg-gradient-to-r from-emerald-400 to-teal-400":"bg-gradient-to-r from-indigo-400 via-violet-400 to-blue-400"}`} style={{width:`${progressPct}%`}}/>
         </div>
         {isWaiting&&<p className="text-[11px] text-emerald-200/80">{remainingPlayers>0?`Waiting for ${remainingPlayers} more ${remainingPlayers===1?"player":"players"} to confirm.`:"All players paid. Starting match..."}</p>}
       </div>}
-      {isPreparing&&<div className="mb-4 rounded-xl border border-amber-500/15 bg-white/[0.03] px-4 py-3">
+      {isPreparing&&<div className="mb-4 rounded-xl border border-violet-500/15 bg-white/[0.03] px-4 py-3">
         <div className="flex items-center gap-3">
-          <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse"/>
+          <span className="w-2.5 h-2.5 rounded-full bg-violet-400 animate-pulse"/>
           <div className="min-w-0">
-            <p className="text-[11px] font-bold text-amber-200/90">{preparingTitle||"Preparing on-chain payment step"}</p>
+            <p className="text-[11px] font-bold text-violet-200/90">{preparingTitle||"Preparing on-chain payment step"}</p>
             <p className="text-[10px] text-white/30 mt-1">{preparingMessage||"The `Pay 1 USDC` action will appear automatically in this dialog."}</p>
           </div>
         </div>
       </div>}
       {countdown!==null&&countdown>0&&<div className="text-center mb-3">
-        <div className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl border ${countdown<=10?"bg-rose-500/10 border-rose-500/20":"bg-amber-500/10 border-amber-500/20"}`}>
+        <div className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl border ${countdown<=10?"bg-rose-500/10 border-rose-500/20":"bg-violet-500/10 border-violet-500/20"}`}>
           <span className="text-lg">⏱️</span>
-          <span className={`text-xl font-mono font-black ${countdown<=10?"text-rose-400":"text-amber-400"}`}>{countdown}s</span>
+          <span className={`text-xl font-mono font-black ${countdown<=10?"text-rose-400":"text-violet-300"}`}>{countdown}s</span>
         </div>
         {countdownLabel&&<p className="text-[10px] text-white/25 mt-2">{countdownLabel}</p>}
       </div>}
-      {notice&&<div className="mb-3 rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200">{notice}</div>}
+      {notice&&<div className="mb-3 rounded-xl border border-violet-500/20 bg-violet-500/10 px-3 py-2 text-[11px] text-violet-200">{notice}</div>}
       {error&&<div className="mb-3 rounded-xl border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-[11px] text-rose-300">{error}</div>}
       {hint&&<p className="text-white/25 text-[11px] text-center mb-4">{hint}</p>}
-      {isPreparing?(
+      {singleAction?(
+        <button onClick={onConfirm} disabled={loading} className="w-full btn-primary !py-2.5 !text-sm">{loading?"Processing...":actionLabel}</button>
+      ):isPreparing?(
         <div className="grid grid-cols-2 gap-2">
-          <button disabled className="py-2.5 rounded-xl bg-amber-500/15 border border-amber-500/20 text-amber-300 text-xs font-bold">{preparingPrimaryLabel}</button>
+          <button disabled className="py-2.5 rounded-xl bg-violet-500/15 border border-violet-500/20 text-violet-300 text-xs font-bold">{preparingPrimaryLabel}</button>
           <button disabled className="py-2.5 rounded-xl bg-white/[0.03] border border-white/[0.08] text-white/45 text-xs font-bold">{preparingSecondaryLabel}</button>
         </div>
       ):isWaiting?(

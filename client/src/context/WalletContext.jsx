@@ -157,7 +157,7 @@ export function WalletProvider({children}){
       // Step 2: Sign message to verify ownership
       setConnectStep("signing");
       const nonce=Math.floor(Math.random()*1000000);
-      const message=`Welcome to PredictArena!\n\nPlease sign this message to verify your wallet ownership.\n\nWallet: ${accounts[0]}\nNonce: ${nonce}`;
+      const message=`Welcome to AlphaMatch!\n\nPlease sign this message to verify your wallet ownership.\n\nWallet: ${accounts[0]}\nNonce: ${nonce}`;
       await s.signMessage(message);
 
       // Step 3: Success

@@ -2,7 +2,7 @@ import { useCallback, useState } from "react";
 import { ethers } from "ethers";
 import { useWallet } from "../context/WalletContext";
 import { ARENA_ABI, ERC20_ABI, CONTRACT_ADDRESS, USDC_ADDRESS, GAME_STATE } from "../config/contract";
-import { ENTRY_FEE, LOCAL_CHAIN_MOCK } from "../config/constants";
+import { ENTRY_FEE, LOCAL_CHAIN_MOCK, SERVER_URL } from "../config/constants";
 
 function mapContractError(err) {
   const code = err?.code || err?.info?.error?.code;
@@ -40,6 +40,15 @@ function mapContractError(err) {
   }
   if (reason.includes("payment not open")) {
     return "This room is not ready for payment yet. Refresh the page and try again.";
+  }
+  if (reason.includes("invalid start auth") || reason.includes("start authorization expired")) {
+    return "Start authorization expired. Please try again.";
+  }
+  if (reason.includes("invalid settlement auth") || reason.includes("settlement authorization expired")) {
+    return "Settlement authorization expired. Please try again.";
+  }
+  if (reason.includes("payment window still active")) {
+    return "Refund is not available yet. Please wait for the payment timeout.";
   }
   if (reason.includes("prediction window closed")) {
     return "Prediction window closed. Please choose earlier next round.";
@@ -112,6 +121,12 @@ async function waitForInviteCodeGameId(arena, inviteCode, retries = 8, delayMs =
   return finalGameId > 0n ? Number(finalGameId) : null;
 }
 
+async function fetchClaimStatus(chainGameId, wallet) {
+  const response = await fetch(`${SERVER_URL}/api/claims/${chainGameId}/${wallet}`);
+  if (!response.ok) return null;
+  return response.json();
+}
+
 export function useContract() {
   const { signer, wallet, mockMode, chainOk, switchChain, setBalance } = useWallet();
   const [loading, setLoading] = useState(false);
@@ -156,15 +171,16 @@ export function useContract() {
     const allowance = await token.allowance(wallet, CONTRACT_ADDRESS);
 
     if (allowance < amount) {
-      await (await token.approve(CONTRACT_ADDRESS, ethers.MaxUint256)).wait();
+      // 精确授权本次所需金额，而不是 MaxUint256。这样钱包弹窗会显示具体 USDC 数量，用户能看清楚。
+      await (await token.approve(CONTRACT_ADDRESS, amount)).wait();
       const refreshedAllowance = await waitForAllowance(token, wallet, CONTRACT_ADDRESS, amount);
       if (refreshedAllowance < amount) {
         throw new Error("Token approval has not finished syncing yet. Please wait a moment and try again.");
       }
-      return { approvedOnly: true, resolvedUsdc };
+      return { resolvedUsdc };
     }
 
-    return { approvedOnly: false, resolvedUsdc };
+    return { resolvedUsdc };
   }, [getArena, signer, wallet]);
 
   const payForGame = useCallback(async (gameId) => {
@@ -194,13 +210,10 @@ export function useContract() {
         if (snapshotAmount > 0) amount = snapshotAmount;
       } catch {}
 
-      const { approvedOnly } = await ensureTokenApproval(amount);
-      if (approvedOnly) {
-        return { approved: true, paid: false };
-      }
+      await ensureTokenApproval(amount);
 
       await (await arena.payForGame(gameId)).wait();
-      return { approved: allowance >= amount, paid: true };
+      return { approved: true, paid: true };
     } catch (err) {
       throw new Error(mapContractError(err));
     } finally {
@@ -243,10 +256,7 @@ export function useContract() {
         }
       } catch {}
 
-      const { approvedOnly } = await ensureTokenApproval(amount);
-      if (approvedOnly) {
-        return { approved: true, paid: false, chainGameId: existingGameId || null };
-      }
+      await ensureTokenApproval(amount);
 
       if (isOwner) {
         if (!authMaxPlayers) throw new Error("Missing room size");
@@ -275,14 +285,21 @@ export function useContract() {
 
     setClaiming(true);
     try {
-      await (await arena.claimReward(gameId)).wait();
+      const status = await fetchClaimStatus(gameId, wallet);
+      if (!status?.canClaimReward) throw new Error("No reward is available for this round.");
+      await (await arena["claimReward(uint256,uint8,uint256,bytes32[])"](
+        gameId,
+        Number(status.predictionValue || 0),
+        BigInt(status.rewardRaw || 0),
+        Array.isArray(status.proof) ? status.proof : [],
+      )).wait();
       return true;
     } catch (err) {
       throw new Error(mapContractError(err));
     } finally {
       setClaiming(false);
     }
-  }, [ensureWalletReady, getArena, shouldUseMockPayment]);
+  }, [ensureWalletReady, getArena, shouldUseMockPayment, wallet]);
 
   const getPlayerState = useCallback(async (gameId, targetWallet = wallet) => {
     if (!gameId || !targetWallet) return null;
@@ -305,71 +322,61 @@ export function useContract() {
     return Number(deadline);
   }, [getArena]);
 
+  const startSignedGame = useCallback(async (gameId, basePrice, auth) => {
+    if (!gameId || !auth?.signature || !auth?.validUntil) throw new Error("Start authorization unavailable");
+    if (shouldUseMockPayment) return true;
+
+    await ensureWalletReady();
+
+    const arena = getArena();
+    if (!arena) throw new Error("Wallet not connected");
+
+    setLoading(true);
+    try {
+      await (await arena.startGameWithAuth(gameId, basePrice, auth.validUntil, auth.signature)).wait();
+      return true;
+    } catch (err) {
+      throw new Error(mapContractError(err));
+    } finally {
+      setLoading(false);
+    }
+  }, [ensureWalletReady, getArena, shouldUseMockPayment]);
+
+  const settleSignedGame = useCallback(async (gameId, settlementPrice, auth, predictionIntents = []) => {
+    if (!gameId || !auth?.signature || !auth?.validUntil || !auth?.resultRoot || auth?.totalPayout === undefined || auth?.totalPayout === null) throw new Error("Settlement authorization unavailable");
+    if (shouldUseMockPayment) return true;
+
+    await ensureWalletReady();
+
+    const arena = getArena();
+    if (!arena) throw new Error("Wallet not connected");
+
+    setLoading(true);
+    try {
+      await (await arena.settleGameWithAuth(
+        gameId,
+        settlementPrice,
+        auth.resultRoot,
+        auth.totalPayout,
+        auth.validUntil,
+        auth.signature,
+      )).wait();
+      return true;
+    } catch (err) {
+      throw new Error(mapContractError(err));
+    } finally {
+      setLoading(false);
+    }
+  }, [ensureWalletReady, getArena, shouldUseMockPayment]);
+
   const getGameClaimStatus = useCallback(async (gameId, targetWallet = wallet) => {
     if (!gameId || !targetWallet) return null;
-    const reader = getArena();
-    if (!reader) return null;
-
     try {
-      const [gameInfo, playerStateRaw, deadlineRaw] = await Promise.all([
-        reader.getGameInfo(gameId),
-        reader.getPlayerPrediction(gameId, targetWallet),
-        reader.predictionDeadline(gameId),
-      ]);
-
-      let refundSupport = false;
-      let refundGraceRaw = 0n;
-      let entryFeeRaw = ethers.parseUnits(ENTRY_FEE.toString(), 6);
-
-      try {
-        [refundGraceRaw, entryFeeRaw] = await Promise.all([
-          reader.refundGracePeriod(),
-          reader.gameEntryFee(gameId),
-        ]);
-        refundSupport = true;
-      } catch {
-        refundSupport = false;
-      }
-
-      const state = Number(gameInfo[2]);
-      const prediction = Number(playerStateRaw[0]);
-      const hasPaid = !!playerStateRaw[1];
-      const rewardRaw = Number(playerStateRaw[2]);
-      const claimed = !!playerStateRaw[3];
-      const predictionDeadline = Number(deadlineRaw);
-      const refundGracePeriod = Number(refundGraceRaw);
-      const refundUnlockAt = predictionDeadline > 0 ? predictionDeadline + refundGracePeriod : null;
-      const entryFeeRawNumber = Number(entryFeeRaw);
-      const now = Math.floor(Date.now() / 1000);
-      const overdue = !!refundUnlockAt && now > refundUnlockAt;
-      const canForceRefund = refundSupport && state === GAME_STATE.ACTIVE && hasPaid && !claimed && overdue;
-      const canClaimRefund = refundSupport && state === GAME_STATE.REFUNDABLE && hasPaid && !claimed;
-      const canClaimReward = state === GAME_STATE.SETTLED && rewardRaw > 0 && !claimed;
-      const action = canClaimRefund || canForceRefund ? "refund" : canClaimReward ? "reward" : null;
-
-      return {
-        action,
-        canClaimRefund,
-        canClaimReward,
-        canForceRefund,
-        claimed,
-        entryFee: entryFeeRawNumber / 1_000_000,
-        entryFeeRaw: entryFeeRawNumber,
-        hasPaid,
-        overdue,
-        prediction,
-        predictionDeadline,
-        refundGracePeriod,
-        refundSupport,
-        refundUnlockAt,
-        reward: rewardRaw / 1_000_000,
-        rewardRaw,
-        state,
-      };
+      return await fetchClaimStatus(gameId, targetWallet);
     } catch {
       return null;
     }
-  }, [getArena, wallet]);
+  }, [wallet]);
 
   const claimGameFunds = useCallback(async (gameId, targetWallet = wallet) => {
     if (!gameId) throw new Error("Missing game id");
@@ -386,12 +393,21 @@ export function useContract() {
       if (!status) throw new Error("Payout status unavailable. Refresh and try again.");
 
       if (status.canClaimReward) {
-        await (await arena.claimReward(gameId)).wait();
+        const rewardRaw = BigInt(status.rewardRaw || 0);
+        const predictionValue = Number(status.predictionValue || 0);
+        const proof = Array.isArray(status.proof) ? status.proof : [];
+        await (await arena["claimReward(uint256,uint8,uint256,bytes32[])"](gameId, predictionValue, rewardRaw, proof)).wait();
         return { type: "reward" };
       }
 
       if (status.canForceRefund) {
         await (await arena.forceRefund(gameId)).wait();
+        await (await arena.claimRefund(gameId)).wait();
+        return { type: "refund" };
+      }
+
+      if (status.canCancelExpired) {
+        await (await arena.cancelExpiredGame(gameId)).wait();
         await (await arena.claimRefund(gameId)).wait();
         return { type: "refund" };
       }
@@ -413,12 +429,9 @@ export function useContract() {
 
   const submitPrediction = useCallback(async (gameId, prediction, deadlineOverride = null) => {
     if (!gameId) throw new Error("Missing game id");
-    if (shouldUseMockPayment) return { deadline: null, hash: null };
+    if (shouldUseMockPayment) return { deadline: null, signature: null };
 
     await ensureWalletReady();
-
-    const arena = getArena();
-    if (!arena) throw new Error("Wallet not connected");
 
     const predictionValue = prediction === "up" ? 1 : prediction === "down" ? 2 : 0;
     if (!predictionValue) throw new Error("Invalid prediction");
@@ -429,15 +442,36 @@ export function useContract() {
       if (!deadline) throw new Error("Prediction deadline unavailable");
       const now = Math.floor(Date.now() / 1000);
       if (now > deadline) throw new Error("Prediction window closed. Please choose earlier next round.");
-      const tx = await arena.predict(gameId, predictionValue);
-      await tx.wait();
-      return { deadline, hash: tx.hash };
+      const network = await signer.provider.getNetwork();
+      const signature = await signer.signTypedData(
+        {
+          name: "BtcPredictArena",
+          version: "1",
+          chainId: Number(network.chainId),
+          verifyingContract: CONTRACT_ADDRESS,
+        },
+        {
+          PredictionIntent: [
+            { name: "gameId", type: "uint256" },
+            { name: "player", type: "address" },
+            { name: "prediction", type: "uint8" },
+            { name: "deadline", type: "uint256" },
+          ],
+        },
+        {
+          gameId: Number(gameId),
+          player: wallet,
+          prediction: predictionValue,
+          deadline: Number(deadline),
+        },
+      );
+      return { deadline, signature };
     } catch (err) {
       throw new Error(mapContractError(err));
     } finally {
       setPredicting(false);
     }
-  }, [ensureWalletReady, getArena, getPredictionDeadline, shouldUseMockPayment]);
+  }, [ensureWalletReady, getPredictionDeadline, shouldUseMockPayment, signer, wallet]);
 
   return {
     payForGame,
@@ -447,6 +481,8 @@ export function useContract() {
     getPlayerState,
     getPredictionDeadline,
     getGameClaimStatus,
+    startSignedGame,
+    settleSignedGame,
     submitPrediction,
     loading,
     claiming,

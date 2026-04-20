@@ -12,7 +12,7 @@ import gameRoutes from "./routes/game.js";
 async function main() {
   await initDB();
   await gameService.recoverInterruptedGames();
-  contractService.init();
+  await contractService.init();
   priceService.start();
   const app = express();
   app.use(cors({ origin: config.client.url }));
@@ -24,4 +24,6 @@ async function main() {
   initSocket(server);
   server.listen(config.port, () => console.log(`[Server] Running on port ${config.port}`));
 }
+process.on("unhandledRejection", (err) => console.error("[Process] unhandled rejection:", err?.message || err));
+process.on("uncaughtException", (err) => console.error("[Process] uncaught exception:", err?.message || err));
 main().catch(console.error);

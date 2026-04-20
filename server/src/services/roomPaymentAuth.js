@@ -1,5 +1,6 @@
 import { ethers } from "ethers";
 import contractService from "./contract.js";
+import config from "../config/index.js";
 
 const ROOM_PAYMENT_AUTH_TYPES = {
   RoomPaymentAuth: [
@@ -12,7 +13,9 @@ const ROOM_PAYMENT_AUTH_TYPES = {
   ],
 };
 
-const ROOM_PAYMENT_AUTH_WINDOW_SEC = parseInt(process.env.ROOM_PAYMENT_AUTH_WINDOW_SEC || "900", 10);
+// 合约端的 deadline 必须紧贴支付窗口，否则超时后仍能上链。
+// 预留 15s 缓冲用于 RPC 广播/打包的传播时间。
+const ROOM_PAYMENT_AUTH_BUFFER_SEC = parseInt(process.env.ROOM_PAYMENT_AUTH_BUFFER_SEC || "15", 10);
 
 const normalizeWallet = (wallet = "") => wallet.toLowerCase();
 
@@ -22,15 +25,20 @@ const hashPlayers = (players) => {
 };
 
 class RoomPaymentAuthService {
-  async build({ inviteCode, maxPlayers, roomOwner, player, players }) {
-    if (!contractService?.baseSigner || !contractService?.chainId || !contractService?.contract) {
+  async build({ inviteCode, maxPlayers, roomOwner, player, players, paymentStartedAt }) {
+    if (!contractService?.authSigner || !contractService?.chainId || !contractService?.contract) {
       throw new Error("Room payment auth unavailable");
     }
 
     const normalizedPlayers = (players || []).map((wallet) => normalizeWallet(wallet));
     const normalizedPlayer = normalizeWallet(player);
     const normalizedOwner = normalizeWallet(roomOwner);
-    const deadline = Math.floor(Date.now() / 1000) + ROOM_PAYMENT_AUTH_WINDOW_SEC;
+    // deadline 以支付窗口开始时间为基准，保证所有重签的 auth 都指向同一个真实截止时间，
+    // 避免超时后重新构造 auth 又延长了链上有效期。
+    const startedAtMs = Number.isFinite(paymentStartedAt) ? paymentStartedAt : Date.now();
+    const deadline = Math.floor(startedAtMs / 1000)
+      + Math.ceil(config.game.paymentTimeout / 1000)
+      + ROOM_PAYMENT_AUTH_BUFFER_SEC;
 
     const payload = {
       inviteCodeHash: ethers.keccak256(ethers.toUtf8Bytes(inviteCode)),
@@ -41,7 +49,7 @@ class RoomPaymentAuthService {
       deadline,
     };
 
-    const signature = await contractService.baseSigner.signTypedData(
+    const signature = await contractService.authSigner.signTypedData(
       {
         name: "BtcPredictArena",
         version: "1",

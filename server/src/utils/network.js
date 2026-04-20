@@ -31,43 +31,28 @@ const headersToObject = (headers) => {
 
 const createRpcFetchRequest = (url) => {
   const request = new FetchRequest(url);
-  if (!proxyAgent) return request;
-
-  request.getUrlFunc = async (req, signal) => {
+  request.timeout = parseInt(process.env.RPC_REQUEST_TIMEOUT_MS || "20000", 10);
+  request.getUrlFunc = async (req) => {
     const controller = new AbortController();
-    const timeoutMs = req.timeout || 300000;
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
-
-    if (signal) {
-      signal.addListener(() => controller.abort());
-    }
-
+    const timer = setTimeout(() => controller.abort(), req.timeout);
     try {
-      const response = await fetch(req.url, {
+      const response = await fetch(req.url, buildFetchOptions({
         method: req.method,
         headers: req.headers,
         body: req.body ? Buffer.from(req.body) : undefined,
-        agent: proxyAgent,
         signal: controller.signal,
-      });
+      }));
+      const arrayBuffer = await response.arrayBuffer();
       return {
         statusCode: response.status,
         statusMessage: response.statusText,
         headers: headersToObject(response.headers),
-        body: response.status === 204 ? null : new Uint8Array(await response.arrayBuffer()),
+        body: new Uint8Array(arrayBuffer),
       };
-    } catch (error) {
-      if (error?.name === "AbortError") {
-        const timeoutError = new Error("request timeout");
-        timeoutError.code = signal?.cancelled ? "CANCELLED" : "TIMEOUT";
-        throw timeoutError;
-      }
-      throw error;
     } finally {
-      clearTimeout(timeout);
+      clearTimeout(timer);
     }
   };
-
   return request;
 };
 

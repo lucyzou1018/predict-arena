@@ -6,6 +6,7 @@ import roomService from "../services/room.js";
 import gameService from "../services/game.js";
 import contractService from "../services/contract.js";
 import roomPaymentAuthService from "../services/roomPaymentAuth.js";
+import { buildSettlementProof, buildSettlementTree } from "../utils/settlementMerkle.js";
 const router = Router();
 const norm = (wallet = "") => wallet.toLowerCase();
 
@@ -16,6 +17,106 @@ router.get("/games/:id", async (req, res) => {
   if (!g.rows[0]) return res.status(404).json({ error: "Not found" });
   const p = await query("SELECT wallet_address,prediction,is_correct,reward FROM game_players WHERE game_id=$1", [req.params.id]);
   res.json({ game: g.rows[0], players: p.rows });
+});
+
+router.get("/claims/:chainGameId/:wallet", async (req, res) => {
+  const chainGameId = Number(req.params.chainGameId);
+  const wallet = norm(req.params.wallet);
+  if (!chainGameId || !wallet) return res.status(400).json({ error: "Invalid request" });
+
+  const result = await query(
+    `SELECT g.id, g.chain_game_id, g.state AS db_state, g.base_price, g.settlement_price,
+            gp.wallet_address, gp.prediction, gp.reward, gp.paid
+     FROM games g
+     JOIN game_players gp ON gp.game_id = g.id
+     WHERE g.chain_game_id = $1
+       AND LOWER(gp.wallet_address) = LOWER($2)
+     ORDER BY g.created_at DESC
+     LIMIT 1`,
+    [chainGameId, wallet],
+  );
+  const row = result.rows[0];
+  if (!row) return res.status(404).json({ error: "Not found" });
+
+  let gameInfo = null;
+  let paymentDeadline = null;
+  let predictionDeadline = null;
+  let refundGracePeriod = 300;
+  let claimed = false;
+  let hasPaidOnchain = !!row.paid;
+
+  try {
+    gameInfo = await contractService.getGameInfo(chainGameId);
+    paymentDeadline = await contractService.getPaymentDeadline(chainGameId);
+    predictionDeadline = await contractService.getPredictionDeadline(chainGameId);
+    const onchainPlayer = await contractService.getPlayerPrediction(chainGameId, wallet);
+    claimed = !!onchainPlayer?.claimed;
+    hasPaidOnchain = !!onchainPlayer?.hasPaid;
+  } catch (_) {}
+
+  const state = Number(gameInfo?.state ?? (
+    row.db_state === "payment" ? 1
+      : row.db_state === "active" ? 2
+      : row.db_state === "settled" ? 3
+      : row.db_state === "cancelled" ? 4
+      : row.db_state === "refundable" ? 5
+      : 0
+  ));
+  const reward = Number(row.reward || 0);
+  const rewardRaw = Math.max(0, Math.round(reward * 1_000_000));
+  const predictionValue = row.prediction === "up" ? 1 : row.prediction === "down" ? 2 : 0;
+  const now = Math.floor(Date.now() / 1000);
+  const refundUnlockAt = predictionDeadline ? predictionDeadline + refundGracePeriod : null;
+  const overdue = !!refundUnlockAt && now > refundUnlockAt;
+  const paymentExpired = !!paymentDeadline && now > paymentDeadline;
+  const canClaimReward = state === 3 && rewardRaw > 0 && !claimed;
+  const canForceRefund = state === 2 && hasPaidOnchain && !claimed && overdue;
+  const canClaimRefund = state === 5 && hasPaidOnchain && !claimed;
+  const canCancelExpired = state === 1 && hasPaidOnchain && !claimed && paymentExpired;
+
+  let proof = [];
+  if (canClaimReward) {
+    const allPlayers = await query(
+      `SELECT wallet_address, prediction, reward
+       FROM game_players
+       WHERE game_id = $1
+       ORDER BY LOWER(wallet_address) ASC`,
+      [row.id],
+    );
+    const tree = buildSettlementTree(
+      chainGameId,
+      allPlayers.rows.map((player) => ({
+        wallet: player.wallet_address,
+        prediction: player.prediction,
+        rewardRaw: BigInt(Math.max(0, Math.round(Number(player.reward || 0) * 1_000_000))),
+      })),
+    );
+    proof = buildSettlementProof(tree, wallet);
+  }
+
+  return res.json({
+    action: canClaimReward ? "reward" : (canClaimRefund || canForceRefund || canCancelExpired ? "refund" : null),
+    canCancelExpired,
+    canClaimRefund,
+    canClaimReward,
+    canForceRefund,
+    claimed,
+    entryFee: config.game.entryFee / 1_000_000,
+    entryFeeRaw: config.game.entryFee,
+    hasPaid: hasPaidOnchain,
+    overdue,
+    paymentDeadline,
+    paymentExpired,
+    prediction: row.prediction,
+    predictionValue,
+    proof,
+    refundGracePeriod,
+    refundSupport: true,
+    refundUnlockAt,
+    reward,
+    rewardRaw,
+    state,
+  });
 });
 
 router.get("/users/:wallet", async (req, res) => {
@@ -62,6 +163,7 @@ router.get("/users/:wallet/open-room", async (req, res) => {
           roomOwner: room.owner,
           player: wallet,
           players: room.players.map((p) => p.wallet),
+          paymentStartedAt: payment?.startedAt,
         }).catch(() => null)
       : null;
     const phase = payment ? (me?.paid ? "paid_waiting" : "payment") : "waiting";
@@ -136,8 +238,10 @@ router.get("/users/:wallet/open-room", async (req, res) => {
   );
   const row = r.rows[0];
   if (!row) return res.json({ room: null });
+  const paymentStartedAt = row.payment_started_at
+    ? new Date(row.payment_started_at).getTime()
+    : new Date(row.created_at).getTime();
   if (row.state === "payment") {
-    const paymentStartedAt = row.payment_started_at ? new Date(row.payment_started_at).getTime() : new Date(row.created_at).getTime();
     if (Date.now() - paymentStartedAt >= config.game.paymentTimeout) {
       await query(`UPDATE games SET state = 'failed' WHERE id = $1`, [row.id]);
       return res.json({ room: null });
@@ -150,6 +254,7 @@ router.get("/users/:wallet/open-room", async (req, res) => {
         roomOwner: row.owner_wallet,
         player: wallet,
         players: Array.isArray(row.players) ? row.players : [],
+        paymentStartedAt,
       }).catch(() => null)
     : null;
   const room = {

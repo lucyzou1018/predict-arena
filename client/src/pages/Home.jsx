@@ -1,4 +1,5 @@
 import{useState,useEffect,useCallback,useRef}from"react";
+import{createPortal}from"react-dom";
 import{useNavigate}from"react-router-dom";
 import{useWallet}from"../context/WalletContext";
 import{useSocket}from"../hooks/useSocket";
@@ -8,6 +9,7 @@ import{useContract}from"../hooks/useContract";
 import{useBtcPrice}from"../hooks/useBtcPrice";
 import{BtcTicker,TeamSlots,MatchAnimation,PaymentModal}from"../components";
 import{ENTRY_FEE,TEAM_SIZES,PAYMENT_TIMEOUT}from"../config/constants";
+import{useT}from"../context/LangContext";
 
 function formatPaymentUiError(message){
   const text=(message||"").toLowerCase();
@@ -75,26 +77,162 @@ function getHistoryResult(game){
 function getHistoryResultClass(result){
   if(result==="Win")return"text-emerald-400";
   if(result==="Lose")return"text-rose-400";
-  if(result==="Failed")return"text-amber-300";
-  if(result==="Expired")return"text-orange-400";
+  if(result==="Failed")return"text-violet-300";
+  if(result==="Expired")return"text-violet-300";
   if(result==="Cancelled")return"text-white/30";
-  if(result==="Waiting")return"text-amber-300";
+  if(result==="Waiting")return"text-violet-300";
   if(result==="Playing")return"text-sky-300";
-  if(result==="Refund Ready"||result==="Refunded")return"text-amber-300";
+  if(result==="Refund Ready"||result==="Refunded")return"text-violet-300";
   if(result==="Settled")return"text-emerald-300";
   return"text-white/35";
 }
 
+// Payout formula popover used next to Team Size selectors.
+// Lives at module scope so open-state is preserved across parent re-renders.
+function PayoutInfo(){
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState(null);
+  const btnRef = useRef(null);
+  const popRef = useRef(null);
+
+  const updatePos = () => {
+    if (!btnRef.current) return;
+    const r = btnRef.current.getBoundingClientRect();
+    const width = 288; // w-72
+    const left = Math.max(8, Math.min(r.left, window.innerWidth - width - 8));
+    setPos({ left, top: r.bottom + 8 });
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    updatePos();
+    const onDown = (e) => {
+      const inBtn = btnRef.current && btnRef.current.contains(e.target);
+      const inPop = popRef.current && popRef.current.contains(e.target);
+      if (!inBtn && !inPop) setOpen(false);
+    };
+    const onKey  = (e) => { if (e.key === "Escape") setOpen(false); };
+    const onScroll = () => updatePos();
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    window.addEventListener("scroll", onScroll, true);
+    window.addEventListener("resize", onScroll);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("resize", onScroll);
+    };
+  }, [open]);
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={() => setOpen(v => !v)}
+        onMouseEnter={() => setOpen(true)}
+        aria-label={t("home.payout.trigger")}
+        className="w-4 h-4 rounded-full border border-white/20 text-white/40 hover:text-white/70 hover:border-white/40 text-[9px] font-black leading-none inline-flex items-center justify-center transition"
+      >i</button>
+      {open && pos && createPortal(
+        <div
+          ref={popRef}
+          onMouseLeave={() => setOpen(false)}
+          className="w-72 p-3 rounded-xl border border-white/10 shadow-2xl"
+          style={{ position: "fixed", left: pos.left, top: pos.top, zIndex: 100, background: "linear-gradient(180deg,#15172c,#0d0e1c)" }}
+        >
+          <p className="text-[10px] uppercase tracking-[0.18em] text-white/40 mb-2">{t("home.payout.heading")}</p>
+          <div className="font-mono text-[11px] text-white/75 bg-white/[0.04] rounded-lg px-3 py-2 mb-2 leading-relaxed">
+            {t("home.payout.formula")}
+          </div>
+          <p className="text-[10px] text-white/40 leading-relaxed mb-3">{t("home.payout.legend")}</p>
+          <div className="pt-2 border-t border-white/[0.06]">
+            <p className="text-[10px] uppercase tracking-[0.18em] text-white/40 mb-1.5">{t("home.payout.exampleLabel")}</p>
+            <div className="font-mono text-[11px] text-emerald-300 mb-1.5">{t("home.payout.exampleCalc")}</div>
+            <p className="text-[10px] text-white/45 leading-relaxed">{t("home.payout.exampleNote")}</p>
+          </div>
+        </div>,
+        document.body
+      )}
+    </>
+  );
+}
+
+function SizeSelectorBase({selectedSize,onSelect,onAction,actionLabel,disabled,label}){
+  return (
+    <div>
+      <div className="flex items-center gap-2 mb-3">
+        <p className="text-white/30 text-[11px] font-medium">{label}</p>
+        <PayoutInfo/>
+      </div>
+      <div className="grid grid-cols-4 gap-2 mb-4">
+        {TEAM_SIZES.map(s=>(
+          <button key={s} onClick={()=>onSelect(s)} disabled={disabled}
+            className={`py-3 rounded-xl font-black text-base transition-all
+              ${selectedSize===s
+                ?"bg-gradient-to-br from-indigo-500 to-violet-600 text-white shadow-lg shadow-violet-500/25 -translate-y-0.5"
+                :"bg-white/[0.03] border border-white/[0.06] text-white/20 hover:bg-white/[0.06] hover:text-white/40"}
+              ${disabled?"!opacity-30 cursor-not-allowed":""}`}
+          >{s}P</button>
+        ))}
+      </div>
+      <button onClick={onAction} disabled={disabled} className={`btn-primary w-full py-3 font-bold text-sm ${disabled?"!opacity-30 cursor-not-allowed":""}`}>{actionLabel}</button>
+    </div>
+  );
+}
+
 export default function Home(){
   const nav=useNavigate();
+  const t=useT();
   const{wallet,provider,signer,connect,mockMode,refund,pendingAction,setPendingAction}=useWallet();
   const{emit,on}=useSocket();
   const{updateGame}=useGame();
   const{payForGame,payForRoomEntry,claimGameFunds,getGameClaimStatus,loading,claiming,mockPay,shouldUseMockPayment}=useContract();
   const price=useBtcPrice();
 
+  // i18n helpers for things computed outside the component
+  const translateHistoryResult=(g)=>{
+    const r=getHistoryResult(g);
+    const map={
+      "Win":"home.history.win",
+      "Lose":"home.history.lose",
+      "Failed":"home.history.failed",
+      "Expired":"home.history.expired",
+      "Cancelled":"home.history.cancelled",
+      "Waiting":"home.history.waitingState",
+      "Playing":"home.history.playingState",
+      "Refund Ready":"home.history.refundReady",
+      "Refunded":"home.history.refunded",
+      "Settled":"home.history.settled",
+    };
+    return map[r]?t(map[r]):r;
+  };
+  const translateHistoryLabel=(label,fallback)=>{
+    const map={
+      "Claim":"home.history.claim",
+      "Claimed":"home.history.claimed",
+      "Claim Reward":"home.history.claimReward",
+      "Claim Refund":"home.history.claimRefund",
+      "Refunded":"home.history.refunded",
+    };
+    return map[label]?t(map[label]):(label||fallback);
+  };
+  const translateUiError=(msg)=>{
+    const text=(msg||"").toLowerCase();
+    if(!text)return msg;
+    if(text.includes("request timeout")||text.includes("confirmation timed out")||text.includes("econnreset"))return t("home.err.rpcTimeout");
+    if(text.includes("on-chain payment not confirmed"))return t("home.err.paymentNotConfirmed");
+    if(text.includes("could not decode result data")||text.includes("bad data"))return t("home.err.configStale");
+    if(text.includes("allowance"))return t("home.err.allowancePending");
+    if(text.includes("room payment is still syncing on-chain")||text.includes("on-chain room payment is still syncing"))return t("home.err.roomSyncing");
+    return msg;
+  };
+
   const[history,setHistory]=useState([]);
   const[historyFilter,setHistoryFilter]=useState("all");
+  const[payoutRulesOpen,setPayoutRulesOpen]=useState(false);
   const[historyPage,setHistoryPage]=useState(1);
   const[stats,setStats]=useState(null);
   const[claimingHistoryId,setClaimingHistoryId]=useState(null);
@@ -114,6 +252,7 @@ export default function Home(){
   const[paymentProgress,setPaymentProgress]=useState({paidCount:0,total:0});
   const[paymentErr,setPaymentErr]=useState(null);
   const[paymentNotice,setPaymentNotice]=useState(null);
+  const[paymentFailureDialog,setPaymentFailureDialog]=useState(null);
   const[roomCode,setRoomCode]=useState("");
   const[openRoom,setOpenRoom]=useState(null);
   const[room,setRoom]=useState({current:0,total:0,players:[]});
@@ -159,6 +298,9 @@ export default function Home(){
   const roomCodeRef=useRef(roomCode); roomCodeRef.current=roomCode;
   const createCancelPendingRef=useRef(false);
   const createPhaseBeforeCancelRef=useRef("select");
+  const paymentResumeRequestAtRef=useRef(0);
+  const paymentStartedAtRef=useRef(null);
+  const paymentFailureDialogRef=useRef(null);
 
   const resetMatchState=useCallback((message=null,{cancelQueue=false}={})=>{
     if(cancelQueue)emit("match:cancel");
@@ -218,7 +360,8 @@ export default function Home(){
     }catch{}
   },[getGameClaimStatus]);
 
-  const handleRoomPaymentFailure=useCallback((reason="Payment timeout — team disbanded")=>{
+  const handleRoomPaymentFailure=useCallback((reason)=>{
+    reason = reason || t("home.err.timeoutTeam");
     const wasCreateFlow =
       createPhaseRef.current==="payment"||
       createPhaseRef.current==="paid_waiting"||
@@ -232,9 +375,12 @@ export default function Home(){
     if(createPaidRef.current){refund(ENTRY_FEE);setCreatePaid(false);}
     if(joinPaidRef.current){refund(ENTRY_FEE);setJoinPaid(false);}
     setPaymentStartedAt(null);
+    setPaymentCountdown(null);
     setRoomFullInfo(null);
     setPaymentNotice(null);
     setPaymentErr(null);
+    setPaymentFailureDialog(reason);
+    paymentFailureDialogRef.current=reason;
     setCreateHint(null);
     setCreatePhase("select");
     setJoinPhase("select");
@@ -311,6 +457,7 @@ export default function Home(){
 
   // Payment countdown timer (60s after room full)
   useEffect(()=>{
+    paymentStartedAtRef.current=paymentStartedAt;
     if(!paymentStartedAt){setPaymentCountdown(null);return;}
     const tick=()=>{
       const rem=Math.max(0,Math.ceil((paymentStartedAt+PAYMENT_TIMEOUT*1000-Date.now())/1000));
@@ -370,7 +517,7 @@ export default function Home(){
             setJoinPhase(d.room.phase);
             setJoinExpiresAt(null);
           } else if(isExpired){
-            setJoinErr("Room expired — team not filled in time");
+            setJoinErr(t("home.expiredMsg"));
             setJoinPhase("select");
           } else {
             setJoinExpiresAt(expiresAt);
@@ -443,9 +590,10 @@ export default function Home(){
           setCreatePhase(createPhaseBeforeCancelRef.current==="paid_waiting"?"paid_waiting":"waiting");
         }
         setCreateHint(null);
-        if(createPhaseRef.current==="creating"||createPhaseRef.current==="waiting"||createPhaseRef.current==="preparing"||createPhaseRef.current==="payment"||createPhaseRef.current==="paid_waiting") {setCreateErr(uiMsg);setPaymentErr(uiMsg);}
-        if(createPhaseRef.current==="dissolving") {setCreateErr(uiMsg);}
-        if(joinPhaseRef.current==="select"||joinPhaseRef.current==="waiting"||joinPhaseRef.current==="joining"||joinPhaseRef.current==="preparing"||joinPhaseRef.current==="payment"||joinPhaseRef.current==="paid_waiting") {setJoinErr(uiMsg);setPaymentErr(uiMsg);if(joinPhaseRef.current!=="payment"&&joinPhaseRef.current!=="paid_waiting")setJoinPhase("select");}
+        const tUiMsg=translateUiError(uiMsg);
+        if(createPhaseRef.current==="creating"||createPhaseRef.current==="waiting"||createPhaseRef.current==="preparing"||createPhaseRef.current==="payment"||createPhaseRef.current==="paid_waiting") {setCreateErr(tUiMsg);setPaymentErr(tUiMsg);}
+        if(createPhaseRef.current==="dissolving") {setCreateErr(tUiMsg);}
+        if(joinPhaseRef.current==="select"||joinPhaseRef.current==="waiting"||joinPhaseRef.current==="joining"||joinPhaseRef.current==="preparing"||joinPhaseRef.current==="payment"||joinPhaseRef.current==="paid_waiting") {setJoinErr(tUiMsg);setPaymentErr(tUiMsg);if(joinPhaseRef.current!=="payment"&&joinPhaseRef.current!=="paid_waiting")setJoinPhase("select");}
         setCreatePhase(prev=>(prev==="creating"||prev==="preparing")?"select":prev);
       }),
       on("room:dissolved",d=>{
@@ -483,7 +631,7 @@ export default function Home(){
         setCreateHint(null);
         if(joinPhaseRef.current==="waiting"){
           setJoinPhase("select");
-          setJoinErr("Room expired — team not filled in time");
+          setJoinErr(t("home.expiredMsg"));
         }
         refreshHistory();
       }),
@@ -494,7 +642,7 @@ export default function Home(){
       }),
       on("room:invalid",d=>{
         if(joinTimeoutRef.current){clearTimeout(joinTimeoutRef.current);joinTimeoutRef.current=null;}
-        setJoinErr(d?.message||"Room not found or expired");setJoinPhase("select");
+        setJoinErr(d?.message||t("home.err.roomNotFound"));setJoinPhase("select");
       }),
       on("room:payment:update",d=>{setPaymentProgress({paidCount:d.paidCount,total:d.total});if(d.chainGameId){setRoomFullInfo(prev=>prev?{...prev,chainGameId:d.chainGameId}:prev);}}),
       on("room:payment:failed",d=>{
@@ -520,6 +668,11 @@ export default function Home(){
         setPaymentStartedAt(null);
         setTimeout(()=>nav("/game"),500);
       }),
+      on("game:resume",d=>{
+        updateGame({gameId:d.gameId,chainGameId:d.chainGameId||d.gameId,mode:"room",teamSize:d.players?.length||d.totalPlayers||0,players:d.players||[],phase:d.phase==="settling"?"settling":"predicting",basePrice:d.basePrice,countdown:d.remaining||Math.round((d.predictTimeout||30000)/1000),predictSafeBuffer:Math.round((d.predictSafeBuffer||5000)/1000),predictionDeadline:d.predictionDeadline||null,currentPrice:d.currentPrice||d.basePrice});
+        setPaymentStartedAt(null);
+        setTimeout(()=>nav("/game"),300);
+      }),
     ];
     return()=>u.forEach(f=>f());
   },[on,updateGame,nav,handleRoomPaymentFailure]);
@@ -531,23 +684,24 @@ export default function Home(){
   const anyBusy=isCreateBusy||isJoinBusy||isMatchBusy;
   const joinEntryDisabled=isCreateBusy||isMatchBusy;
   const joinBlockedMsg=isCreateBusy
-    ?"You already have an active room. Cancel or finish it before joining another one."
+    ?t("home.err.joinBlocked.create")
     :isMatchBusy
-      ?"Finish the current match flow before joining a room."
+      ?t("home.err.joinBlocked.match")
       :null;
 
-  const createRoom=()=>{if(isJoinBusy||isMatchBusy){setCreateErr("Finish or cancel current action first");return;}if(isCreateBusy){setCreateErr("Already creating a room");return;}if(!mockMode && (!wallet || !provider || !signer)){connect({type:"create-room"});return;}createCancelPendingRef.current=false;createPhaseBeforeCancelRef.current="select";setCreateErr(null);setCreateHint(null);setCreatePhase("creating");if(createTimeoutRef.current)clearTimeout(createTimeoutRef.current);createTimeoutRef.current=setTimeout(()=>{createTimeoutRef.current=null;if(createPhaseRef.current==="creating")setCreateHint("Base Sepolia is taking longer than usual. Waiting for on-chain confirmation...");},12000);emit("room:create",{teamSize:createTeamSize});};
-  const payCreate=useCallback(async()=>{try{setPaymentErr(null);setPaymentNotice(null);if(!roomFullInfo?.gameId||!wallet)throw new Error("Missing game id");const paymentResult=await payForRoomEntry({inviteCode:roomCode,maxPlayers:roomFullInfo?.maxPlayers||createTeamSizeRef.current,isOwner:true,auth:roomFullInfo?.auth});if(paymentResult?.approved&&!paymentResult?.paid){const notice="USDC approval confirmed. Tap `Pay 1 USDC` one more time to complete the entry.";setCreateErr(null);setPaymentNotice(notice);return;}if(paymentResult?.chainGameId){setRoomFullInfo(prev=>prev?{...prev,chainGameId:paymentResult.chainGameId}:prev);}setCreatePaid(true);setCreateErr(null);emit("room:payment:confirm",{gameId:roomFullInfo.gameId,chainGameId:paymentResult?.chainGameId||roomFullInfo?.chainGameId||null,inviteCode:roomCode,wallet});setCreatePhase("paid_waiting");}catch(e){const msg=formatPaymentUiError(e?.message||"Payment failed");setCreateErr(msg);setPaymentErr(msg);}},[payForRoomEntry,roomFullInfo,roomCode,emit,wallet]);
-  const beginCreateRoomCancel=()=>{createCancelPendingRef.current=true;createPhaseBeforeCancelRef.current=createPhaseRef.current;setCreateErr(null);setCreateHint("Cancelling room...");setRoomCountdown(null);setCreatePhase("dissolving");emit("room:dissolve",{inviteCode:roomCodeRef.current||roomCode});};
+  const createRoom=()=>{if(isJoinBusy||isMatchBusy){setCreateErr(t("home.err.finishFirst"));return;}if(isCreateBusy){setCreateErr(t("home.err.alreadyCreating"));return;}if(!mockMode && (!wallet || !provider || !signer)){connect({type:"create-room"});return;}createCancelPendingRef.current=false;createPhaseBeforeCancelRef.current="select";setCreateErr(null);setCreateHint(null);setCreatePhase("creating");if(createTimeoutRef.current)clearTimeout(createTimeoutRef.current);createTimeoutRef.current=setTimeout(()=>{createTimeoutRef.current=null;if(createPhaseRef.current==="creating")setCreateHint(t("home.err.baseSlow"));},12000);emit("room:create",{teamSize:createTeamSize});};
+  const payCreate=useCallback(async()=>{try{setPaymentErr(null);setPaymentNotice(null);if(!roomFullInfo?.gameId||!wallet)throw new Error("Missing game id");const startedAt=paymentStartedAtRef.current;const deadline=startedAt?startedAt+PAYMENT_TIMEOUT*1000:null;if((deadline&&Date.now()>=deadline)||paymentFailureDialogRef.current){handleRoomPaymentFailure(t("home.err.windowClosed"));return;}const paymentResult=await payForRoomEntry({inviteCode:roomCode,maxPlayers:roomFullInfo?.maxPlayers||createTeamSizeRef.current,isOwner:true,auth:roomFullInfo?.auth});const nowDeadline=paymentStartedAtRef.current?paymentStartedAtRef.current+PAYMENT_TIMEOUT*1000:deadline;if((nowDeadline&&Date.now()>=nowDeadline)||paymentFailureDialogRef.current){if(paymentResult?.paid)refund(ENTRY_FEE);handleRoomPaymentFailure(t("home.err.windowClosed"));return;}if(paymentResult?.chainGameId){setRoomFullInfo(prev=>prev?{...prev,chainGameId:paymentResult.chainGameId}:prev);}setCreatePaid(true);setCreateErr(null);emit("room:payment:confirm",{gameId:roomFullInfo.gameId,chainGameId:paymentResult?.chainGameId||roomFullInfo?.chainGameId||null,inviteCode:roomCode,wallet});setCreatePhase("paid_waiting");}catch(e){const startedAtCatch=paymentStartedAtRef.current;const deadlineCatch=startedAtCatch?startedAtCatch+PAYMENT_TIMEOUT*1000:null;const timedOut=(deadlineCatch&&Date.now()>=deadlineCatch)||!!paymentFailureDialogRef.current;if(timedOut)return;const msg=formatPaymentUiError(e?.message||"Payment failed");setCreateErr(msg);setPaymentErr(msg);}},[payForRoomEntry,roomFullInfo,roomCode,emit,wallet,refund,handleRoomPaymentFailure]);
+  const beginCreateRoomCancel=()=>{createCancelPendingRef.current=true;createPhaseBeforeCancelRef.current=createPhaseRef.current;setCreateErr(null);setCreateHint(t("home.cancelling"));setRoomCountdown(null);setCreatePhase("dissolving");emit("room:dissolve",{inviteCode:roomCodeRef.current||roomCode});};
   const cancelCreate=()=>{beginCreateRoomCancel();};
   const dissolveRoom=()=>{beginCreateRoomCancel();};
   const clearExpired=()=>{setCreatePhase("select");setRoomCode("");setRoom({current:0,total:0,players:[]});setOpenRoom(null);setCreateErr(null);reloadHistory(wallet);};
   const copyCode=()=>{navigator.clipboard.writeText(roomCode);setCopied(true);setTimeout(()=>setCopied(false),2000);};
+  const shareTwitter=()=>{const url=typeof window!=="undefined"?window.location.origin:"";const text=t("home.share.text",{code:roomCode,url});const intent=`https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}`;if(typeof window!=="undefined")window.open(intent,"_blank","noopener,noreferrer");};
 
   // Join flow: confirm dialog (no payment), then join directly
-  const submitJoin=()=>{if(isCreateBusy||isMatchBusy){setJoinErr("Finish or cancel current action first");return;}if(isJoinBusy){setJoinErr("Already in join flow");return;}if(!mockMode && (!wallet || !provider || !signer)){connect({type:"join-room",code:joinCode});return;}if(joinCode.length<6)return setJoinErr("Enter complete 6-digit code");setJoinErr(null);setJoinPhase("validating");if(joinTimeoutRef.current)clearTimeout(joinTimeoutRef.current);joinTimeoutRef.current=setTimeout(()=>{setJoinErr("Invalid room code or server not responding");setJoinPhase("select");},4000);emit("room:validate",{inviteCode:joinCode.toUpperCase()});};
+  const submitJoin=()=>{if(isCreateBusy||isMatchBusy){setJoinErr(t("home.err.finishFirst"));return;}if(isJoinBusy){setJoinErr(t("home.err.alreadyJoin"));return;}if(!mockMode && (!wallet || !provider || !signer)){connect({type:"join-room",code:joinCode});return;}if(joinCode.length<6)return setJoinErr(t("home.err.incompleteCode"));setJoinErr(null);setJoinPhase("validating");if(joinTimeoutRef.current)clearTimeout(joinTimeoutRef.current);joinTimeoutRef.current=setTimeout(()=>{setJoinErr(t("home.err.invalidCode"));setJoinPhase("select");},4000);emit("room:validate",{inviteCode:joinCode.toUpperCase()});};
   const confirmJoin=()=>{emit("room:join",{inviteCode:joinCode.toUpperCase()});setJoinPhase("joining");};
-  const payJoin=useCallback(async()=>{try{setPaymentErr(null);setPaymentNotice(null);if(!roomFullInfo?.gameId||!wallet)throw new Error("Missing game id");const paymentResult=await payForRoomEntry({inviteCode:roomFullInfo.inviteCode||joinCode,isOwner:false,auth:roomFullInfo?.auth});if(paymentResult?.approved&&!paymentResult?.paid){const notice="USDC approval confirmed. Tap `Pay 1 USDC` one more time to complete the entry.";setJoinErr(null);setPaymentNotice(notice);return;}if(paymentResult?.chainGameId){setRoomFullInfo(prev=>prev?{...prev,chainGameId:paymentResult.chainGameId}:prev);}setJoinPaid(true);setJoinErr(null);emit("room:payment:confirm",{gameId:roomFullInfo.gameId,chainGameId:paymentResult?.chainGameId||roomFullInfo?.chainGameId||null,inviteCode:roomFullInfo.inviteCode||joinCode,wallet});setJoinPhase("paid_waiting");}catch(e){const msg=formatPaymentUiError(e?.message||"Payment failed");setJoinErr(msg);setPaymentErr(msg);}},[joinCode,payForRoomEntry,emit,roomFullInfo,wallet]);
+  const payJoin=useCallback(async()=>{try{setPaymentErr(null);setPaymentNotice(null);if(!roomFullInfo?.gameId||!wallet)throw new Error("Missing game id");const startedAt=paymentStartedAtRef.current;const deadline=startedAt?startedAt+PAYMENT_TIMEOUT*1000:null;if((deadline&&Date.now()>=deadline)||paymentFailureDialogRef.current){handleRoomPaymentFailure(t("home.err.windowClosed"));return;}const paymentResult=await payForRoomEntry({inviteCode:roomFullInfo.inviteCode||joinCode,isOwner:false,auth:roomFullInfo?.auth});const nowDeadline=paymentStartedAtRef.current?paymentStartedAtRef.current+PAYMENT_TIMEOUT*1000:deadline;if((nowDeadline&&Date.now()>=nowDeadline)||paymentFailureDialogRef.current){if(paymentResult?.paid)refund(ENTRY_FEE);handleRoomPaymentFailure(t("home.err.windowClosed"));return;}if(paymentResult?.chainGameId){setRoomFullInfo(prev=>prev?{...prev,chainGameId:paymentResult.chainGameId}:prev);}setJoinPaid(true);setJoinErr(null);emit("room:payment:confirm",{gameId:roomFullInfo.gameId,chainGameId:paymentResult?.chainGameId||roomFullInfo?.chainGameId||null,inviteCode:roomFullInfo.inviteCode||joinCode,wallet});setJoinPhase("paid_waiting");}catch(e){const startedAtCatch=paymentStartedAtRef.current;const deadlineCatch=startedAtCatch?startedAtCatch+PAYMENT_TIMEOUT*1000:null;const timedOut=(deadlineCatch&&Date.now()>=deadlineCatch)||!!paymentFailureDialogRef.current;if(timedOut)return;const msg=formatPaymentUiError(e?.message||"Payment failed");setJoinErr(msg);setPaymentErr(msg);}},[joinCode,payForRoomEntry,emit,roomFullInfo,wallet,refund,handleRoomPaymentFailure]);
   const leaveRoom=()=>{emit("room:leave");if(joinPaid){refund(ENTRY_FEE);setJoinPaid(false);}setJoinPhase("select");setJoinExpiresAt(null);};
 
   // ===== QUICK MATCH =====
@@ -558,11 +712,11 @@ export default function Home(){
       on("match:update",d=>{setMatchInfo({current:d.current});if(typeof d.remaining==="number")setCd(d.remaining);}),
       on("match:full",d=>{setMatchErr(null);setMatchInfo({current:d.current||d.total||matchTeamSizeRef.current});setMatchPhase("preparing");}),
       on("match:found",d=>{setPending(d);setPaymentProgress({paidCount:0,total:d.players?.length||0});setPaymentErr(null);setPaymentStartedAt(Date.now());if(mockMode){mockPay().then(()=>{updateGame({gameId:d.gameId,chainGameId:d.chainGameId,mode:"random",teamSize:d.teamSize||matchTeamSizeRef.current,players:d.players,phase:"predicting"});nav("/game");});}else setMatchPhase("payment");}),
-      on("match:failed",()=>resetMatchState("No opponents found. Try again.")),
+      on("match:failed",()=>resetMatchState(t("home.err.noOpponents"))),
       on("match:error",d=>resetMatchState(d.message)),
       on("disconnect",()=>{
         if(matchPhaseRef.current==="matching"||matchPhaseRef.current==="preparing"){
-          resetMatchState("Connection lost during matchmaking. Please try again.");
+          resetMatchState(t("home.err.lostConn"));
         }
       }),
     ];
@@ -573,15 +727,15 @@ export default function Home(){
     if(matchPhase!=="matching"||cd!==0)return;
     const timer=setTimeout(()=>{
       if(matchPhaseRef.current==="matching"){
-        resetMatchState("No opponents found. Try again.",{cancelQueue:true});
+        resetMatchState(t("home.err.noOpponents"),{cancelQueue:true});
       }
     },1200);
     return()=>clearTimeout(timer);
   },[matchPhase,cd,resetMatchState]);
 
-  const startMatch=()=>{if(isCreateBusy||isJoinBusy){setMatchErr("Finish or cancel current action first");return;}if(isMatchBusy){setMatchErr("Already matching");return;}if(!mockMode && (!wallet || !provider || !signer)){connect({type:"random-match"});return;}setPending(null);setMatchErr(null);setMatchPhase("matching");setMatchInfo({current:1});emit("match:join",{teamSize:matchTeamSize});};
+  const startMatch=()=>{if(isCreateBusy||isJoinBusy){setMatchErr(t("home.err.finishFirst"));return;}if(isMatchBusy){setMatchErr(t("home.err.alreadyMatching"));return;}if(!mockMode && (!wallet || !provider || !signer)){connect({type:"random-match"});return;}setPending(null);setMatchErr(null);setMatchPhase("matching");setMatchInfo({current:1});emit("match:join",{teamSize:matchTeamSize});};
   const cancelMatch=()=>resetMatchState(null,{cancelQueue:true});
-  const payMatch=useCallback(async()=>{if(!pending)return;try{setPaymentErr(null);setPaymentNotice(null);if(!pending.gameId||!pending.chainGameId||!wallet)throw new Error("Missing game id");const paymentResult=await payForGame(pending.chainGameId);if(paymentResult?.approved&&!paymentResult?.paid){setMatchErr(null);setPaymentNotice("USDC approval confirmed. Tap `Pay 1 USDC` one more time to complete the entry.");return;}emit("room:payment:confirm",{gameId:pending.gameId,chainGameId:pending.chainGameId,wallet});setMatchPhase("paid_waiting");}catch(e){const msg=formatPaymentUiError(e?.message||"Payment failed");setMatchErr(msg);setPaymentErr(msg);setMatchPhase("select");}},[pending,payForGame,emit,wallet]);
+  const payMatch=useCallback(async()=>{if(!pending)return;try{setPaymentErr(null);setPaymentNotice(null);if(!pending.gameId||!pending.chainGameId||!wallet)throw new Error("Missing game id");const startedAt=paymentStartedAtRef.current;const deadline=startedAt?startedAt+PAYMENT_TIMEOUT*1000:null;if((deadline&&Date.now()>=deadline)||paymentFailureDialogRef.current){handleRoomPaymentFailure(t("home.err.windowClosed"));return;}await payForGame(pending.chainGameId);const nowDeadline=paymentStartedAtRef.current?paymentStartedAtRef.current+PAYMENT_TIMEOUT*1000:deadline;if((nowDeadline&&Date.now()>=nowDeadline)||paymentFailureDialogRef.current){refund(ENTRY_FEE);handleRoomPaymentFailure(t("home.err.windowClosed"));return;}emit("room:payment:confirm",{gameId:pending.gameId,chainGameId:pending.chainGameId,wallet});setMatchPhase("paid_waiting");}catch(e){const startedAtCatch=paymentStartedAtRef.current;const deadlineCatch=startedAtCatch?startedAtCatch+PAYMENT_TIMEOUT*1000:null;const timedOut=(deadlineCatch&&Date.now()>=deadlineCatch)||!!paymentFailureDialogRef.current;if(timedOut){setMatchPhase("select");return;}const msg=formatPaymentUiError(e?.message||"Payment failed");setMatchErr(msg);setPaymentErr(msg);setMatchPhase("select");}},[pending,payForGame,emit,wallet,refund,handleRoomPaymentFailure]);
   const claimHistoryReward=useCallback(async(game)=>{
     if(!game?.claimable||!game?.chain_game_id)return;
     try{
@@ -610,7 +764,7 @@ export default function Home(){
   const isMatchPaymentPhase=matchPhase==="payment";
   const isMatchPaidWaiting=matchPhase==="paid_waiting";
   const isWaitingPaymentPhase=isRoomPaidWaiting||isMatchPaidWaiting;
-  const showPayment=isRoomPreparing||isRoomPaymentPhase||isWaitingPaymentPhase||isMatchPreparing||isMatchPaymentPhase;
+  const showPayment=isRoomPreparing||isRoomPaymentPhase||isWaitingPaymentPhase||isMatchPreparing||isMatchPaymentPhase||!!paymentFailureDialog;
   const paymentModalMode=isWaitingPaymentPhase?"waiting":(isRoomPreparing||isMatchPreparing)?"preparing":"confirm";
   const preparingMatchTotal=matchInfo.current||matchTeamSize;
   const onPayConfirm=createPhase==="payment"?payCreate:joinPhase==="payment"?payJoin:payMatch;
@@ -621,9 +775,15 @@ export default function Home(){
     setPaymentNotice(null);
     setPaymentErr(null);
   };
+  const closePaymentFailureDialog=useCallback(()=>{setPaymentFailureDialog(null);paymentFailureDialogRef.current=null;},[]);
+  const classifyFailure=(reason)=>{const raw=(reason||"").toString();const cancelled=/walked away|left the room|player left|host left|取消|退出|离开/i.test(raw);if(!cancelled)return{kind:"timeout",text:raw};const isHost=/host/i.test(raw)||/房主/.test(raw);return{kind:"cancelled",text:isHost?t("home.err.hostLeft"):t("home.err.playerLeft")};};
+  const failureInfo=paymentFailureDialog?classifyFailure(paymentFailureDialog):null;
+  const isFailureCancelled=failureInfo?.kind==="cancelled";
 
   useEffect(()=>{
     if(paymentCountdown!==0)return;
+    const everyonePaid = paymentProgress.total>0&&paymentProgress.paidCount>=paymentProgress.total;
+    if(everyonePaid)return;
     const stillInPayment =
       createPhaseRef.current==="payment"||
       createPhaseRef.current==="paid_waiting"||
@@ -640,10 +800,21 @@ export default function Home(){
         joinPhaseRef.current==="paid_waiting"||
         matchPhaseRef.current==="payment"||
         matchPhaseRef.current==="paid_waiting";
-      if(paymentStillOpen)handleRoomPaymentFailure("Payment timeout — team disbanded");
+      const fullyPaidNow = paymentProgress.total>0&&paymentProgress.paidCount>=paymentProgress.total;
+      if(paymentStillOpen&&!fullyPaidNow)handleRoomPaymentFailure(t("home.err.timeoutTeam"));
     },1200);
     return()=>clearTimeout(timer);
-  },[paymentCountdown,handleRoomPaymentFailure]);
+  },[paymentCountdown,paymentProgress,handleRoomPaymentFailure]);
+
+  useEffect(()=>{
+    const everyonePaid=paymentProgress.total>0&&paymentProgress.paidCount>=paymentProgress.total;
+    if(!everyonePaid||!wallet)return;
+    if(createPhase!=="paid_waiting"&&joinPhase!=="paid_waiting")return;
+    const now=Date.now();
+    if(now-paymentResumeRequestAtRef.current<2500)return;
+    paymentResumeRequestAtRef.current=now;
+    emit("game:resume:request");
+  },[paymentProgress,createPhase,joinPhase,wallet,emit]);
 
   useEffect(()=>{
     if(!pendingAction) return;
@@ -656,23 +827,7 @@ export default function Home(){
   },[pendingAction,wallet,provider,signer,mockMode]);
 
   // Team size selector component
-  const SizeSelector=({selectedSize,onSelect,onAction,actionLabel,disabled})=>(
-    <div>
-      <p className="text-white/30 text-[11px] mb-3 font-medium">Team Size</p>
-      <div className="grid grid-cols-4 gap-2 mb-4">
-        {TEAM_SIZES.map(s=>(
-          <button key={s} onClick={()=>onSelect(s)} disabled={disabled}
-            className={`py-3 rounded-xl font-black text-base transition-all
-              ${selectedSize===s
-                ?"bg-gradient-to-br from-amber-500 to-orange-600 text-white shadow-lg shadow-orange-500/20 -translate-y-0.5"
-                :"bg-white/[0.03] border border-white/[0.06] text-white/20 hover:bg-white/[0.06] hover:text-white/40"}
-              ${disabled?"!opacity-30 cursor-not-allowed":""}`}
-          >{s}P</button>
-        ))}
-      </div>
-      <button onClick={onAction} disabled={disabled} className={`btn-primary w-full py-3 font-bold text-sm ${disabled?"!opacity-30 cursor-not-allowed":""}`}>{actionLabel}</button>
-    </div>
-  );
+  const SizeSelector=SizeSelectorBase;
 
   // Format countdown as mm:ss
   const fmtCountdown=(s)=>{if(s===null||s===undefined)return"";return`${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`;};
@@ -685,32 +840,32 @@ export default function Home(){
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
         <div className="lg:col-span-2">
           <h1 className="text-2xl sm:text-3xl font-black tracking-tight mb-2">
-            Choose Your <span className="text-gradient">Battle Mode</span>
+            {t("home.hero.title.pre")} <span className="text-gradient">{t("home.hero.title.highlight")}</span>
           </h1>
           <p className="text-white/50 text-sm leading-relaxed max-w-lg">
-            Predict BTC price direction, beat your opponent, settle on-chain in 30 seconds. Entry: {ENTRY_FEE} USDC per round.
+            {t("home.hero.desc", { fee: ENTRY_FEE })}
           </p>
-          {mockMode&&<div className="inline-flex items-center gap-1.5 bg-amber-500/10 border border-amber-500/15 rounded-full px-3 py-1 mt-3">
-            <span className="text-amber-400/80 text-[10px] font-bold">DEMO MODE · Virtual Balance · Zero Risk</span>
+          {mockMode&&<div className="inline-flex items-center gap-1.5 bg-violet-500/10 border border-violet-500/20 rounded-full px-3 py-1 mt-3">
+            <span className="text-violet-300/80 text-[10px] font-bold">{t("home.demoBadge")}</span>
           </div>}
           {!wallet&&!mockMode&&<p className="text-white/30 text-xs mt-3">
-            {window.ethereum?"Connect wallet to start playing":"No wallet detected — demo mode available"}
+            {window.ethereum?t("home.hint.connectWallet"):t("home.hint.noWallet")}
           </p>}
         </div>
         <div className="card glow-orange flex flex-col items-center justify-center">
-          <BtcTicker price={price} size="lg" label="BTC / USD Live"/>
+          <BtcTicker price={price} size="lg" label={t("home.ticker.label")}/>
           <div className="flex items-center justify-center gap-1.5 mt-2.5">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"/>
-            <span className="text-white/30 text-[9px] uppercase tracking-[0.2em]">Live Market</span>
+            <span className="text-white/30 text-[9px] uppercase tracking-[0.2em]">{t("home.ticker.live")}</span>
           </div>
         </div>
       </div>
 
       {/* Stats bar */}
       {stats&&(stats.wins>0||stats.losses>0)&&<div className="grid grid-cols-3 gap-3 mb-6">
-        <div className="stat-card"><p className="text-[10px] text-white/35 uppercase tracking-wider">Wins</p><p className="text-xl font-black text-emerald-400">{stats.wins}</p></div>
-        <div className="stat-card"><p className="text-[10px] text-white/35 uppercase tracking-wider">Losses</p><p className="text-xl font-black text-rose-400">{stats.losses}</p></div>
-        <div className="stat-card"><p className="text-[10px] text-white/35 uppercase tracking-wider">Profit</p><p className={`text-xl font-black ${parseFloat(stats.total_earned)-parseFloat(stats.total_lost)>=0?"text-emerald-400":"text-rose-400"}`}>{(parseFloat(stats.total_earned)-parseFloat(stats.total_lost)).toFixed(2)}</p></div>
+        <div className="stat-card"><p className="text-[10px] text-white/35 uppercase tracking-wider">{t("home.stats.wins")}</p><p className="text-xl font-black text-emerald-400">{stats.wins}</p></div>
+        <div className="stat-card"><p className="text-[10px] text-white/35 uppercase tracking-wider">{t("home.stats.losses")}</p><p className="text-xl font-black text-rose-400">{stats.losses}</p></div>
+        <div className="stat-card"><p className="text-[10px] text-white/35 uppercase tracking-wider">{t("home.stats.profit")}</p><p className={`text-xl font-black ${parseFloat(stats.total_earned)-parseFloat(stats.total_lost)>=0?"text-emerald-400":"text-rose-400"}`}>{(parseFloat(stats.total_earned)-parseFloat(stats.total_lost)).toFixed(2)}</p></div>
       </div>}
 
       {/* ===== Card Carousel ===== */}
@@ -732,15 +887,15 @@ export default function Home(){
           <div className="flex-shrink-0 w-[calc(50%-8px)] min-w-[280px]">
             <div className={`rounded-2xl border p-5 h-full transition-all duration-300
               ${activeCard===0
-                ?"border-amber-500/25 bg-gradient-to-br from-amber-500/[0.08] to-orange-500/[0.06] shadow-lg shadow-amber-500/[0.05]"
+                ?"border-violet-500/30 bg-gradient-to-br from-indigo-500/[0.1] to-violet-500/[0.08] shadow-lg shadow-violet-500/[0.08]"
                 :"border-white/[0.06] bg-white/[0.02] opacity-70 hover:opacity-90"}`}
               onClick={()=>{if(activeCard!==0){setActiveCard(0);setMode("create");}}}
             >
               <div className="flex items-center gap-3 mb-4">
-                <div className="w-10 h-10 rounded-xl bg-amber-500/15 flex items-center justify-center text-xl">🏟️</div>
+                <div className="w-10 h-10 rounded-xl bg-violet-500/20 flex items-center justify-center text-xl">🏟️</div>
                 <div>
-                  <h3 className="text-sm font-bold">Create Room</h3>
-                  <p className="text-[10px] text-white/30">Invite friends to battle</p>
+                  <h3 className="text-sm font-bold">{t("home.card.create.title")}</h3>
+                  <p className="text-[10px] text-white/30">{t("home.card.create.desc")}</p>
                 </div>
               </div>
 
@@ -748,53 +903,67 @@ export default function Home(){
               {createHint&&<div className="bg-white/[0.03] border border-white/[0.06] text-white/45 px-3 py-2 rounded-lg mb-3 text-[10px]">{createHint}</div>}
 
               {createPhase==="select"&& !openRoom&&(
-                <SizeSelector selectedSize={createTeamSize} onSelect={setCreateTeamSize} onAction={createRoom} actionLabel={`Create Arena · ${createTeamSize}P`} disabled={isJoinBusy||isMatchBusy}/>
+                <SizeSelector label={t("home.teamSize")} selectedSize={createTeamSize} onSelect={setCreateTeamSize} onAction={createRoom} actionLabel="Create" disabled={isJoinBusy||isMatchBusy}/>
               )}
-              {createPhase==="creating"&&(<div className="text-center py-10"><div className="w-8 h-8 mx-auto rounded-full border-2 border-orange-400/30 border-t-orange-400 animate-spin mb-3"/><p className="text-white/40 text-xs">Creating arena...</p></div>)}
-              {createPhase==="dissolving"&&(<div className="text-center py-10"><div className="w-8 h-8 mx-auto rounded-full border-2 border-amber-400/30 border-t-amber-400 animate-spin mb-3"/><p className="text-white/40 text-xs">Cancelling room...</p></div>)}
+              {createPhase==="creating"&&(<div className="text-center py-10"><div className="w-8 h-8 mx-auto rounded-full border-2 border-violet-400/30 border-t-violet-300 animate-spin mb-3"/><p className="text-white/40 text-xs">{t("home.creating")}</p></div>)}
+              {createPhase==="dissolving"&&(<div className="text-center py-10"><div className="w-8 h-8 mx-auto rounded-full border-2 border-violet-400/30 border-t-violet-300 animate-spin mb-3"/><p className="text-white/40 text-xs">{t("home.cancelling")}</p></div>)}
               {(createPhase==="waiting"||createPhase==="paid_waiting"||createPhase==="preparing")&&(
                 <div className="text-center">
-                  <p className="text-white/20 text-[8px] uppercase tracking-[0.3em] mb-2">Arena Code</p>
-                  <div className="bg-white/[0.04] border border-white/[0.06] rounded-xl px-4 py-3 mb-3">
+                  <p className="text-white/20 text-[8px] uppercase tracking-[0.3em] mb-2">{t("home.arenaCode")}</p>
+                  <button
+                    type="button"
+                    onClick={copyCode}
+                    aria-label={t("home.copy.cta")}
+                    className={`group relative w-full rounded-xl px-4 py-3 mb-2 transition border ${copied?"bg-emerald-500/10 border-emerald-500/25":"bg-white/[0.04] border-white/[0.06] hover:bg-white/[0.06] hover:border-white/[0.12]"}`}
+                  >
                     <span className="text-2xl font-mono font-black tracking-[0.4em] text-gradient">{roomCode}</span>
-                  </div>
-                  <button onClick={copyCode} className={`text-[9px] px-3 py-1 rounded-full transition mb-3 ${copied?"bg-emerald-500/15 text-emerald-400":"bg-white/[0.04] text-white/25 hover:text-white/40"}`}>
-                    {copied?"✓ Copied":"📋 Copy Code"}
+                    <span className={`block mt-1 text-[9px] tracking-wider ${copied?"text-emerald-400":"text-white/25 group-hover:text-white/45"}`}>
+                      {copied?t("home.copy.done"):t("home.copy.clickHint")}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={shareTwitter}
+                    aria-label={t("home.share.twitter")}
+                    className="w-full rounded-xl px-3 py-2 mb-2 text-[11px] tracking-wider transition border bg-white/[0.03] border-white/[0.06] text-white/50 hover:bg-sky-500/10 hover:border-sky-500/25 hover:text-sky-300 inline-flex items-center justify-center gap-1.5"
+                  >
+                    <svg viewBox="0 0 24 24" className="w-3 h-3 fill-current" aria-hidden="true"><path d="M18.244 2H21l-6.52 7.45L22 22h-6.828l-4.76-6.23L4.8 22H2l7.02-8.02L2 2h6.91l4.29 5.68L18.244 2Zm-2.397 18h1.86L7.24 4H5.3l10.547 16Z"/></svg>
+                    <span>{t("home.share.twitter")}</span>
                   </button>
                   <TeamSlots total={createRoomTotal} players={room.players} current={room.current}/>
                   <div className="mt-2 inline-flex items-center gap-1.5 text-[10px]">
-                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"/>
-                    <span className="text-white/30 font-mono">{createPhase==="preparing" ? "Preparing payment..." : createPaid && paymentProgress.total ? `${paymentProgress.paidCount}/${paymentProgress.total} paid` : `${room.current}/${createRoomTotal} ready`}</span>
+                    <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse"/>
+                    <span className="text-white/30 font-mono">{createPhase==="preparing" ? t("home.preparingPayment") : createPaid && paymentProgress.total ? `${paymentProgress.paidCount}/${paymentProgress.total} ${t("home.paid")}` : `${room.current}/${createRoomTotal} ${t("home.ready")}`}</span>
                   </div>
                   {/* Room expiry countdown — only when not full */}
                   {roomCountdown!==null&&roomCountdown>0&&room.current<createRoomTotal&&(
-                    <div className={`mt-2 flex items-center justify-center gap-1.5 ${roomCountdown<=30?"text-rose-400":"text-amber-400"}`}>
+                    <div className={`mt-2 flex items-center justify-center gap-1.5 ${roomCountdown<=30?"text-rose-400":"text-violet-300"}`}>
                       <span className="text-sm">⏱️</span>
                       <span className="text-sm font-mono font-bold">{fmtCountdown(roomCountdown)}</span>
-                      <span className="text-[9px] text-white/25 ml-1">remaining</span>
+                      <span className="text-[9px] text-white/25 ml-1">{t("home.remaining")}</span>
                     </div>
                   )}
                   {/* Payment countdown (after full, 60s) */}
                   {paymentCountdown!==null&&paymentCountdown>0&&createPhase==="paid_waiting"&&(
-                    <div className={`mt-2 flex items-center justify-center gap-1.5 ${paymentCountdown<=10?"text-rose-400":"text-amber-400"}`}>
+                    <div className={`mt-2 flex items-center justify-center gap-1.5 ${paymentCountdown<=10?"text-rose-400":"text-violet-300"}`}>
                       <span className="text-sm">💰</span>
                       <span className="text-sm font-mono font-bold">{paymentCountdown}s</span>
-                      <span className="text-[9px] text-white/25 ml-1">payment countdown</span>
+                      <span className="text-[9px] text-white/25 ml-1">{t("home.payment.countdown")}</span>
                     </div>
                   )}
-                  <button onClick={dissolveRoom} disabled={createPhase==="preparing"} className="mt-3 w-full py-2 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:bg-rose-500/[0.06] hover:text-rose-400 transition text-[10px] text-white/20 disabled:opacity-30 disabled:cursor-not-allowed">Cancel</button>
+                  <button onClick={dissolveRoom} disabled={createPhase==="preparing"} className="mt-3 w-full py-2 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:bg-rose-500/[0.06] hover:text-rose-400 transition text-[10px] text-white/20 disabled:opacity-30 disabled:cursor-not-allowed">{t("home.cancel")}</button>
                 </div>
               )}
               {/* Expired state — highlighted Expired button */}
               {createPhase==="expired"&&(
                 <div className="text-center">
-                  <p className="text-white/20 text-[8px] uppercase tracking-[0.3em] mb-2">Arena Code</p>
+                  <p className="text-white/20 text-[8px] uppercase tracking-[0.3em] mb-2">{t("home.arenaCode")}</p>
                   <div className="bg-white/[0.04] border border-white/[0.06] rounded-xl px-4 py-3 mb-3">
                     <span className="text-2xl font-mono font-black tracking-[0.4em] text-white/15 line-through">{roomCode}</span>
                   </div>
-                  <p className="text-rose-400 text-xs mb-3">Room expired — team not filled in time</p>
+                  <p className="text-rose-400 text-xs mb-3">{t("home.expiredMsg")}</p>
                   <button onClick={clearExpired} className="w-full py-2.5 rounded-xl bg-gradient-to-br from-rose-500 to-rose-600 text-white font-bold text-sm shadow-lg shadow-rose-500/20 hover:shadow-rose-500/30 transition">
-                    Expired
+                    {t("home.expiredCta")}
                   </button>
                 </div>
               )}
@@ -805,78 +974,78 @@ export default function Home(){
           <div className="flex-shrink-0 w-[calc(50%-8px)] min-w-[280px]">
             <div className={`rounded-2xl border p-5 h-full transition-all duration-300
               ${activeCard===1
-                ?"border-amber-500/25 bg-gradient-to-br from-amber-500/[0.08] to-orange-500/[0.06] shadow-lg shadow-amber-500/[0.05]"
+                ?"border-violet-500/30 bg-gradient-to-br from-indigo-500/[0.1] to-violet-500/[0.08] shadow-lg shadow-violet-500/[0.08]"
                 :"border-white/[0.06] bg-white/[0.02] opacity-70 hover:opacity-90"}`}
               onClick={()=>{if(activeCard!==1){setActiveCard(1);setMode("join");}}}
             >
               <div className="flex items-center gap-3 mb-4">
-                <div className="w-10 h-10 rounded-xl bg-amber-500/15 flex items-center justify-center text-xl">🎯</div>
+                <div className="w-10 h-10 rounded-xl bg-violet-500/20 flex items-center justify-center text-xl">🎯</div>
                 <div>
-                  <h3 className="text-sm font-bold">Join Room</h3>
-                  <p className="text-[10px] text-white/30">Enter code to join a battle</p>
+                  <h3 className="text-sm font-bold">{t("home.card.join.title")}</h3>
+                  <p className="text-[10px] text-white/30">{t("home.card.join.desc")}</p>
                 </div>
               </div>
 
               {joinErr&&<div className="bg-rose-500/10 border border-rose-500/15 text-rose-400 px-3 py-2 rounded-lg mb-3 text-[10px]">⚠️ {joinErr}</div>}
 
-              {joinPhase==="validating"&&(<div className="text-center py-10"><div className="w-8 h-8 mx-auto rounded-full border-2 border-orange-400/30 border-t-orange-400 animate-spin mb-3"/><p className="text-white/40 text-xs">Validating code...</p></div>)}
-              {joinPhase==="joining"&&(<div className="text-center py-10"><div className="w-8 h-8 mx-auto rounded-full border-2 border-orange-400/30 border-t-orange-400 animate-spin mb-3"/><p className="text-white/40 text-xs">Joining arena...</p></div>)}
+              {joinPhase==="validating"&&(<div className="text-center py-10"><div className="w-8 h-8 mx-auto rounded-full border-2 border-violet-400/30 border-t-violet-300 animate-spin mb-3"/><p className="text-white/40 text-xs">{t("home.validating")}</p></div>)}
+              {joinPhase==="joining"&&(<div className="text-center py-10"><div className="w-8 h-8 mx-auto rounded-full border-2 border-violet-400/30 border-t-violet-300 animate-spin mb-3"/><p className="text-white/40 text-xs">{t("home.joining")}</p></div>)}
               {joinPhase==="select"&&(
                 <div>
-                  <p className="text-white/30 text-[11px] mb-3 font-medium">Arena Code</p>
+                  <p className="text-white/30 text-[11px] mb-3 font-medium">{t("home.arenaCode")}</p>
                   <input type="text" value={joinCode}
                     onChange={e=>setJoinCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g,""))}
-                    placeholder="6-digit code"
+                    placeholder={t("home.codePlaceholder")}
                     maxLength={6}
                     disabled={joinEntryDisabled}
-                    className={`w-full bg-white/[0.03] border border-white/[0.06] rounded-xl px-4 py-3 text-center text-xl font-mono font-black tracking-[0.4em] text-orange-400 placeholder:text-white/[0.08] placeholder:tracking-normal placeholder:text-xs placeholder:font-normal transition mb-3 ${joinEntryDisabled?"cursor-not-allowed opacity-40":"focus:outline-none focus:border-orange-500/25"}`}
+                    className={`w-full bg-white/[0.03] border border-white/[0.06] rounded-xl px-4 py-3 text-center text-xl font-mono font-black tracking-[0.4em] text-violet-300 placeholder:text-white/[0.08] placeholder:tracking-normal placeholder:text-xs placeholder:font-normal transition mb-3 ${joinEntryDisabled?"cursor-not-allowed opacity-40":"focus:outline-none focus:border-violet-500/30"}`}
                   />
                   {joinBlockedMsg&&<p className="text-[10px] text-white/25 mb-3">{joinBlockedMsg}</p>}
-                  <button onClick={submitJoin} disabled={joinCode.length<6||joinEntryDisabled} className="btn-primary w-full py-3 font-bold text-sm disabled:!opacity-15">Join Arena</button>
+                  <button onClick={submitJoin} disabled={joinCode.length<6||joinEntryDisabled} className="btn-primary w-full py-3 font-bold text-sm disabled:!opacity-15">{t("home.join")}</button>
                 </div>
               )}
               {/* Confirm dialog: no payment, just confirm joining */}
               {joinPhase==="confirm"&&(
                 <div className="text-center">
-                  <p className="text-white/40 text-xs mb-3">Join arena with code</p>
+                  <p className="text-white/40 text-xs mb-3">{t("home.joinConfirm")}</p>
                   <div className="bg-white/[0.04] border border-white/[0.06] rounded-xl px-4 py-3 mb-4">
                     <span className="text-xl font-mono font-black tracking-[0.4em] text-gradient">{joinCode}</span>
                   </div>
-                  <p className="text-white/25 text-[10px] mb-4">{joinValidInfo?`${joinValidInfo.current}/${joinValidInfo.total} players in room`:""}</p>
+                  <p className="text-white/25 text-[10px] mb-4">{joinValidInfo?t("home.joinPlayersInRoom",{n:joinValidInfo.current,total:joinValidInfo.total}):""}</p>
                   <div className="flex gap-2">
-                    <button onClick={()=>{setJoinPhase("select");setJoinValidInfo(null);}} className="flex-1 py-2.5 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:bg-white/[0.04] text-white/30 text-xs transition">Cancel</button>
-                    <button onClick={confirmJoin} className="flex-1 btn-primary !py-2.5 !text-sm font-bold">Join</button>
+                    <button onClick={()=>{setJoinPhase("select");setJoinValidInfo(null);}} className="flex-1 py-2.5 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:bg-white/[0.04] text-white/30 text-xs transition">{t("home.cancel")}</button>
+                    <button onClick={confirmJoin} className="flex-1 btn-primary !py-2.5 !text-sm font-bold">{t("home.join")}</button>
                   </div>
                 </div>
               )}
               {(joinPhase==="waiting"||joinPhase==="paid_waiting"||joinPhase==="preparing")&&(
                 <div className="text-center">
-                  <p className="text-white/20 text-[8px] uppercase tracking-[0.3em] mb-2">Joined Arena</p>
+                  <p className="text-white/20 text-[8px] uppercase tracking-[0.3em] mb-2">{t("home.joinedArena")}</p>
                   <div className="bg-white/[0.04] border border-white/[0.06] rounded-xl px-4 py-3 mb-3">
                     <span className="text-xl font-mono font-black tracking-[0.4em] text-gradient">{joinCode}</span>
                   </div>
                   <TeamSlots total={joinRoom.total} players={joinRoom.players}/>
                   <div className="mt-2 inline-flex items-center gap-1.5 text-[10px]">
-                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"/>
-                    <span className="text-white/30 font-mono">{joinPhase==="preparing" ? "Preparing payment..." : joinPaid && paymentProgress.total ? `${paymentProgress.paidCount}/${paymentProgress.total} paid` : `${joinRoom.current}/${joinRoom.total} waiting`}</span>
+                    <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse"/>
+                    <span className="text-white/30 font-mono">{joinPhase==="preparing" ? t("home.preparingPayment") : joinPaid && paymentProgress.total ? `${paymentProgress.paidCount}/${paymentProgress.total} ${t("home.paid")}` : `${joinRoom.current}/${joinRoom.total} ${t("home.waiting")}`}</span>
                   </div>
                   {/* Join room expiry countdown */}
                   {joinCountdown!==null&&joinCountdown>0&&joinRoom.current<joinRoom.total&&(
-                    <div className={`mt-2 flex items-center justify-center gap-1.5 ${joinCountdown<=30?"text-rose-400":"text-amber-400"}`}>
+                    <div className={`mt-2 flex items-center justify-center gap-1.5 ${joinCountdown<=30?"text-rose-400":"text-violet-300"}`}>
                       <span className="text-sm">⏱️</span>
                       <span className="text-sm font-mono font-bold">{fmtCountdown(joinCountdown)}</span>
-                      <span className="text-[9px] text-white/25 ml-1">remaining</span>
+                      <span className="text-[9px] text-white/25 ml-1">{t("home.remaining")}</span>
                     </div>
                   )}
                   {/* Payment countdown (after full, 60s) */}
                   {paymentCountdown!==null&&paymentCountdown>0&&joinPhase==="paid_waiting"&&(
-                    <div className={`mt-2 flex items-center justify-center gap-1.5 ${paymentCountdown<=10?"text-rose-400":"text-amber-400"}`}>
+                    <div className={`mt-2 flex items-center justify-center gap-1.5 ${paymentCountdown<=10?"text-rose-400":"text-violet-300"}`}>
                       <span className="text-sm">💰</span>
                       <span className="text-sm font-mono font-bold">{paymentCountdown}s</span>
-                      <span className="text-[9px] text-white/25 ml-1">payment countdown</span>
+                      <span className="text-[9px] text-white/25 ml-1">{t("home.payment.countdown")}</span>
                     </div>
                   )}
-                  <button onClick={leaveRoom} disabled={joinPhase==="preparing"} className="mt-3 w-full py-2 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:bg-rose-500/[0.06] hover:text-rose-400 transition text-[10px] text-white/20 disabled:opacity-30 disabled:cursor-not-allowed">Leave</button>
+                  <button onClick={leaveRoom} disabled={joinPhase==="preparing"} className="mt-3 w-full py-2 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:bg-rose-500/[0.06] hover:text-rose-400 transition text-[10px] text-white/20 disabled:opacity-30 disabled:cursor-not-allowed">{t("home.leave")}</button>
                 </div>
               )}
             </div>
@@ -886,33 +1055,33 @@ export default function Home(){
           <div className="flex-shrink-0 w-[calc(50%-8px)] min-w-[280px]">
             <div className={`rounded-2xl border p-5 h-full transition-all duration-300
               ${activeCard===2
-                ?"border-amber-500/25 bg-gradient-to-br from-amber-500/[0.08] to-orange-500/[0.06] shadow-lg shadow-amber-500/[0.05]"
+                ?"border-violet-500/30 bg-gradient-to-br from-indigo-500/[0.1] to-violet-500/[0.08] shadow-lg shadow-violet-500/[0.08]"
                 :"border-white/[0.06] bg-white/[0.02] opacity-70 hover:opacity-90"}`}
               onClick={()=>activeCard!==2&&goCard(2)}
             >
               <div className="flex items-center gap-3 mb-4">
-                <div className="w-10 h-10 rounded-xl bg-amber-500/15 flex items-center justify-center text-xl">⚔️</div>
+                <div className="w-10 h-10 rounded-xl bg-violet-500/20 flex items-center justify-center text-xl">⚔️</div>
                 <div>
-                  <h3 className="text-sm font-bold">Quick Match</h3>
-                  <p className="text-[10px] text-white/30">Auto-match in 15 seconds</p>
+                  <h3 className="text-sm font-bold">{t("home.card.match.title")}</h3>
+                  <p className="text-[10px] text-white/30">{t("home.card.match.desc")}</p>
                 </div>
               </div>
 
               {matchErr&&<div className="bg-rose-500/10 border border-rose-500/15 text-rose-400 px-3 py-2 rounded-lg mb-3 text-[10px]">⚠️ {matchErr}</div>}
 
               {matchPhase==="select"&&(
-                <SizeSelector selectedSize={matchTeamSize} onSelect={setMatchTeamSize} onAction={startMatch} actionLabel={`Find Match · ${matchTeamSize}P`} disabled={isCreateBusy||isJoinBusy}/>
+                <SizeSelector label={t("home.teamSize")} selectedSize={matchTeamSize} onSelect={setMatchTeamSize} onAction={startMatch} actionLabel="Match" disabled={isCreateBusy||isJoinBusy}/>
               )}
               {matchPhase==="matching"&&(
                 <div>
                   <MatchAnimation teamSize={matchTeamSize} current={matchInfo.current} countdown={cd} status="matching"/>
-                  <button onClick={cancelMatch} className="w-full mt-3 py-2 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:bg-white/[0.04] transition text-[10px] text-white/20">Cancel</button>
+                  <button onClick={cancelMatch} className="w-full mt-3 py-2 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:bg-white/[0.04] transition text-[10px] text-white/20">{t("home.cancel")}</button>
                 </div>
               )}
               {matchPhase==="preparing"&&(
                 <div>
                   <MatchAnimation teamSize={matchTeamSize} current={matchTeamSize} status="preparing"/>
-                  <p className="mt-3 text-center text-[10px] text-white/25">Players are locked in. Preparing the payment step now.</p>
+                  <p className="mt-3 text-center text-[10px] text-white/25">{t("home.preparingNote")}</p>
                 </div>
               )}
             </div>
@@ -921,75 +1090,80 @@ export default function Home(){
 
         {/* Dot indicators + swipe hint */}
         <div className="flex items-center justify-center gap-3 mt-4">
-          {activeCard>0&&<span className="text-white/15 text-[10px] mr-1">← swipe</span>}
+          {activeCard>0&&<span className="text-white/15 text-[10px] mr-1">{t("home.swipe.left")}</span>}
           {CARDS.map((_,i)=>(
             <button key={i} onClick={()=>{goCard(i);if(i>=2)scrollToCard(1);else scrollToCard(0);}}
               className={`rounded-full transition-all duration-300
-                ${activeCard===i?"w-6 h-2 bg-gradient-to-r from-amber-500 to-orange-500":"w-2 h-2 bg-white/15 hover:bg-white/25"}`}
+                ${activeCard===i?"w-6 h-2 bg-gradient-to-r from-indigo-500 via-violet-500 to-blue-500":"w-2 h-2 bg-white/15 hover:bg-white/25"}`}
             />
           ))}
-          {activeCard<2&&<span className="text-white/15 text-[10px] ml-1">swipe →</span>}
+          {activeCard<2&&<span className="text-white/15 text-[10px] ml-1">{t("home.swipe.right")}</span>}
         </div>
       </div>
 
       {/* Payment modal — shown when room is full (both creator and joiner) or quick match */}
       <PaymentModal
         visible={showPayment}
-        onConfirm={onPayConfirm}
-        onCancel={onPayCancel}
+        onConfirm={paymentFailureDialog?closePaymentFailureDialog:onPayConfirm}
+        onCancel={paymentFailureDialog?undefined:onPayCancel}
         loading={loading}
         mode={paymentModalMode}
-        title={isWaitingPaymentPhase
-          ?"Payment Confirmed"
+        title={paymentFailureDialog
+          ?t(isFailureCancelled?"home.payment.cancelledTitle":"home.payment.timedOutTitle")
+          :isWaitingPaymentPhase
+          ?t("home.payment.confirmedTitle")
           :isRoomPreparing
-            ?"Preparing Payment"
+            ?t("home.payment.preparingTitle")
           :isMatchPreparing
-            ?"Match Found"
+            ?t("home.payment.matchFoundTitle")
           :isRoomPaymentPhase
-            ?"Room Full — Pay to Start"
-            :"Enter Match"}
-        subtitle={isWaitingPaymentPhase
-          ?`Your entry is confirmed. Waiting for the remaining players to pay before the prediction begins automatically.`
+            ?t("home.payment.roomFullTitle")
+            :t("home.payment.enterMatchTitle")}
+        subtitle={paymentFailureDialog
+          ?t(isFailureCancelled?"home.payment.cancelledSubtitle":"home.payment.timedOutSubtitle")
+          :isWaitingPaymentPhase
+          ?t("home.payment.waitingSubtitle")
           :isRoomPreparing
-            ?`All ${paymentProgress.total||0} players are ready. We're preparing the payment step now.`
+            ?t("home.payment.preparingRoomSubtitle",{n:paymentProgress.total||0})
           :isMatchPreparing
-            ?`All ${preparingMatchTotal} players are ready. We're preparing the payment step now.`
+            ?t("home.payment.preparingMatchSubtitle",{n:preparingMatchTotal})
           :isRoomPaymentPhase
-            ?`All ${paymentProgress.total} players joined! Pay 1 USDC within ${paymentCountdown||PAYMENT_TIMEOUT}s to start the prediction.`
-            :"Pay entry fee to enter this match"}
-        actionLabel="Pay 1 USDC"
+            ?t("home.payment.roomFullSubtitle",{n:paymentProgress.total,t:paymentCountdown||PAYMENT_TIMEOUT})
+            :t("home.payment.enterMatchSubtitle")}
+        actionLabel={paymentFailureDialog?t("home.payment.confirm"):t("home.payment.action")}
         amount="1 USDC"
-        error={paymentErr}
+        error={failureInfo?failureInfo.text:paymentErr}
         notice={paymentNotice}
         hint={isWaitingPaymentPhase
-          ?`You have already paid. The match will start as soon as all ${paymentProgress.total||0} players confirm.${shouldUseMockPayment?" Local mock payment enabled.":""}`
+          ?t("home.payment.waitingHint",{n:paymentProgress.total||0,mock:shouldUseMockPayment?t("home.payment.mockAppend"):""})
           :isRoomPreparing
-            ?"Creating the on-chain game now. If this takes too long, the room will reset automatically."
+            ?t("home.payment.preparingRoomHint")
           :isMatchPreparing
-            ?"Creating the on-chain match now. This dialog will switch to `Pay 1 USDC` automatically as soon as setup finishes."
+            ?t("home.payment.preparingMatchHint")
           :isRoomPaymentPhase
-            ?`${paymentProgress.paidCount}/${paymentProgress.total} paid${shouldUseMockPayment?" · local mock payment enabled":""}`
+            ?`${paymentProgress.paidCount}/${paymentProgress.total} ${t("home.paid")}${shouldUseMockPayment?t("home.payment.roomFullHint.suffix"):""}`
             :shouldUseMockPayment
-              ?"Local mock payment enabled for this environment."
-              :"You'll confirm this payment in your wallet."}
-        countdown={(isRoomPaymentPhase||isWaitingPaymentPhase||isMatchPaymentPhase)?paymentCountdown:null}
-        countdownLabel={(isRoomPaymentPhase||isWaitingPaymentPhase||isMatchPaymentPhase)?"Match starts automatically once everyone pays before the timer expires.":null}
+              ?t("home.payment.mockHint")
+              :t("home.payment.walletHint")}
+        countdown={paymentFailureDialog?null:(isRoomPaymentPhase||isWaitingPaymentPhase||isMatchPaymentPhase)?paymentCountdown:null}
+        countdownLabel={(isRoomPaymentPhase||isWaitingPaymentPhase||isMatchPaymentPhase)?t("home.payment.countdownLabel"):null}
         paidCount={paymentProgress.paidCount}
         totalCount={isMatchPreparing?preparingMatchTotal:paymentProgress.total}
+        singleAction={!!paymentFailureDialog}
       />
 
       {/* Bottom row */}
       <div className="card !p-4 mb-4">
         <div className="flex items-center justify-between mb-3">
-          <h3 className="text-xs font-bold text-white/40 uppercase tracking-widest">History</h3>
+          <h3 className="text-xs font-bold text-white/40 uppercase tracking-widest">{t("home.history.title")}</h3>
           <div className="flex gap-1">
-            {[["all","All"],["create","Create"],["join","Join"],["random","Random"]].map(([k,l])=><button key={k} onClick={()=>setHistoryFilter(k)} className={`px-2 py-1 rounded-lg text-[10px] ${historyFilter===k?"bg-amber-500/15 text-amber-300 border border-amber-500/20":"bg-white/[0.03] text-white/25 border border-white/[0.04]"}`}>{l}</button>)}
+            {[["all","home.history.filter.all"],["create","home.history.filter.create"],["join","home.history.filter.join"],["random","home.history.filter.random"]].map(([k,l])=><button key={k} onClick={()=>setHistoryFilter(k)} className={`px-2 py-1 rounded-lg text-[10px] ${historyFilter===k?"bg-violet-500/20 text-violet-300 border border-violet-500/25":"bg-white/[0.03] text-white/25 border border-white/[0.04]"}`}>{t(l)}</button>)}
           </div>
         </div>
         {!wallet ? (
-          <p className="text-white/20 text-xs">Connect wallet to view history</p>
+          <p className="text-white/20 text-xs">{t("home.history.connect")}</p>
         ) : history.length===0 ? (
-          <p className="text-white/20 text-xs">No battle history yet</p>
+          <p className="text-white/20 text-xs">{t("home.history.empty")}</p>
         ) : (()=>{
           const filtered = history.filter(g=>historyFilter==="all"?true:historyFilter==="create"?(g.mode==="room"&&g.is_owner):historyFilter==="join"?(g.mode==="room"&&!g.is_owner):g.mode==="random");
           const pageSize = 6;
@@ -999,14 +1173,14 @@ export default function Home(){
           return <div className="space-y-2">
             {pageItems.map(g=>{
               const isRoom = g.mode === "room";
-              const title = isRoom ? (g.is_owner ? "Create Room" : "Join Room") : "Random Match";
-              const result = getHistoryResult(g);
+              const title = isRoom ? (g.is_owner ? t("home.history.createRoom") : t("home.history.joinRoom")) : t("home.history.randomMatch");
+              const result = translateHistoryResult(g);
               const time = new Date(g.settled_at || g.failed_at || g.started_at || g.created_at).toLocaleString();
               const canClaim = !!g.claimable;
               const isClaiming = claimingHistoryId === g.id && claiming;
               const isClaimed = !!g.claimed;
-              const actionLabel = g.claimLabel || "Claim";
-              const claimedLabel = g.claimedLabel || "Claimed";
+              const actionLabel = translateHistoryLabel(g.claimLabel, t("home.history.claim"));
+              const claimedLabel = translateHistoryLabel(g.claimedLabel, t("home.history.claimed"));
               return (
                 <div key={g.id} className="bg-white/[0.02] border border-white/[0.05] rounded-xl px-3 py-2.5">
                   <div className="flex items-start justify-between gap-3">
@@ -1015,8 +1189,8 @@ export default function Home(){
                       <p className="text-[10px] text-white/25 mt-1">{time}</p>
                     </div>
                     <div className="flex-1 text-center min-w-0 px-2">
-                      <p className="text-[10px] text-white/30">Arena Code</p>
-                      <p className="text-[11px] font-mono text-amber-300 truncate">{isRoom && g.invite_code ? g.invite_code : "—"}</p>
+                      <p className="text-[10px] text-white/30">{t("home.arenaCode")}</p>
+                      <p className="text-[11px] font-mono text-violet-300 truncate">{isRoom && g.invite_code ? g.invite_code : "—"}</p>
                     </div>
                     <div className="text-right shrink-0">
                       <p className="text-[10px] text-white/35">{g.max_players}P</p>
@@ -1024,7 +1198,7 @@ export default function Home(){
                     </div>
                   </div>
                   {g.error_message&&g.state==="failed"&&(
-                    <p className="mt-2 text-[10px] text-amber-200/80 leading-relaxed">{g.error_message}</p>
+                    <p className="mt-2 text-[10px] text-violet-200/80 leading-relaxed">{g.error_message}</p>
                   )}
                   {(canClaim||isClaimed||isClaiming) && <div className="mt-3 flex justify-end">
                     <button
@@ -1038,95 +1212,58 @@ export default function Home(){
                             :"bg-white/[0.03] border border-white/[0.05] text-white/35 cursor-default"
                       }`}
                     >
-                      {isClaiming ? "Claiming..." : isClaimed ? claimedLabel : actionLabel}
+                      {isClaiming ? t("home.history.claiming") : isClaimed ? claimedLabel : actionLabel}
                     </button>
                   </div>}
                 </div>
               );
             })}
             {totalPages > 1 && <div className="flex items-center justify-center gap-2 pt-2">
-              <button onClick={()=>setHistoryPage(p=>Math.max(1,p-1))} disabled={page===1} className="px-2 py-1 rounded-lg text-[10px] bg-white/[0.03] border border-white/[0.04] text-white/35 disabled:opacity-30">Prev</button>
+              <button onClick={()=>setHistoryPage(p=>Math.max(1,p-1))} disabled={page===1} className="px-2 py-1 rounded-lg text-[10px] bg-white/[0.03] border border-white/[0.04] text-white/35 disabled:opacity-30">{t("home.history.prev")}</button>
               <span className="text-[10px] text-white/35">{page} / {totalPages}</span>
-              <button onClick={()=>setHistoryPage(p=>Math.min(totalPages,p+1))} disabled={page===totalPages} className="px-2 py-1 rounded-lg text-[10px] bg-white/[0.03] border border-white/[0.04] text-white/35 disabled:opacity-30">Next</button>
+              <button onClick={()=>setHistoryPage(p=>Math.min(totalPages,p+1))} disabled={page===totalPages} className="px-2 py-1 rounded-lg text-[10px] bg-white/[0.03] border border-white/[0.04] text-white/35 disabled:opacity-30">{t("home.history.next")}</button>
             </div>}
           </div>;
         })()}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 gap-4">
         <div className="card !p-4">
           <div className="flex items-center justify-between mb-3">
-            <h3 className="text-xs font-bold text-white/40 uppercase tracking-widest">Quick Rules</h3>
-            <button onClick={()=>nav("/how-to-play")} className="text-[10px] text-orange-400/60 hover:text-orange-400 transition font-semibold">Learn more →</button>
+            <h3 className="text-xs font-bold text-white/40 uppercase tracking-widest">{t("home.quickRules")}</h3>
+            <button onClick={()=>nav("/how-to-play")} className="text-[10px] text-violet-300/60 hover:text-violet-300 transition font-semibold">{t("home.learnMore")}</button>
           </div>
           <div className="grid grid-cols-2 gap-2 text-xs text-white/45">
-            <div className="bg-white/[0.02] rounded-lg px-3 py-2.5 flex items-center gap-2"><span>💰</span>{ENTRY_FEE} USDC entry</div>
-            <div className="bg-white/[0.02] rounded-lg px-3 py-2.5 flex items-center gap-2"><span>⏱️</span>30s to predict</div>
-            <div className="bg-white/[0.02] rounded-lg px-3 py-2.5 flex items-center gap-2"><span>📊</span>30s settlement</div>
-            <div className="bg-white/[0.02] rounded-lg px-3 py-2.5 flex items-center gap-2"><span>🏆</span>Winner takes all</div>
+            <div className="bg-white/[0.02] rounded-lg px-3 py-2.5 flex items-center gap-2"><span>💰</span>{t("home.rule.entry",{fee:ENTRY_FEE})}</div>
+            <div className="bg-white/[0.02] rounded-lg px-3 py-2.5 flex items-center gap-2"><span>⏱️</span>{t("home.rule.predict")}</div>
+            <div className="bg-white/[0.02] rounded-lg px-3 py-2.5 flex items-center gap-2"><span>📊</span>{t("home.rule.settle")}</div>
+            <div className="bg-white/[0.02] rounded-lg px-3 py-2.5 flex items-center gap-2"><span>🏆</span>{t("home.rule.pool")}</div>
           </div>
-        </div>
-        <div className="card !p-4">
-          <h3 className="text-xs font-bold text-white/40 uppercase tracking-widest mb-3">Recent Battles</h3>
-          {history.length>0
-            ?<div className="space-y-2">{history.map((g,i)=>{
-              const dir=parseFloat(g.settlement_price)>parseFloat(g.base_price)?"up":"down";
-              const isRefund=g.claimAction==="refund"||g.claimedLabel==="Refunded";
-              const won=g.is_correct===true;
-              const lost=g.is_correct===false;
-              const failed=g.state==="failed"&&!isRefund&&!won&&!lost;
-              const canClaim=!!g.claimable;
-              const isClaiming=claimingHistoryId===g.id&&claiming;
-              const isClaimed=!!g.claimed;
-              const actionLabel=g.claimLabel||"Claim";
-              const claimedLabel=g.claimedLabel||"Claimed";
-              const payoutValue=Number(g.reward||0);
-              const payoutText=payoutValue>0?`+${payoutValue.toFixed(2)}`:isRefund?"+0.00":failed?"Pending":"-1.00";
-              const rowClass=isRefund
-                ?"bg-amber-500/[0.06] border border-amber-500/[0.08]"
-                :won
-                  ?"bg-emerald-500/[0.06] border border-emerald-500/[0.08]"
-                  :lost
-                    ?"bg-rose-500/[0.06] border border-rose-500/[0.08]"
-                    :failed
-                      ?"bg-amber-500/[0.06] border border-amber-500/[0.08]"
-                      :"bg-white/[0.03] border border-white/[0.05]";
-              const icon=isRefund?"↩️":won?"🏆":lost?"💀":failed?"⚠️":"⏳";
-              const tone=isRefund?"text-amber-300":won?"text-emerald-400":lost?"text-rose-400":failed?"text-amber-300":"text-white/35";
-              return<div key={i} className={`flex items-center justify-between px-3 py-2.5 rounded-lg ${rowClass}`}>
-                <div className="flex items-center gap-2">
-                  <span className="text-sm">{icon}</span>
-                  <div><p className="text-[11px] font-mono text-white/50">#{g.id} · {g.mode==="random"?"Quick":"Room"} · {g.max_players}P</p>
-                  <p className="text-[10px] text-white/30">{isRefund?"Emergency refund path unlocked":failed?(g.error_message||"Settlement interrupted"):(g.prediction==="up"?"LONG":g.prediction==="down"?"SHORT":"Awaiting outcome")}{isRefund||failed||!g.settlement_price||!g.base_price?"":` → BTC ${dir==="up"?"📈":"📉"}`}</p></div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className={`text-xs font-mono font-bold ${tone}`}>{payoutText}</span>
-                  {(canClaim||isClaimed||isClaiming)&&<button
-                    onClick={()=>claimHistoryReward(g)}
-                    disabled={!canClaim||isClaiming}
-                    className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition ${
-                      isClaimed
-                        ?"bg-emerald-500/10 border border-emerald-500/15 text-emerald-300 cursor-default"
-                        : canClaim
-                          ?"bg-gradient-to-r from-emerald-500 to-teal-500 text-white disabled:opacity-60"
-                          :"bg-white/[0.03] border border-white/[0.05] text-white/35 cursor-default"
-                    }`}
-                  >
-                    {isClaiming?"Claiming...":isClaimed?claimedLabel:actionLabel}
-                  </button>}
-                </div>
-              </div>;
-            })}</div>
-            :<div className="flex flex-col items-center justify-center py-6 text-center">
-              <span className="text-2xl mb-2 opacity-30">⚔️</span>
-              <p className="text-white/25 text-xs">No battles yet</p>
-              <p className="text-white/15 text-[10px] mt-0.5">Start a match to see your history</p>
-            </div>
-          }
+          <div className="mt-2 rounded-lg bg-white/[0.02] border border-white/[0.04]">
+            <button
+              type="button"
+              onClick={()=>setPayoutRulesOpen(v=>!v)}
+              className="w-full flex items-center justify-between px-3 py-2.5 text-left"
+            >
+              <span className="text-xs text-white/55 flex items-center gap-2"><span>📐</span>{t("home.payout.quickRules")}</span>
+              <span className="text-white/35 text-[10px]">{payoutRulesOpen?"▴":"▾"}</span>
+            </button>
+            {payoutRulesOpen&&<div className="px-3 pb-3 pt-2 border-t border-white/[0.04] space-y-3">
+              <div>
+                <div className="font-mono text-[11px] text-white/70 bg-white/[0.03] rounded-lg px-3 py-2 leading-relaxed">{t("home.payout.formula")}</div>
+                <div className="mt-1.5 text-[10px] text-white/40 leading-relaxed">{t("home.payout.legend")}</div>
+              </div>
+              <div className="pt-2 border-t border-white/[0.04]">
+                <p className="text-[10px] uppercase tracking-[0.18em] text-white/40 mb-1.5">{t("home.payout.exampleLabel")}</p>
+                <div className="font-mono text-[11px] text-emerald-300 mb-1">{t("home.payout.exampleCalc")}</div>
+                <p className="text-[10px] text-white/45 leading-relaxed">{t("home.payout.exampleNote")}</p>
+              </div>
+              <div className="text-[10px] text-white/35 leading-relaxed">{t("home.payout.quickRulesNote")}</div>
+            </div>}
+          </div>
         </div>
       </div>
 
-      <p className="text-center text-white/10 text-[10px] mt-6 mb-2">Built on Base · USDC Settlements</p>
     </div>
   );
 }

@@ -1,14 +1,21 @@
-import{useState,useEffect,useCallback}from"react";import{useNavigate}from"react-router-dom";
+import{useState,useEffect,useCallback,useRef}from"react";import{useNavigate}from"react-router-dom";
 import{useSocket}from"../hooks/useSocket";import{useGame}from"../context/GameContext";import{useWallet}from"../context/WalletContext";import{useContract}from"../hooks/useContract";
 import{TeamSlots,PaymentModal}from"../components";import{ENTRY_FEE,PAYMENT_TIMEOUT}from"../config/constants";
+import{useT}from"../context/LangContext";
 export default function JoinRoom(){
   const nav=useNavigate();const{emit,on}=useSocket();const{updateGame}=useGame();
   const{wallet,connect,refund}=useWallet();const{payForRoomEntry,loading}=useContract();
+  const t=useT();
   const[phase,setPhase]=useState("input");const[code,setCode]=useState("");
   const[room,setRoom]=useState({current:0,total:0,players:[]});const[err,setErr]=useState(null);const[paid,setPaid]=useState(false);
   const[validInfo,setValidInfo]=useState(null);
   const[roomFullInfo,setRoomFullInfo]=useState(null);
   const[paymentProgress,setPaymentProgress]=useState({paidCount:0,total:0});
+  const[paymentTimeoutError,setPaymentTimeoutError]=useState(null);
+  const resumeRequestAt=useRef(0);
+  const paidRef=useRef(false);
+  const confirmRetryRef=useRef({tries:0,timer:null});
+  const paymentStartedAtRef=useRef(null);
 
   // Countdown timers
   const[roomExpiresAt,setRoomExpiresAt]=useState(null);
@@ -41,13 +48,15 @@ export default function JoinRoom(){
     });
   };
 
-  const handlePaymentFailure=useCallback((reason="Payment timeout — team disbanded")=>{
+  const handlePaymentFailure=useCallback((reason=t("create.err.teamDisbanded"))=>{
     if(paid){refund(ENTRY_FEE);setPaid(false);}
     setPaymentStartedAt(null);
+    setPaymentCountdown(null);
     setRoomFullInfo(null);
-    setErr(reason);
+    setPaymentTimeoutError(reason);
+    setErr(null);
     setPhase("input");
-  },[paid,refund]);
+  },[paid,refund,t]);
 
   // Room expiry countdown
   useEffect(()=>{
@@ -58,10 +67,13 @@ export default function JoinRoom(){
 
   // Payment countdown
   useEffect(()=>{
+    paymentStartedAtRef.current=paymentStartedAt;
     if(!paymentStartedAt){setPaymentCountdown(null);return;}
     const tick=()=>{const rem=Math.max(0,Math.ceil((paymentStartedAt+PAYMENT_TIMEOUT*1000-Date.now())/1000));setPaymentCountdown(rem);if(rem<=0)clearInterval(iv);};
     tick();const iv=setInterval(tick,1000);return()=>clearInterval(iv);
   },[paymentStartedAt]);
+
+  useEffect(()=>{paidRef.current=paid;},[paid]);
 
   useEffect(()=>{const u=[
     on("room:valid",d=>{setValidInfo(d);setPhase("confirm");}),
@@ -80,71 +92,121 @@ export default function JoinRoom(){
     }),
     on("room:full",d=>{openPayment(d);}),
     on("room:payment:opened",d=>{setRoomFullInfo(prev=>prev?{...prev,chainGameId:d.chainGameId||prev.chainGameId}:prev);}),
-    on("room:error",d=>{setErr(d.message);if(paid){refund(ENTRY_FEE);setPaid(false);}setPhase("input");}),
+    on("room:error",d=>{
+      const msg=d?.message||"";
+      const isRpcLike=/rpc|timed out|syncing|not confirmed/i.test(msg);
+      if(paidRef.current&&isRpcLike&&roomFullInfo){
+        const tries=confirmRetryRef.current.tries||0;
+        if(tries<5){
+          confirmRetryRef.current.tries=tries+1;
+          if(confirmRetryRef.current.timer)clearTimeout(confirmRetryRef.current.timer);
+          confirmRetryRef.current.timer=setTimeout(()=>{
+            emit("room:payment:confirm",{gameId:roomFullInfo.gameId,chainGameId:roomFullInfo.chainGameId||null,inviteCode:roomFullInfo.inviteCode||code,wallet});
+          },2000);
+          return;
+        }
+      }
+      setErr(msg);if(paid){refund(ENTRY_FEE);setPaid(false);}setPhase("input");
+    }),
     on("room:dissolved",d=>{if(paid){refund(ENTRY_FEE);setPaid(false);}setErr(d.reason);setPhase("input");setRoom({current:0,total:0,players:[]});setRoomExpiresAt(null);setRoomCountdown(null);setPaymentStartedAt(null);setPaymentCountdown(null);setRoomFullInfo(null);setPaymentProgress({paidCount:0,total:0});}),
-    on("room:expired",()=>{setRoomExpiresAt(null);setRoomCountdown(null);setErr("Room expired — team not filled in time");setPhase("input");}),
-    on("room:payment:update",d=>{setPaymentProgress({paidCount:d.paidCount,total:d.total});}),
-    on("room:payment:failed",d=>{handlePaymentFailure(d?.reason||"Payment timeout — team disbanded");}),
+    on("room:expired",()=>{setRoomExpiresAt(null);setRoomCountdown(null);setErr(t("join.err.expired"));setPhase("input");}),
+    on("room:payment:update",d=>{setPaymentProgress({paidCount:d.paidCount,total:d.total});confirmRetryRef.current.tries=0;if(confirmRetryRef.current.timer){clearTimeout(confirmRetryRef.current.timer);confirmRetryRef.current.timer=null;}setErr(null);}),
+    on("room:payment:failed",d=>{handlePaymentFailure(d?.reason||t("create.err.teamDisbanded"));}),
     on("game:start",d=>{updateGame({gameId:d.gameId,chainGameId:d.chainGameId||d.gameId,mode:"room",teamSize:d.players.length,players:d.players,phase:"predicting",basePrice:d.basePrice,countdown:Math.round((d.predictTimeout||30000)/1000),predictSafeBuffer:Math.round((d.predictSafeBuffer||5000)/1000),predictionDeadline:d.predictionDeadline||null});setPaymentStartedAt(null);setTimeout(()=>nav("/game"),500);}),
-  ];return()=>u.forEach(f=>f());},[on,code,updateGame,nav,handlePaymentFailure]);
+    on("game:resume",d=>{updateGame({gameId:d.gameId,chainGameId:d.chainGameId||d.gameId,mode:"room",teamSize:d.players?.length||d.totalPlayers||0,players:d.players||[],phase:d.phase==="settling"?"settling":"predicting",basePrice:d.basePrice,countdown:d.remaining||Math.round((d.predictTimeout||30000)/1000),predictSafeBuffer:Math.round((d.predictSafeBuffer||5000)/1000),predictionDeadline:d.predictionDeadline||null,currentPrice:d.currentPrice||d.basePrice});setPaymentStartedAt(null);setTimeout(()=>nav("/game"),300);}),
+  ];return()=>u.forEach(f=>f());},[on,code,updateGame,nav,handlePaymentFailure,wallet]);
 
   useEffect(()=>{
     if(paymentCountdown!==0)return;
+    const everyonePaid=paymentProgress.total>0&&paymentProgress.paidCount>=paymentProgress.total;
+    if(everyonePaid)return;
     if(phase!=="payment"&&phase!=="paid_waiting")return;
     const timer=setTimeout(()=>{
-      if(phase==="payment"||phase==="paid_waiting")handlePaymentFailure("Payment timeout — team disbanded");
+      const fullyPaidNow=paymentProgress.total>0&&paymentProgress.paidCount>=paymentProgress.total;
+      if((phase==="payment"||phase==="paid_waiting")&&!fullyPaidNow)handlePaymentFailure(t("create.err.teamDisbanded"));
     },1200);
     return()=>clearTimeout(timer);
-  },[paymentCountdown,phase,handlePaymentFailure]);
+  },[paymentCountdown,phase,paymentProgress,handlePaymentFailure,t]);
 
-  const join=()=>{if(!wallet){connect();return;}if(code.length<6)return setErr("Enter complete 6-digit code");setErr(null);emit("room:validate",{inviteCode:code.toUpperCase()});};
+  useEffect(()=>{
+    const everyonePaid=paymentProgress.total>0&&paymentProgress.paidCount>=paymentProgress.total;
+    if(!everyonePaid||phase!=="paid_waiting"||!wallet)return;
+    const now=Date.now();
+    if(now-resumeRequestAt.current<2500)return;
+    resumeRequestAt.current=now;
+    emit("game:resume:request");
+  },[paymentProgress,phase,wallet,emit]);
+
+  const join=()=>{if(!wallet){connect();return;}if(code.length<6)return setErr(t("join.err.incompleteCode"));setErr(null);emit("room:validate",{inviteCode:code.toUpperCase()});};
   const confirmJoin=()=>{emit("room:join",{inviteCode:code.toUpperCase()});setPhase("joining");};
-  const payRoom=useCallback(async()=>{try{const paymentResult=await payForRoomEntry({inviteCode:roomFullInfo?.inviteCode||code,isOwner:false,auth:roomFullInfo?.auth});if(paymentResult?.approved&&!paymentResult?.paid)return;if(roomFullInfo&&paymentResult?.chainGameId){setRoomFullInfo(prev=>prev?{...prev,chainGameId:paymentResult.chainGameId}:prev);}setPaid(true);if(roomFullInfo){emit("room:payment:confirm",{gameId:roomFullInfo.gameId,chainGameId:paymentResult?.chainGameId||roomFullInfo.chainGameId||null,inviteCode:roomFullInfo.inviteCode||code,wallet});setPhase("paid_waiting");}}catch(e){setErr(e?.message||"Payment failed");}},[code,payForRoomEntry,emit,roomFullInfo,wallet]);
+  const closePaymentTimeoutError=useCallback(()=>{setPaymentTimeoutError(null);},[]);
+  const payRoom=useCallback(async()=>{
+    const startedAt=paymentStartedAtRef.current;
+    const deadline=startedAt?startedAt+PAYMENT_TIMEOUT*1000:null;
+    if(deadline&&Date.now()>=deadline){handlePaymentFailure(t("create.err.windowClosed"));return;}
+    try{
+      const paymentResult=await payForRoomEntry({inviteCode:roomFullInfo?.inviteCode||code,isOwner:false,auth:roomFullInfo?.auth});
+      const nowDeadline=paymentStartedAtRef.current?paymentStartedAtRef.current+PAYMENT_TIMEOUT*1000:deadline;
+      if(nowDeadline&&Date.now()>=nowDeadline){
+        if(paymentResult?.paid)refund(ENTRY_FEE);
+        handlePaymentFailure(t("create.err.windowClosed"));
+        return;
+      }
+      if(roomFullInfo&&paymentResult?.chainGameId){setRoomFullInfo(prev=>prev?{...prev,chainGameId:paymentResult.chainGameId}:prev);}
+      setPaid(true);paidRef.current=true;
+      if(roomFullInfo){emit("room:payment:confirm",{gameId:roomFullInfo.gameId,chainGameId:paymentResult?.chainGameId||roomFullInfo.chainGameId||null,inviteCode:roomFullInfo.inviteCode||code,wallet});setPhase("paid_waiting");}
+    }catch(e){
+      const startedAtCatch=paymentStartedAtRef.current;
+      const deadlineCatch=startedAtCatch?startedAtCatch+PAYMENT_TIMEOUT*1000:null;
+      if(deadlineCatch&&Date.now()>=deadlineCatch)return;
+      setErr(e?.message||t("create.err.paymentFailed"));
+    }
+  },[code,payForRoomEntry,emit,roomFullInfo,wallet,refund,handlePaymentFailure,t]);
   const leave=()=>{emit("room:leave");if(paid){refund(ENTRY_FEE);setPaid(false);}setPhase("input");setRoomExpiresAt(null);};
   const fmtCountdown=(s)=>`${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`;
 
   return<div className="page-container">
-    <button onClick={()=>nav("/")} className="text-white/15 hover:text-white/30 text-xs mb-4 transition">← Back</button>
-    <h2 className="text-xl font-black mb-4 flex items-center gap-2"><span className="text-2xl">🎯</span>Join Arena</h2>
+    <button onClick={()=>nav("/")} className="text-white/15 hover:text-white/30 text-xs mb-4 transition">{t("howto.back")}</button>
+    <h2 className="text-xl font-black mb-4 flex items-center gap-2"><span className="text-2xl">🎯</span>{t("join.heading")}</h2>
     {err&&<div className="bg-rose-500/10 border border-rose-500/15 text-rose-400 px-3 py-2 rounded-xl mb-3 text-[11px]">{err}</div>}
     {phase==="input"&&<div>
-      {!wallet&&<div className="bg-amber-500/[0.04] border border-amber-500/10 rounded-xl px-3 py-1.5 mb-3"><p className="text-amber-400/50 text-[9px]">Connect wallet first</p></div>}
-      <p className="text-white/20 text-xs mb-2">Enter arena code</p>
-      <input type="text" value={code} onChange={e=>setCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g,""))} placeholder="6-digit code" maxLength={6} className="w-full bg-white/[0.02] border border-white/[0.06] rounded-xl px-4 py-3.5 text-center text-2xl font-mono font-black tracking-[0.5em] text-orange-400 placeholder:text-white/[0.08] placeholder:tracking-normal placeholder:text-sm placeholder:font-normal focus:outline-none focus:border-orange-500/20 transition mb-3"/>
-      <button onClick={join} disabled={code.length<6} className="btn-primary w-full py-3.5 font-black disabled:!opacity-15">Challenge</button>
+      {!wallet&&<div className="bg-violet-500/[0.06] border border-violet-500/15 rounded-xl px-3 py-1.5 mb-3"><p className="text-violet-300/60 text-[9px]">{t("join.connectWallet")}</p></div>}
+      <p className="text-white/20 text-xs mb-2">{t("join.enterCode")}</p>
+      <input type="text" value={code} onChange={e=>setCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g,""))} placeholder={t("join.codePlaceholder")} maxLength={6} className="w-full bg-white/[0.02] border border-white/[0.06] rounded-xl px-4 py-3.5 text-center text-2xl font-mono font-black tracking-[0.5em] text-violet-300 placeholder:text-white/[0.08] placeholder:tracking-normal placeholder:text-sm placeholder:font-normal focus:outline-none focus:border-violet-500/30 transition mb-3"/>
+      <button onClick={join} disabled={code.length<6} className="btn-primary w-full py-3.5 font-black disabled:!opacity-15">{t("join.ctaJoinMatch")}</button>
     </div>}
     {/* Confirm dialog — no payment, just confirm joining */}
     {phase==="confirm"&&<div className="card text-center">
-      <p className="text-white/40 text-xs mb-3">Join arena with code</p>
+      <p className="text-white/40 text-xs mb-3">{t("join.confirm.title")}</p>
       <div className="bg-white/[0.04] border border-white/[0.06] rounded-xl px-4 py-3 mb-3">
         <span className="text-2xl font-mono font-black tracking-[0.4em] text-gradient">{code}</span>
       </div>
-      <p className="text-white/25 text-[10px] mb-4">{validInfo?`${validInfo.current}/${validInfo.total} players in room`:""}</p>
+      <p className="text-white/25 text-[10px] mb-4">{validInfo?t("join.confirm.count").replace("{c}",String(validInfo.current)).replace("{t}",String(validInfo.total)):""}</p>
       <div className="flex gap-2">
-        <button onClick={()=>{setPhase("input");setValidInfo(null);}} className="flex-1 py-2.5 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:bg-white/[0.04] text-white/30 text-xs transition">Cancel</button>
-        <button onClick={confirmJoin} className="flex-1 btn-primary !py-2.5 !text-sm font-bold">Join</button>
+        <button onClick={()=>{setPhase("input");setValidInfo(null);}} className="flex-1 py-2.5 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:bg-white/[0.04] text-white/30 text-xs transition">{t("join.ctaCancel")}</button>
+        <button onClick={confirmJoin} className="flex-1 btn-primary !py-2.5 !text-sm font-bold">{t("join.ctaJoin")}</button>
       </div>
     </div>}
-    {phase==="joining"&&<div className="text-center py-10"><div className="w-8 h-8 mx-auto rounded-full border-2 border-orange-400/30 border-t-orange-400 animate-spin mb-3"/><p className="text-white/40 text-xs">Joining arena...</p></div>}
-    <PaymentModal visible={phase==="payment"} onConfirm={payRoom} onCancel={leave} loading={loading} title="Room Full — Pay to Start" subtitle="All players joined! Pay 1 USDC to start." hint={`${paymentProgress.paidCount}/${paymentProgress.total} paid`} countdown={paymentCountdown}/>
+    {phase==="joining"&&<div className="text-center py-10"><div className="w-8 h-8 mx-auto rounded-full border-2 border-violet-400/30 border-t-violet-300 animate-spin mb-3"/><p className="text-white/40 text-xs">{t("join.joining")}</p></div>}
+    <PaymentModal visible={phase==="payment"||!!paymentTimeoutError} onConfirm={paymentTimeoutError?closePaymentTimeoutError:payRoom} onCancel={paymentTimeoutError?undefined:leave} loading={loading} title={paymentTimeoutError?t("join.payment.timeout.title"):t("join.payment.full.title")} actionLabel={paymentTimeoutError?t("join.payment.timeout.action"):t("join.payment.action")} subtitle={paymentTimeoutError?t("join.payment.timeout.subtitle"):t("join.payment.full.subtitle")} hint={paymentTimeoutError?null:`${paymentProgress.paidCount}/${paymentProgress.total} ${t("join.paid")}`} error={paymentTimeoutError} countdown={paymentTimeoutError?null:paymentCountdown} singleAction={!!paymentTimeoutError}/>
     {(phase==="waiting"||phase==="paid_waiting")&&<div className="card text-center">
-      <p className="text-white/20 text-xs mb-1">Joined Arena</p>
+      <p className="text-white/20 text-xs mb-1">{t("join.joined")}</p>
       <p className="text-xl font-mono font-black text-gradient tracking-widest mb-3">{code}</p>
       <TeamSlots total={room.total} players={room.players}/>
-      <p className="text-white/20 text-[10px] mt-2">{paid&&paymentProgress.total?`${paymentProgress.paidCount}/${paymentProgress.total} paid`:`Waiting for opponents... (${room.current}/${room.total})`}</p>
+      <p className="text-white/20 text-[10px] mt-2">{paid&&paymentProgress.total?`${paymentProgress.paidCount}/${paymentProgress.total} ${t("join.paid")}`:`${t("join.waiting")} (${room.current}/${room.total})`}</p>
       {roomCountdown!==null&&roomCountdown>0&&room.current<room.total&&(
-        <div className={`mt-2 flex items-center justify-center gap-1.5 ${roomCountdown<=30?"text-rose-400":"text-amber-400"}`}>
+        <div className={`mt-2 flex items-center justify-center gap-1.5 ${roomCountdown<=30?"text-rose-400":"text-violet-300"}`}>
           <span className="text-sm">⏱️</span><span className="text-sm font-mono font-bold">{fmtCountdown(roomCountdown)}</span>
-          <span className="text-[9px] text-white/25 ml-1">remaining</span>
+          <span className="text-[9px] text-white/25 ml-1">{t("join.remaining")}</span>
         </div>
       )}
       {paymentCountdown!==null&&paymentCountdown>0&&phase==="paid_waiting"&&(
-        <div className={`mt-2 flex items-center justify-center gap-1.5 ${paymentCountdown<=10?"text-rose-400":"text-amber-400"}`}>
+        <div className={`mt-2 flex items-center justify-center gap-1.5 ${paymentCountdown<=10?"text-rose-400":"text-violet-300"}`}>
           <span className="text-sm">💰</span><span className="text-sm font-mono font-bold">{paymentCountdown}s</span>
-          <span className="text-[9px] text-white/25 ml-1">payment countdown</span>
+          <span className="text-[9px] text-white/25 ml-1">{t("join.payment.countdown")}</span>
         </div>
       )}
-      <button onClick={leave} className="mt-4 w-full py-2 rounded-xl bg-white/[0.015] border border-white/[0.04] hover:bg-rose-500/[0.06] hover:text-rose-400 transition text-[10px] text-white/20">Leave</button>
+      <button onClick={leave} className="mt-4 w-full py-2 rounded-xl bg-white/[0.015] border border-white/[0.04] hover:bg-rose-500/[0.06] hover:text-rose-400 transition text-[10px] text-white/20">{t("join.ctaLeave")}</button>
     </div>}
   </div>;
 }

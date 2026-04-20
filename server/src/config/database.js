@@ -38,6 +38,11 @@ export async function initDB() {
   await query(`ALTER TABLE games ADD COLUMN IF NOT EXISTS failed_at TIMESTAMPTZ`);
   await query(`ALTER TABLE game_players ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ`);
   await query(`ALTER TABLE game_players ADD COLUMN IF NOT EXISTS is_owner BOOLEAN DEFAULT false`);
+  await query(`ALTER TABLE game_players ADD COLUMN IF NOT EXISTS prediction_signature TEXT`);
+  await query(`ALTER TABLE game_players ADD COLUMN IF NOT EXISTS prediction_auth_signature TEXT`);
+  await query(`ALTER TABLE game_players ADD COLUMN IF NOT EXISTS prediction_deadline BIGINT`);
+  await query(`ALTER TABLE game_players ADD COLUMN IF NOT EXISTS prediction_synced BOOLEAN DEFAULT false`);
+  await query(`ALTER TABLE game_players ADD COLUMN IF NOT EXISTS prediction_signed_at TIMESTAMPTZ`);
   await query(`CREATE INDEX IF NOT EXISTS idx_gp_game ON game_players(game_id)`);
   console.log("[DB] Tables initialized");
 }

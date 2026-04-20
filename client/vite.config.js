@@ -5,6 +5,6 @@ export default defineConfig(({ mode }) => {
   const target = env.VITE_API_BASE || "http://localhost:3001";
   return {
     plugins: [react()],
-    server: { port: 5173, proxy: { "/api": target, "/socket.io": { target, ws: true } } },
+    server: { host: "0.0.0.0", port: 5173, proxy: { "/api": target, "/socket.io": { target, ws: true } } },
   };
 });

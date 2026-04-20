@@ -5,10 +5,12 @@ import "./interfaces/IERC20.sol";
 
 contract BtcPredictArena {
     address public owner;
+    address public oracleSigner;
     IERC20 public usdc;
     uint256 public feeRate = 500;
     uint256 public entryFee = 1e6;
     uint256 public totalFees;
+    uint256 public paymentTimeout = 60;
     uint256 public predictionDuration = 30;
     uint256 public predictionBuffer = 5;
     uint256 public refundGracePeriod = 300;
@@ -19,6 +21,10 @@ contract BtcPredictArena {
         keccak256("PredictionIntent(uint256 gameId,address player,uint8 prediction,uint256 deadline)");
     bytes32 private constant ROOM_PAYMENT_AUTH_TYPEHASH =
         keccak256("RoomPaymentAuth(bytes32 inviteCodeHash,uint8 maxPlayers,address roomOwner,address player,bytes32 playersHash,uint256 deadline)");
+    bytes32 private constant START_GAME_AUTH_TYPEHASH =
+        keccak256("StartGameAuth(uint256 gameId,uint256 basePrice,uint256 validUntil)");
+    bytes32 private constant SETTLEMENT_AUTH_TYPEHASH =
+        keccak256("SettlementAuth(uint256 gameId,uint256 settlementPrice,bytes32 resultRoot,uint256 totalPayout,uint256 validUntil)");
     bytes32 private constant NAME_HASH = keccak256("BtcPredictArena");
     bytes32 private constant VERSION_HASH = keccak256("1");
     uint256 private constant SECP256K1N_DIV_2 =
@@ -56,7 +62,11 @@ contract BtcPredictArena {
     mapping(uint256 => uint256) public gameFeeRate;
     mapping(uint256 => mapping(address => PlayerPrediction)) public playerPredictions;
     mapping(uint256 => uint256) public predictionDeadline;
+    mapping(uint256 => uint256) public paymentDeadlineAt;
     mapping(uint256 => address[]) public gamePlayers;
+    mapping(uint256 => bytes32) public settlementRoot;
+    mapping(uint256 => uint256) public settlementBudget;
+    mapping(uint256 => uint256) public claimedRewards;
     mapping(string => uint256) public inviteCodeToGame;
 
     event GameCreated(uint256 indexed gameId, uint8 maxPlayers, bool isRoom, string inviteCode, address creator);
@@ -77,6 +87,7 @@ contract BtcPredictArena {
 
     constructor(address _usdc) {
         owner = msg.sender;
+        oracleSigner = msg.sender;
         usdc = IERC20(_usdc);
         INITIAL_CHAIN_ID = block.chainid;
         INITIAL_DOMAIN_SEPARATOR = _buildDomainSeparator();
@@ -187,16 +198,17 @@ contract BtcPredictArena {
     }
 
     function startGame(uint256 _gameId, uint256 _basePrice) external onlyOwner gameExists(_gameId) {
-        Game storage g = games[_gameId];
-        require(g.state == GameState.Payment, "Not in payment state");
-        require(g.players.length == g.maxPlayers, "Not enough players");
-        require(allPlayersPaid(_gameId), "Players not fully paid");
-        require(_basePrice > 0, "Invalid price");
-        require(predictionDuration > predictionBuffer, "Invalid prediction window");
-        g.state = GameState.Active;
-        g.basePrice = _basePrice;
-        predictionDeadline[_gameId] = block.timestamp + (predictionDuration - predictionBuffer);
-        emit GameStarted(_gameId, _basePrice, predictionDeadline[_gameId]);
+        _startGame(_gameId, _basePrice);
+    }
+
+    function startGameWithAuth(
+        uint256 _gameId,
+        uint256 _basePrice,
+        uint256 _validUntil,
+        bytes calldata _oracleSignature
+    ) external gameExists(_gameId) {
+        _verifyStartGameAuth(_gameId, _basePrice, _validUntil, _oracleSignature);
+        _startGame(_gameId, _basePrice);
     }
 
     function predict(uint256 _gameId, Prediction _prediction) external gameExists(_gameId) {
@@ -224,10 +236,141 @@ contract BtcPredictArena {
         _submitPrediction(_gameId, _player, _prediction);
     }
 
+    function submitPredictionsBySigBatch(
+        uint256 _gameId,
+        address[] calldata _players,
+        Prediction[] calldata _predictions,
+        uint256[] calldata _deadlines,
+        bytes[] calldata _signatures
+    ) external gameExists(_gameId) {
+        uint256 length = _players.length;
+        require(length == _predictions.length, "Prediction count mismatch");
+        require(length == _deadlines.length, "Deadline count mismatch");
+        require(length == _signatures.length, "Signature count mismatch");
+        for (uint256 i = 0; i < length; i++) {
+            if (playerPredictions[_gameId][_players[i]].prediction != Prediction.None) continue;
+            bytes32 structHash = keccak256(abi.encode(
+                PREDICTION_INTENT_TYPEHASH,
+                _gameId,
+                _players[i],
+                uint8(_predictions[i]),
+                _deadlines[i]
+            ));
+            bytes32 digest = keccak256(abi.encodePacked("\x19\x01", domainSeparator(), structHash));
+            address signer = _recoverSigner(digest, _signatures[i]);
+            require(signer == _players[i], "Invalid signature");
+            _submitPrediction(_gameId, _players[i], _predictions[i]);
+        }
+    }
+
     function settleGame(uint256 _gameId, uint256 _settlementPrice) external onlyOwner gameExists(_gameId) {
+        _settleGame(_gameId, _settlementPrice);
+    }
+
+    function settleGameWithAuth(
+        uint256 _gameId,
+        uint256 _settlementPrice,
+        bytes32 _resultRoot,
+        uint256 _totalPayout,
+        uint256 _validUntil,
+        bytes calldata _oracleSignature
+    ) external gameExists(_gameId) {
+        _verifySettlementAuth(_gameId, _settlementPrice, _resultRoot, _totalPayout, _validUntil, _oracleSignature);
+        _settleGameWithRoot(_gameId, _settlementPrice, _resultRoot, _totalPayout);
+    }
+
+    function claimReward(uint256 _gameId) external gameExists(_gameId) {
+        Game storage g = games[_gameId];
+        require(g.state == GameState.Settled, "Not settled");
+        PlayerPrediction storage pp = playerPredictions[_gameId][msg.sender];
+        require(pp.hasPaid, "Not a participant");
+        require(!pp.claimed, "Already claimed");
+        require(pp.reward > 0, "No reward");
+        pp.claimed = true;
+        require(usdc.transfer(msg.sender, pp.reward), "Transfer failed");
+        emit RewardClaimed(_gameId, msg.sender, pp.reward);
+    }
+
+    function claimReward(
+        uint256 _gameId,
+        Prediction _prediction,
+        uint256 _reward,
+        bytes32[] calldata _proof
+    ) external gameExists(_gameId) {
+        Game storage g = games[_gameId];
+        require(g.state == GameState.Settled, "Not settled");
+        require(settlementRoot[_gameId] != bytes32(0), "Settlement proof unavailable");
+        PlayerPrediction storage pp = playerPredictions[_gameId][msg.sender];
+        require(pp.hasPaid, "Not a participant");
+        require(!pp.claimed, "Already claimed");
+        require(_reward > 0, "No reward");
+        bytes32 leaf = keccak256(abi.encode(_gameId, msg.sender, uint8(_prediction), _reward));
+        require(_verifyMerkleProof(_proof, settlementRoot[_gameId], leaf), "Invalid claim proof");
+
+        uint256 updatedClaimedRewards = claimedRewards[_gameId] + _reward;
+        require(updatedClaimedRewards <= settlementBudget[_gameId], "Reward budget exceeded");
+        claimedRewards[_gameId] = updatedClaimedRewards;
+        pp.claimed = true;
+        pp.reward = _reward;
+        if (pp.prediction == Prediction.None) {
+            pp.prediction = _prediction;
+        }
+
+        require(usdc.transfer(msg.sender, _reward), "Transfer failed");
+        emit RewardClaimed(_gameId, msg.sender, _reward);
+    }
+
+    function forceRefund(uint256 _gameId) external gameExists(_gameId) {
+        Game storage g = games[_gameId];
+        require(g.state == GameState.Active, "Game not active");
+        uint256 deadline = predictionDeadline[_gameId];
+        require(deadline > 0, "Prediction deadline unavailable");
+        require(block.timestamp > deadline + refundGracePeriod, "Refund not available yet");
+        g.state = GameState.Refundable;
+        emit GameRefundable(_gameId);
+    }
+
+    function claimRefund(uint256 _gameId) external gameExists(_gameId) {
+        Game storage g = games[_gameId];
+        require(g.state == GameState.Refundable, "Not refundable");
+        PlayerPrediction storage pp = playerPredictions[_gameId][msg.sender];
+        require(pp.hasPaid, "Not a participant");
+        require(!pp.claimed, "Already claimed");
+        uint256 refundAmount = gameEntryFee[_gameId];
+        require(refundAmount > 0, "No refund");
+        pp.claimed = true;
+        require(usdc.transfer(msg.sender, refundAmount), "Transfer failed");
+        emit RefundClaimed(_gameId, msg.sender, refundAmount);
+    }
+
+    function cancelGame(uint256 _gameId) external onlyOwner gameExists(_gameId) {
+        _cancelGame(_gameId, false);
+    }
+
+    function cancelExpiredGame(uint256 _gameId) external gameExists(_gameId) {
+        _cancelGame(_gameId, true);
+    }
+
+    function _startGame(uint256 _gameId, uint256 _basePrice) internal {
+        Game storage g = games[_gameId];
+        require(g.state == GameState.Payment, "Not in payment state");
+        require(g.players.length == g.maxPlayers, "Not enough players");
+        require(allPlayersPaid(_gameId), "Players not fully paid");
+        require(_basePrice > 0, "Invalid price");
+        require(predictionDuration > predictionBuffer, "Invalid prediction window");
+        g.state = GameState.Active;
+        g.basePrice = _basePrice;
+        predictionDeadline[_gameId] = block.timestamp + (predictionDuration - predictionBuffer);
+        emit GameStarted(_gameId, _basePrice, predictionDeadline[_gameId]);
+    }
+
+    function _settleGame(uint256 _gameId, uint256 _settlementPrice) internal {
         Game storage g = games[_gameId];
         require(g.state == GameState.Active, "Game not active");
         require(_settlementPrice > 0, "Invalid price");
+        if (msg.sender != owner) {
+            require(block.timestamp > predictionDeadline[_gameId], "Prediction phase not finished");
+        }
         g.state = GameState.Settled;
         g.settlementPrice = _settlementPrice;
         g.settledAt = block.timestamp;
@@ -278,44 +421,39 @@ contract BtcPredictArena {
         emit GameSettled(_gameId, _settlementPrice);
     }
 
-    function claimReward(uint256 _gameId) external gameExists(_gameId) {
-        Game storage g = games[_gameId];
-        require(g.state == GameState.Settled, "Not settled");
-        PlayerPrediction storage pp = playerPredictions[_gameId][msg.sender];
-        require(pp.hasPaid, "Not a participant");
-        require(!pp.claimed, "Already claimed");
-        require(pp.reward > 0, "No reward");
-        pp.claimed = true;
-        require(usdc.transfer(msg.sender, pp.reward), "Transfer failed");
-        emit RewardClaimed(_gameId, msg.sender, pp.reward);
-    }
-
-    function forceRefund(uint256 _gameId) external gameExists(_gameId) {
+    function _settleGameWithRoot(
+        uint256 _gameId,
+        uint256 _settlementPrice,
+        bytes32 _resultRoot,
+        uint256 _totalPayout
+    ) internal {
         Game storage g = games[_gameId];
         require(g.state == GameState.Active, "Game not active");
-        uint256 deadline = predictionDeadline[_gameId];
-        require(deadline > 0, "Prediction deadline unavailable");
-        require(block.timestamp > deadline + refundGracePeriod, "Refund not available yet");
-        g.state = GameState.Refundable;
-        emit GameRefundable(_gameId);
+        require(_settlementPrice > 0, "Invalid price");
+        require(_resultRoot != bytes32(0), "Invalid result root");
+        require(block.timestamp > predictionDeadline[_gameId], "Prediction phase not finished");
+
+        uint256 totalCollected = gameEntryFee[_gameId] * g.players.length;
+        require(_totalPayout <= totalCollected, "Payout exceeds pot");
+
+        g.state = GameState.Settled;
+        g.settlementPrice = _settlementPrice;
+        g.settledAt = block.timestamp;
+        settlementRoot[_gameId] = _resultRoot;
+        settlementBudget[_gameId] = _totalPayout;
+        claimedRewards[_gameId] = 0;
+        totalFees += totalCollected - _totalPayout;
+
+        emit GameSettled(_gameId, _settlementPrice);
     }
 
-    function claimRefund(uint256 _gameId) external gameExists(_gameId) {
-        Game storage g = games[_gameId];
-        require(g.state == GameState.Refundable, "Not refundable");
-        PlayerPrediction storage pp = playerPredictions[_gameId][msg.sender];
-        require(pp.hasPaid, "Not a participant");
-        require(!pp.claimed, "Already claimed");
-        uint256 refundAmount = gameEntryFee[_gameId];
-        require(refundAmount > 0, "No refund");
-        pp.claimed = true;
-        require(usdc.transfer(msg.sender, refundAmount), "Transfer failed");
-        emit RefundClaimed(_gameId, msg.sender, refundAmount);
-    }
-
-    function cancelGame(uint256 _gameId) external onlyOwner gameExists(_gameId) {
+    function _cancelGame(uint256 _gameId, bool enforceExpiry) internal {
         Game storage g = games[_gameId];
         require(g.state == GameState.Created || g.state == GameState.Payment, "Cannot cancel now");
+        if (enforceExpiry) {
+            require(block.timestamp > paymentDeadlineAt[_gameId], "Payment window still active");
+            require(!allPlayersPaid(_gameId), "Game already fully paid");
+        }
         g.state = GameState.Cancelled;
         uint256 refundAmount = gameEntryFee[_gameId];
         for (uint256 i = 0; i < g.players.length; i++) {
@@ -351,6 +489,14 @@ contract BtcPredictArena {
 
     function setFeeRate(uint256 _feeRate) external onlyOwner { require(_feeRate <= 1000, "Fee too high"); feeRate = _feeRate; }
     function setEntryFee(uint256 _entryFee) external onlyOwner { entryFee = _entryFee; }
+    function setOracleSigner(address _oracleSigner) external onlyOwner {
+        require(_oracleSigner != address(0), "Invalid signer");
+        oracleSigner = _oracleSigner;
+    }
+    function setPaymentTimeout(uint256 _paymentTimeout) external onlyOwner {
+        require(_paymentTimeout > 0, "Invalid timeout");
+        paymentTimeout = _paymentTimeout;
+    }
     function setRefundGracePeriod(uint256 _refundGracePeriod) external onlyOwner { require(_refundGracePeriod > 0, "Invalid grace period"); refundGracePeriod = _refundGracePeriod; }
 
     function getGamePlayers(uint256 _gameId) external view returns (address[] memory) { return games[_gameId].players; }
@@ -381,6 +527,7 @@ contract BtcPredictArena {
         g.inviteCode = _inviteCode;
         gameEntryFee[gid] = entryFee;
         gameFeeRate[gid] = feeRate;
+        paymentDeadlineAt[gid] = block.timestamp + paymentTimeout;
         emit GameCreated(gid, _maxPlayers, _isRoom, _inviteCode, creator);
         return gid;
     }
@@ -488,20 +635,96 @@ contract BtcPredictArena {
         ));
         bytes32 digest = keccak256(abi.encodePacked("\x19\x01", domainSeparator(), structHash));
         address signer = _recoverSigner(digest, _authSignature);
-        require(signer == owner, "Invalid room payment auth");
+        require(signer == oracleSigner, "Invalid room payment auth");
+    }
+
+    function _verifyStartGameAuth(
+        uint256 _gameId,
+        uint256 _basePrice,
+        uint256 _validUntil,
+        bytes calldata _oracleSignature
+    ) internal view {
+        require(block.timestamp <= _validUntil, "Start authorization expired");
+        bytes32 structHash = keccak256(abi.encode(
+            START_GAME_AUTH_TYPEHASH,
+            _gameId,
+            _basePrice,
+            _validUntil
+        ));
+        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", domainSeparator(), structHash));
+        address signer = _recoverSigner(digest, _oracleSignature);
+        require(signer == oracleSigner, "Invalid start auth");
+    }
+
+    function _verifySettlementAuth(
+        uint256 _gameId,
+        uint256 _settlementPrice,
+        bytes32 _resultRoot,
+        uint256 _totalPayout,
+        uint256 _validUntil,
+        bytes calldata _oracleSignature
+    ) internal view {
+        require(block.timestamp <= _validUntil, "Settlement authorization expired");
+        bytes32 structHash = keccak256(abi.encode(
+            SETTLEMENT_AUTH_TYPEHASH,
+            _gameId,
+            _settlementPrice,
+            _resultRoot,
+            _totalPayout,
+            _validUntil
+        ));
+        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", domainSeparator(), structHash));
+        address signer = _recoverSigner(digest, _oracleSignature);
+        require(signer == oracleSigner, "Invalid settlement auth");
     }
 
     function _submitPrediction(uint256 _gameId, address _player, Prediction _prediction) internal {
         Game storage g = games[_gameId];
         require(g.state == GameState.Active, "Game not active");
+        require(block.timestamp <= predictionDeadline[_gameId], "Prediction window closed");
+        _recordPrediction(_gameId, _player, _prediction);
+    }
+
+    function _applyPredictions(
+        uint256 _gameId,
+        address[] calldata _players,
+        Prediction[] calldata _predictions
+    ) internal {
+        uint256 length = _players.length;
+        require(length == _predictions.length, "Prediction count mismatch");
+
+        for (uint256 i = 0; i < length; i++) {
+            PlayerPrediction storage pp = playerPredictions[_gameId][_players[i]];
+            if (pp.prediction != Prediction.None) {
+                require(pp.prediction == _predictions[i], "Prediction mismatch");
+                continue;
+            }
+            _recordPrediction(_gameId, _players[i], _predictions[i]);
+        }
+    }
+
+    function _recordPrediction(uint256 _gameId, address _player, Prediction _prediction) internal {
         require(_isPlayer(_gameId, _player), "Not a player");
         require(_prediction == Prediction.Up || _prediction == Prediction.Down, "Invalid prediction");
-        require(block.timestamp <= predictionDeadline[_gameId], "Prediction window closed");
         PlayerPrediction storage pp = playerPredictions[_gameId][_player];
         require(pp.hasPaid, "Payment required");
         require(pp.prediction == Prediction.None, "Already predicted");
         pp.prediction = _prediction;
         emit PredictionMade(_gameId, _player, _prediction);
+    }
+
+    function _verifyMerkleProof(bytes32[] calldata _proof, bytes32 _root, bytes32 _leaf) internal pure returns (bool) {
+        bytes32 computedHash = _leaf;
+        for (uint256 i = 0; i < _proof.length; i++) {
+            computedHash = _hashPair(computedHash, _proof[i]);
+        }
+        return computedHash == _root;
+    }
+
+    function _hashPair(bytes32 _a, bytes32 _b) internal pure returns (bytes32) {
+        return _a < _b
+            ? keccak256(abi.encodePacked(_a, _b))
+            : keccak256(abi.encodePacked(_b, _a));
     }
 
     function _buildDomainSeparator() private view returns (bytes32) {

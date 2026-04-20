@@ -7,7 +7,7 @@ import { useWallet } from "../context/WalletContext";
 import { PredictButtons, CountdownRing, SettlementReveal } from "../components";
 import { PREDICT_TIMEOUT, PREDICT_SAFE_BUFFER, SERVER_URL, SETTLE_DELAY } from "../config/constants";
 
-const SHARE_TEXT = "Think you know where BTC goes next? 📈📉 Battle me on PredictArena. ⚔️ https://predict-arena-test.vercel.app/arena";
+const SHARE_TEXT = "Got a differentiated BTC view? Compare it on AlphaMatch. 📈📉 https://predict-arena-test.vercel.app/arena";
 const predictionStorageKey = (gameId, wallet) => `predict-arena:prediction:${gameId}:${wallet?.toLowerCase?.()}`;
 
 function readStoredPrediction(gameId, wallet) {
@@ -86,7 +86,8 @@ export default function GamePlay() {
       if (!game) return null;
 
       const nextGameId = Number(game.id || targetGameId);
-      const nextChainGameId = Number(game.chain_game_id || nextGameId);
+      const knownChainGameId = chainGameId || gameState.chainGameId || nextGameId;
+      const nextChainGameId = Number(game.chain_game_id || knownChainGameId);
       const playerWallets = players.map((player) => player.wallet_address?.toLowerCase?.()).filter(Boolean);
       const walletLower = wallet?.toLowerCase?.() || null;
       const myRow = walletLower ? players.find((player) => player.wallet_address?.toLowerCase?.() === walletLower) : null;
@@ -182,7 +183,7 @@ export default function GamePlay() {
     } catch {
       return null;
     }
-  }, [currentGameId, gameState.phase, getPlayerState, phase, updateGame, wallet]);
+  }, [chainGameId, currentGameId, gameState.chainGameId, gameState.phase, getPlayerState, phase, updateGame, wallet]);
 
   const refreshClaimStatus = useCallback(async (targetChainGameId = currentChainGameId, silent = false) => {
     if (!wallet || !targetChainGameId) {
@@ -288,7 +289,7 @@ export default function GamePlay() {
       const restored = await syncGameFromServer(currentGameId);
       if (cancelled) return;
       if (!restored && phase === "waiting") {
-        setFailureMessage("We couldn't restore this battle yet. Give it a moment or return home.");
+        setFailureMessage("We couldn't restore this match yet. Give it a moment or return home.");
       }
     };
     void sync();
@@ -505,7 +506,7 @@ export default function GamePlay() {
     ];
 
     return () => unsubscribers.forEach((unsubscribe) => unsubscribe());
-  }, [on, nav, gameState, phase, updateGame, resetGame, gameId, currentChainGameId, basePrice, wallet, myPrediction]);
+  }, [on, nav, gameState, phase, updateGame, resetGame, gameId, currentChainGameId, chainGameId, basePrice, wallet, myPrediction]);
 
   useEffect(() => {
     if (!wallet || !currentGameId) return;
@@ -517,8 +518,8 @@ export default function GamePlay() {
   const predict = async (prediction) => {
     try {
       setPredictionError(null);
-      if (countdown <= predictSafeBuffer) {
-        throw new Error(`Final ${predictSafeBuffer}s are reserved for on-chain confirmation. Please choose earlier next round.`);
+      if (secondsUntilDeadline <= effectivePredictSafeBuffer) {
+        return;
       }
       const targetChainGameId = chainGameId || gameState.chainGameId || gameId || gameState.gameId;
       setPendingPrediction(prediction);
@@ -527,11 +528,19 @@ export default function GamePlay() {
         gameId: gameId || gameState.gameId,
         prediction,
         deadline: submitted.deadline,
-        hash: submitted.hash,
+        signature: submitted.signature,
       });
     } catch (error) {
       setPendingPrediction(null);
-      setPredictionError(error?.message || "Prediction failed. Please try again.");
+      const message = error?.message || "Prediction failed. Please try again.";
+      const bufferNowActive = predictionDeadline
+        ? Math.max(0, predictionDeadline - Math.floor(Date.now() / 1000)) <= effectivePredictSafeBuffer
+        : countdown <= effectivePredictSafeBuffer;
+      if ((bufferNowActive || /prediction window closed/i.test(message)) && !displayedPrediction) {
+        setPredictionError(null);
+        return;
+      }
+      setPredictionError(message);
     }
   };
 
@@ -570,6 +579,10 @@ export default function GamePlay() {
 
   const rewardAmount = Number(result?.myResult?.reward || 0);
   const canClaimReward = phase === "result" && rewardAmount > 0 && !claimState.claimed && !result?.myResult?.claimed;
+  const effectivePredictSafeBuffer = predictSafeBuffer;
+  const secondsUntilDeadline = predictionDeadline
+    ? Math.max(0, predictionDeadline - Math.floor(Date.now() / 1000))
+    : countdown;
 
   const diff = currentPrice && basePrice ? currentPrice - basePrice : 0;
   const percent = basePrice ? ((diff / basePrice) * 100).toFixed(3) : "0";
@@ -591,14 +604,20 @@ export default function GamePlay() {
     : currentWallet === hostWallet
       ? "Host"
       : normalizedPlayers.includes(currentWallet)
-        ? "Challenger"
+        ? "Participant"
         : "Viewer";
-  const predictionBufferActive = phase === "predicting" && !displayedPrediction && countdown <= predictSafeBuffer;
+  const predictionBufferActive = phase === "predicting" && !displayedPrediction && secondsUntilDeadline <= effectivePredictSafeBuffer;
   const resultPrediction = result?.myResult?.prediction || displayedPrediction;
   const resultPredictionLabel = formatPredictionLabel(resultPrediction);
   const refundWaitSeconds = claimStatus?.refundUnlockAt ? Math.max(0, claimStatus.refundUnlockAt - Math.floor(Date.now() / 1000)) : null;
   const canClaimFailedFunds = !!(claimStatus?.canClaimReward || claimStatus?.canClaimRefund || claimStatus?.canForceRefund);
   const failedClaimLabel = claimStatus?.canClaimReward ? "Claim Reward" : "Claim Refund";
+
+  useEffect(() => {
+    if (predictionBufferActive) {
+      setPredictionError(null);
+    }
+  }, [predictionBufferActive]);
 
   useEffect(() => {
     const hasResolvedPlayers = normalizedPlayers.length > 0;
@@ -614,7 +633,7 @@ export default function GamePlay() {
       {phase === "waiting" && (
         <div className="text-center pt-12 animate-slideUp">
           <div className="text-5xl mb-3 animate-float">⚔️</div>
-          <h3 className="text-xl font-black text-gradient mb-1">Preparing Battle</h3>
+          <h3 className="text-xl font-black text-gradient mb-1">Preparing Match</h3>
           <p className="text-white/15 text-xs">Starting when all players are ready</p>
         </div>
       )}
@@ -624,7 +643,7 @@ export default function GamePlay() {
           <div className="card mb-4">
             <div className="flex items-start justify-between gap-4 mb-4">
               <div>
-                <p className="text-white/20 text-[10px] uppercase tracking-[0.25em] mb-1">Battle In Progress</p>
+                <p className="text-white/20 text-[10px] uppercase tracking-[0.25em] mb-1">Match In Progress</p>
                 <h3 className="text-lg font-black">Make your prediction</h3>
                 <p className="text-white/35 text-xs mt-1">Choose LONG if you think BTC will finish above the base price, or SHORT if you think it will finish below.</p>
               </div>
@@ -648,9 +667,9 @@ export default function GamePlay() {
               </div>
               <PredictButtons onPredict={predict} myPrediction={displayedPrediction} disabled={predicting || predictionBufferActive} />
             </div>
-            {predictionBufferActive && <div className="rounded-2xl border border-amber-500/15 bg-amber-500/10 text-amber-200 text-xs px-4 py-3 mb-4">Final {predictSafeBuffer}s are reserved for on-chain confirmation. Predictions are locked for this round.</div>}
+            {predictionBufferActive && <div className="rounded-2xl border border-violet-500/15 bg-violet-500/10 text-violet-200 text-xs px-4 py-3 mb-4">Final {effectivePredictSafeBuffer}s are reserved locally for on-chain confirmation. Predictions are locked for this round.</div>}
             {predictionError && <div className="rounded-2xl border border-rose-500/15 bg-rose-500/10 text-rose-300 text-xs px-4 py-3 mb-4">{predictionError}</div>}
-            {predicting && <div className="rounded-2xl border border-cyan-500/15 bg-cyan-500/10 text-cyan-200 text-xs px-4 py-3 mb-4">Confirm the transaction in your wallet to lock this prediction on-chain.</div>}
+            {predicting && <div className="rounded-2xl border border-cyan-500/15 bg-cyan-500/10 text-cyan-200 text-xs px-4 py-3 mb-4">Confirm the signature in your wallet to lock this prediction for on-chain submission.</div>}
             {displayedPrediction && (
               <div className={`rounded-2xl border p-4 text-center ${displayedPrediction === "up" ? "bg-emerald-500/[0.06] border-emerald-500/20" : "bg-rose-500/[0.06] border-rose-500/20"}`}>
                 <p className="text-white/25 text-[10px] uppercase tracking-[0.2em] mb-1">Your Position</p>
@@ -663,7 +682,7 @@ export default function GamePlay() {
 
       {phase === "settling" && (
         <div className="w-full max-w-2xl animate-slideUp">
-          <div className="rounded-2xl border border-amber-500/20 bg-gradient-to-br from-[#22160f] via-[#17110d] to-[#120d0a] shadow-2xl shadow-orange-900/20 p-6 text-center">
+          <div className="rounded-2xl border border-violet-500/20 bg-gradient-to-br from-[#14112a] via-[#100d22] to-[#0c0a1d] shadow-2xl shadow-violet-900/20 p-6 text-center">
             <div className="text-4xl mb-3 animate-float">⏳</div>
             <h3 className="text-lg font-black text-white/80 mb-4">Settling...</h3>
             <div className="flex justify-center mb-4">
@@ -676,17 +695,17 @@ export default function GamePlay() {
               </div>
             )}
             {displayedPrediction && (
-              <div className="mt-4 rounded-2xl border border-amber-500/15 bg-amber-500/[0.04] p-3">
+              <div className="mt-4 rounded-2xl border border-violet-500/15 bg-violet-500/[0.06] p-3">
                 <p className="text-white/25 text-[10px] uppercase tracking-[0.2em] mb-1">Your Call</p>
                 <p className={displayedPrediction === "up" ? "text-emerald-400 font-black" : "text-rose-400 font-black"}>{displayedPrediction === "up" ? "LONG" : "SHORT"}</p>
               </div>
             )}
             <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="rounded-2xl border border-amber-500/15 bg-amber-500/[0.05] p-4 text-center">
+              <div className="rounded-2xl border border-violet-500/15 bg-violet-500/[0.08] p-4 text-center">
                 <p className="text-white/20 text-[10px] uppercase tracking-[0.2em] mb-1">Base Price</p>
                 <p className="text-2xl font-mono font-black text-white/80">${basePrice.toLocaleString("en-US", { minimumFractionDigits: 2 })}</p>
               </div>
-              <div className="rounded-2xl border border-amber-500/15 bg-amber-500/[0.05] p-4 text-center">
+              <div className="rounded-2xl border border-violet-500/15 bg-violet-500/[0.08] p-4 text-center">
                 <p className="text-white/20 text-[10px] uppercase tracking-[0.2em] mb-1">Current Price</p>
                 <p className={`text-2xl font-mono font-black ${priceColor}`}>${currentPrice.toLocaleString("en-US", { minimumFractionDigits: 2 })}</p>
                 <p className={`text-[11px] font-mono mt-1 ${priceColor}`}>{diff >= 0 ? "+" : ""}{diff.toFixed(2)} ({percent}%)</p>
@@ -698,7 +717,7 @@ export default function GamePlay() {
 
       {phase === "failed" && (
         <div className="w-full max-w-2xl animate-slideUp">
-          <div className="rounded-2xl border border-amber-500/20 bg-gradient-to-br from-[#22160f] via-[#17110d] to-[#120d0a] shadow-2xl shadow-orange-900/20 p-6">
+          <div className="rounded-2xl border border-violet-500/20 bg-gradient-to-br from-[#14112a] via-[#100d22] to-[#0c0a1d] shadow-2xl shadow-violet-900/20 p-6">
             <div className="text-center">
               <div className="text-4xl mb-3">⚠️</div>
               <h3 className="text-lg font-black text-white/85">Settlement Interrupted</h3>
@@ -711,7 +730,7 @@ export default function GamePlay() {
             </div>
 
             {displayedPrediction && (
-              <div className="mt-4 rounded-2xl border border-amber-500/15 bg-amber-500/[0.04] p-4 text-center">
+              <div className="mt-4 rounded-2xl border border-violet-500/15 bg-violet-500/[0.06] p-4 text-center">
                 <p className="text-white/25 text-[10px] uppercase tracking-[0.2em] mb-1">Your Call</p>
                 <p className={displayedPrediction === "up" ? "text-emerald-400 font-black text-xl" : "text-rose-400 font-black text-xl"}>
                   {displayedPrediction === "up" ? "LONG" : "SHORT"}
@@ -720,21 +739,21 @@ export default function GamePlay() {
             )}
 
             <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="rounded-2xl border border-amber-500/15 bg-amber-500/[0.05] p-4 text-center">
+              <div className="rounded-2xl border border-violet-500/15 bg-violet-500/[0.08] p-4 text-center">
                 <p className="text-white/20 text-[10px] uppercase tracking-[0.2em] mb-1">Base Price</p>
                 <p className="text-2xl font-mono font-black text-white/80">${basePrice.toLocaleString("en-US", { minimumFractionDigits: 2 })}</p>
               </div>
-              <div className="rounded-2xl border border-amber-500/15 bg-amber-500/[0.05] p-4 text-center">
+              <div className="rounded-2xl border border-violet-500/15 bg-violet-500/[0.08] p-4 text-center">
                 <p className="text-white/20 text-[10px] uppercase tracking-[0.2em] mb-1">Current Price</p>
                 <p className={`text-2xl font-mono font-black ${priceColor}`}>${currentPrice.toLocaleString("en-US", { minimumFractionDigits: 2 })}</p>
                 <p className={`text-[11px] font-mono mt-1 ${priceColor}`}>{diff >= 0 ? "+" : ""}{diff.toFixed(2)} ({percent}%)</p>
               </div>
             </div>
 
-            <div className="mt-4 rounded-2xl border border-amber-500/15 bg-amber-500/[0.04] p-4">
+            <div className="mt-4 rounded-2xl border border-violet-500/15 bg-violet-500/[0.06] p-4">
               <div className="flex items-center justify-between gap-3 mb-3">
                 <div>
-                  <p className="text-amber-300 text-xs font-bold uppercase tracking-[0.2em]">Recovery</p>
+                  <p className="text-violet-300 text-xs font-bold uppercase tracking-[0.2em]">Recovery</p>
                   <p className="text-white/40 text-xs mt-1">We keep checking the contract so you can claim the correct outcome from this page.</p>
                 </div>
                 {claimStatus?.state === 3 && claimStatus?.reward > 0 && (
@@ -785,7 +804,7 @@ export default function GamePlay() {
             </div>
 
             <div className="flex gap-2 mt-4">
-              <button onClick={() => nav("/")} className="flex-1 py-2.5 rounded-xl bg-amber-500/[0.05] border border-amber-500/15 hover:bg-amber-500/[0.08] transition text-xs text-white/60">Home</button>
+              <button onClick={() => nav("/")} className="flex-1 py-2.5 rounded-xl bg-violet-500/[0.06] border border-violet-500/15 hover:bg-violet-500/[0.1] transition text-xs text-white/60">Home</button>
               <button onClick={handleShareToX} className="flex-1 btn-primary !py-2.5 font-black !text-sm">Share to 𝕏</button>
             </div>
           </div>
@@ -794,15 +813,15 @@ export default function GamePlay() {
 
       {phase === "result" && result && (
         <div className="w-full max-w-2xl animate-slideUp">
-          <div className="rounded-2xl border border-amber-500/20 bg-gradient-to-br from-[#22160f] via-[#17110d] to-[#120d0a] shadow-2xl shadow-orange-900/20 p-6">
-            <div className="rounded-2xl border border-amber-500/15 bg-amber-500/[0.04] p-4 mb-4">
+          <div className="rounded-2xl border border-violet-500/20 bg-gradient-to-br from-[#14112a] via-[#100d22] to-[#0c0a1d] shadow-2xl shadow-violet-900/20 p-6">
+            <div className="rounded-2xl border border-violet-500/15 bg-violet-500/[0.06] p-4 mb-4">
               <SettlementReveal basePrice={result.basePrice} settlementPrice={result.settlementPrice} direction={result.direction} />
             </div>
 
             {result.myResult && (
-              <div className="rounded-2xl border border-amber-500/15 bg-amber-500/[0.05] p-5 text-center">
+              <div className="rounded-2xl border border-violet-500/15 bg-violet-500/[0.08] p-5 text-center">
                 <div className="text-4xl mb-2">{result.myResult.isCorrect ? "🏆" : "💀"}</div>
-                <h3 className={`text-xl font-black ${result.myResult.isCorrect ? "text-emerald-400" : "text-rose-400"}`}>{result.myResult.isCorrect ? "Victory!" : "Defeated"}</h3>
+                <h3 className={`text-xl font-black ${result.myResult.isCorrect ? "text-emerald-400" : "text-rose-400"}`}>{result.myResult.isCorrect ? "Forecast Confirmed" : "Forecast Missed"}</h3>
                 <p className="text-white/20 text-[10px] mt-1 mb-2">You predicted {result.myResult.prediction === "up" ? "LONG" : result.myResult.prediction === "down" ? "SHORT" : "NO POSITION"}</p>
                 <div className={`text-3xl font-black font-mono ${rewardAmount > 0 ? "text-emerald-400" : "text-rose-400"}`}>{rewardAmount > 0 ? `+${rewardAmount.toFixed(4)}` : "-1.0000"} <span className="text-sm text-white/20">USDC</span></div>
                 <p className="text-white/30 text-[11px] mt-3">
@@ -815,7 +834,7 @@ export default function GamePlay() {
             )}
 
             {resultPredictionLabel && (
-              <div className="mt-4 rounded-2xl border border-amber-500/15 bg-amber-500/[0.04] p-4 text-center">
+              <div className="mt-4 rounded-2xl border border-violet-500/15 bg-violet-500/[0.06] p-4 text-center">
                 <p className="text-white/25 text-[10px] uppercase tracking-[0.2em] mb-1">Your Call</p>
                 <p className={resultPrediction === "up" ? "text-emerald-400 font-black text-xl" : "text-rose-400 font-black text-xl"}>{resultPredictionLabel}</p>
               </div>
@@ -852,7 +871,7 @@ export default function GamePlay() {
             )}
 
             <div className="flex gap-2 mt-4">
-              <button onClick={() => nav("/arena")} className="flex-1 py-2.5 rounded-xl bg-amber-500/[0.05] border border-amber-500/15 hover:bg-amber-500/[0.08] transition text-xs text-white/60">Battle</button>
+              <button onClick={() => nav("/arena")} className="flex-1 py-2.5 rounded-xl bg-violet-500/[0.06] border border-violet-500/15 hover:bg-violet-500/[0.1] transition text-xs text-white/60">Arena</button>
               <button onClick={handleShareToX} className="flex-1 btn-primary !py-2.5 font-black !text-sm">Share to 𝕏</button>
             </div>
           </div>

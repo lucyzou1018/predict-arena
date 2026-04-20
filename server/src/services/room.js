@@ -1,8 +1,8 @@
 import config from "../config/index.js";
 import { query, withTransaction } from "../config/database.js";
 import { generateInviteCode } from "../utils/inviteCode.js";
-import contractService from "./contract.js";
 import gameService from "./game.js";
+import contractService from "./contract.js";
 
 class RoomService {
   constructor() { this.rooms = {}; this.pendingCreates = {}; this.io = null; }
@@ -146,6 +146,19 @@ class RoomService {
       payment.chainGameId = chainGameId;
       payment.paymentOpen = true;
     }
+    query(
+      `UPDATE games
+       SET chain_game_id = $1
+       WHERE id = $2 AND (chain_game_id IS NULL OR chain_game_id <> $1)`,
+      [chainGameId, room.gameId],
+    ).catch((error) => {
+      console.error("[Room] failed to persist chainGameId", {
+        inviteCode: code,
+        gameId: room.gameId,
+        chainGameId,
+        error: error?.message || error,
+      });
+    });
     return room;
   }
 
@@ -162,8 +175,8 @@ class RoomService {
     if (r.transitioning) return false;
     r.transitioning = true;
     const players = [...r.players];
-    const chainGameId = r.chainGameId;
     const gameId = r.gameId;
+    const chainGameId = r.chainGameId || null;
 
     // Immediately clean up memory and notify players
     this._clearRoomTimer(r);
@@ -177,9 +190,16 @@ class RoomService {
     query(`UPDATE games SET state = $1 WHERE id = $2`, [state, gameId]).catch((error) => {
       console.error("[Room] failed to update game state on close", { code, gameId, state, error: error?.message || error });
     });
+    // 链上 cancelGame 会把已支付玩家的入场费推送式退回。只在房间已经有链上 gameId 时调用；
+    // 合约端只允许对 Created / Payment 状态 cancel，其他状态会自然 revert，所以无需前置判断。
     if (chainGameId) {
       contractService.cancelGame(chainGameId).catch((error) => {
-        console.error("[Room] background cancelGame failed", { code, chainGameId, error: error?.message || error });
+        console.error("[Room] on-chain cancelGame failed", {
+          code,
+          gameId,
+          chainGameId,
+          error: error?.message || error,
+        });
       });
     }
     return true;
@@ -210,76 +230,10 @@ class RoomService {
     const newOwner = remainingPlayers.find((player) => player.wallet === room.owner)?.wallet || remainingPlayers[0].wallet;
     const fallbackReason = "A player left and the room could not be refreshed. Please create a new room.";
     let newGameId = null;
-    let newChainGameId = null;
-    let oldChainCancelled = false;
 
     room.transitioning = true;
     this._clearRoomTimer(room);
-
-    if (!room.chainGameId) {
-      try {
-        await withTransaction(async (db) => {
-          await db.query(
-            `UPDATE games
-             SET state = 'cancelled', error_message = $1
-             WHERE id = $2`,
-            [leaveReason, room.gameId],
-          );
-
-          const nextGame = await db.query(
-            `INSERT INTO games (mode, max_players, invite_code, state, created_at)
-             VALUES ('room', $1, $2, 'waiting', $3)
-             RETURNING id`,
-            [room.maxPlayers, code, new Date(room.createdAt)],
-          );
-
-          newGameId = nextGame.rows[0].id;
-
-          for (const player of remainingPlayers) {
-            await db.query(
-              `INSERT INTO game_players (game_id, wallet_address, paid, is_owner)
-               VALUES ($1, $2, false, $3)`,
-              [newGameId, player.wallet, player.wallet === newOwner],
-            );
-          }
-        });
-
-        const rebuiltRoom = {
-          gameId: newGameId,
-          chainGameId: null,
-          maxPlayers: room.maxPlayers,
-          players: remainingPlayers,
-          owner: newOwner,
-          createdAt: room.createdAt,
-          expiresAt: room.expiresAt,
-          timer: null,
-          paid: {},
-          transitioning: false,
-          preparing: false,
-          prepareStartedAt: null,
-          _preparePromise: null,
-        };
-        this.rooms[code] = rebuiltRoom;
-        this._scheduleRoomExpiry(code, remainingMs);
-        gameService.clearRoomPayment(room.gameId);
-        this._broadcast(code);
-        return true;
-      } catch (error) {
-        console.error("[Room] waiting room local rebuild failed", { inviteCode: code, removedWallet, error: error?.message || error });
-        for (const player of remainingPlayers) {
-          if (player?.socketId) this.io?.to(player.socketId).emit("room:dissolved", { reason: fallbackReason });
-        }
-        delete this.rooms[code];
-        gameService.clearRoomPayment(room.gameId);
-        return false;
-      }
-    }
-
     try {
-      await contractService.cancelGame(room.chainGameId);
-      oldChainCancelled = true;
-      newChainGameId = await contractService.ownerCreateRoom(room.maxPlayers, code, newOwner);
-
       await withTransaction(async (db) => {
         await db.query(
           `UPDATE games
@@ -289,18 +243,13 @@ class RoomService {
         );
 
         const nextGame = await db.query(
-          `INSERT INTO games (chain_game_id, mode, max_players, invite_code, state, created_at)
-           VALUES ($1, 'room', $2, $3, 'waiting', $4)
+          `INSERT INTO games (mode, max_players, invite_code, state, created_at)
+           VALUES ('room', $1, $2, 'waiting', $3)
            RETURNING id`,
-          [newChainGameId, room.maxPlayers, code, new Date(room.createdAt)],
+          [room.maxPlayers, code, new Date(room.createdAt)],
         );
 
         newGameId = nextGame.rows[0].id;
-
-        if (!newChainGameId) {
-          newChainGameId = newGameId;
-          await db.query(`UPDATE games SET chain_game_id = $1 WHERE id = $2`, [newChainGameId, newGameId]);
-        }
 
         for (const player of remainingPlayers) {
           await db.query(
@@ -311,14 +260,9 @@ class RoomService {
         }
       });
 
-      for (const player of remainingPlayers) {
-        if (player.wallet === newOwner) continue;
-        await contractService.ownerJoinRoom(code, player.wallet);
-      }
-
       this.rooms[code] = {
         gameId: newGameId,
-        chainGameId: newChainGameId,
+        chainGameId: null,
         maxPlayers: room.maxPlayers,
         players: remainingPlayers,
         owner: newOwner,
@@ -337,20 +281,6 @@ class RoomService {
       return true;
     } catch (error) {
       console.error("[Room] waiting room rebuild failed", { inviteCode: code, removedWallet, error: error?.message || error });
-
-      if (!oldChainCancelled) {
-        const retryReason = "Room update failed. Please try again.";
-        room.transitioning = false;
-        this._scheduleRoomExpiry(code, remainingMs);
-        if (removedPlayer?.socketId) this.io?.to(removedPlayer.socketId).emit("room:error", { message: retryReason });
-        for (const player of room.players) {
-          if (player.wallet === removedWallet || !player?.socketId) continue;
-          this.io?.to(player.socketId).emit("room:error", { message: retryReason });
-        }
-        this._broadcast(code);
-        return false;
-      }
-
       if (newGameId) {
         try {
           await query(
@@ -363,26 +293,6 @@ class RoomService {
           console.error("[Room] failed to mark rebuilt room as cancelled", { inviteCode: code, gameId: newGameId, error: dbError?.message || dbError });
         }
       }
-
-      if (newChainGameId) {
-        try {
-          await contractService.cancelGame(newChainGameId);
-        } catch (chainError) {
-          console.error("[Room] failed to cancel rebuilt chain room", { inviteCode: code, chainGameId: newChainGameId, error: chainError?.message || chainError });
-        }
-      }
-
-      try {
-        await query(
-          `UPDATE games
-           SET state = 'cancelled', error_message = $1
-           WHERE id = $2`,
-          [fallbackReason, room.gameId],
-        );
-      } catch (dbError) {
-        console.error("[Room] failed to persist waiting-room rebuild failure", { inviteCode: code, gameId: room.gameId, error: dbError?.message || dbError });
-      }
-
       for (const player of remainingPlayers) {
         if (player?.socketId) this.io?.to(player.socketId).emit("room:dissolved", { reason: fallbackReason });
       }
@@ -401,7 +311,9 @@ class RoomService {
       const payment = gameService.getRoomPayment(r.gameId);
       if (payment) {
         r.players.splice(i, 1);
-        const reason = wallet === r.owner ? "Host left during payment" : "A player left during payment";
+        const reason = wallet === r.owner
+          ? "The host walked away during payment. Room closed and any paid entries refunded."
+          : "A player walked away during payment. Room closed and any paid entries refunded.";
         await this._abortPaymentRoom(c, reason);
         return true;
       }
@@ -413,23 +325,19 @@ class RoomService {
   }
 
   leaveBySocket(sid) {
+    // 断连（比如刷新）不拆房间。仅把 socketId 置空，等客户端重连后 rebindPlayerSocket 重绑；
+    // 真正废弃的房间由房间过期定时器 _expire 清理。
     for (const c in this.rooms) {
       const r = this.rooms[c];
-      if (r.transitioning) continue;
       const i = r.players.findIndex(p => p.socketId === sid);
       if (i === -1) continue;
       const w = r.players[i].wallet;
+      r.players[i].socketId = null;
       const payment = gameService.getRoomPayment(r.gameId);
       if (payment) {
-        r.players[i].socketId = null;
         const paymentPlayer = payment.players.find((player) => player.wallet === w);
         if (paymentPlayer) paymentPlayer.socketId = null;
-        return;
       }
-      const reason = w === r.owner ? "Host disconnected" : "A player disconnected";
-      void this._rebuildWaitingRoom(c, w, reason).catch((error) => {
-        console.error("[Room] waiting room rebuild on disconnect failed", { inviteCode: c, error: error?.message || error });
-      });
       return;
     }
   }

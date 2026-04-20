@@ -1,12 +1,14 @@
 import { useState, useEffect } from "react";
 import { useBtcPrice } from "../hooks/useBtcPrice";
+import { useT } from "../context/LangContext";
 
-const STEPS = [
-  { id: "match", title: "JOIN", desc: "5 players enter the arena" },
-  { id: "predict", title: "PREDICT", desc: "Each player picks Long or Short" },
-  { id: "countdown", title: "SETTLE", desc: "30s countdown — BTC moves live" },
-  { id: "result", title: "RESULT", desc: "Winners split the pool instantly" },
-];
+const STEP_IDS = ["match", "predict", "countdown", "result"];
+const STEP_KEYS = {
+  match: { title: "preview.step.join.title", desc: "preview.step.join.desc" },
+  predict: { title: "preview.step.predict.title", desc: "preview.step.predict.desc" },
+  countdown: { title: "preview.step.settle.title", desc: "preview.step.settle.desc" },
+  result: { title: "preview.step.result.title", desc: "preview.step.result.desc" },
+};
 
 const PLAYERS = [
   { name: "0x7a3f...c2d1", avatar: "A1" },
@@ -23,6 +25,7 @@ const WIN_AMOUNT = "+4.75";
 const LOSE_AMOUNT = "-1.00";
 
 export default function BattlePreview() {
+  const t = useT();
   const realPrice = useBtcPrice();
   const [step, setStep] = useState(0);
   const [priceJitter, setPriceJitter] = useState(0);
@@ -30,7 +33,8 @@ export default function BattlePreview() {
 
   const basePrice = realPrice > 0 ? realPrice : 68000;
   const endDelta = basePrice * 0.0012;
-  const current = STEPS[step];
+  const currentId = STEP_IDS[step];
+  const current = { id: currentId, title: t(STEP_KEYS[currentId].title), desc: t(STEP_KEYS[currentId].desc) };
 
   // Simulate players joining in match phase
   useEffect(() => {
@@ -75,7 +79,7 @@ export default function BattlePreview() {
       {/* Phase glow */}
       {current.id === "result" && (
         <div className="absolute inset-0 rounded-[1.25rem] pointer-events-none"
-          style={{ boxShadow: "inset 0 0 60px rgba(251,191,36,0.06)" }} />
+          style={{ boxShadow: "inset 0 0 60px rgba(124,92,255,0.08)" }} />
       )}
       {current.id === "countdown" && (
         <div className="absolute inset-0 rounded-[1.25rem] pointer-events-none"
@@ -84,22 +88,22 @@ export default function BattlePreview() {
 
       {/* Step tabs */}
       <div className="flex gap-1 mb-4">
-        {STEPS.map((s, i) => {
+        {STEP_IDS.map((id, i) => {
           const active = step === i;
           const done = i < step;
           return (
             <button
-              key={s.id}
+              key={id}
               onClick={() => goTo(i)}
               className="flex-1 cursor-pointer transition-all duration-300"
             >
               <div className={`h-1 rounded-full mb-2 transition-all duration-500 ${
-                active ? "bg-orange-400" : done ? "bg-orange-400/30" : "bg-white/[0.06]"
+                active ? "bg-violet-400" : done ? "bg-violet-400/30" : "bg-white/[0.06]"
               }`} />
               <p className={`text-[9px] font-bold uppercase tracking-wider transition-colors ${
-                active ? "text-orange-400" : "text-white/20"
+                active ? "text-violet-300" : "text-white/20"
               }`}>
-                {s.title}
+                {t(STEP_KEYS[id].title)}
               </p>
             </button>
           );
@@ -109,7 +113,7 @@ export default function BattlePreview() {
       {/* Step description */}
       <div className="flex items-center gap-2 mb-3">
         <div className={`w-5 h-5 rounded-md flex items-center justify-center text-[9px] font-black ${
-          current.id === "result" ? "bg-amber-400/20 text-amber-400" : "bg-orange-400/15 text-orange-400"
+          current.id === "result" ? "bg-violet-400/20 text-violet-300" : "bg-violet-400/15 text-violet-300"
         }`}>
           {step + 1}
         </div>
@@ -123,10 +127,10 @@ export default function BattlePreview() {
           <div className="rounded-xl p-3 border border-white/[0.06]" style={{ background: "linear-gradient(135deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01))" }}>
             <div className="flex items-center justify-between mb-2.5">
               <div className="flex items-center gap-2">
-                <span className="text-[10px] text-white/30 font-bold uppercase tracking-wider">Arena Lobby</span>
-                <span className="px-1.5 py-0.5 rounded text-[8px] font-bold bg-orange-500/10 text-orange-400 border border-orange-500/15">#A7F2</span>
+                <span className="text-[10px] text-white/30 font-bold uppercase tracking-wider">{t("preview.lobby")}</span>
+                <span className="px-1.5 py-0.5 rounded text-[8px] font-bold bg-violet-500/10 text-violet-300 border border-violet-500/20">#A7F2</span>
               </div>
-              <span className="text-[10px] font-mono font-bold text-orange-400">{joinedCount}/5</span>
+              <span className="text-[10px] font-mono font-bold text-violet-300">{joinedCount}/5</span>
             </div>
             <div className="flex gap-2">
               {PLAYERS.map((p, i) => {
@@ -134,11 +138,11 @@ export default function BattlePreview() {
                 return (
                   <div key={i} className={`flex-1 h-10 rounded-lg border flex items-center justify-center transition-all duration-500 ${
                     joined
-                      ? "bg-orange-500/10 border-orange-400/20"
+                      ? "bg-violet-500/10 border-violet-400/25"
                       : "bg-white/[0.02] border-white/[0.04] border-dashed"
                   }`}>
                     {joined ? (
-                      <span className="text-[9px] font-mono text-orange-400/80 font-bold">{p.avatar}</span>
+                      <span className="text-[9px] font-mono text-violet-300/80 font-bold">{p.avatar}</span>
                     ) : (
                       <span className="text-white/10 text-lg">+</span>
                     )}
@@ -147,31 +151,31 @@ export default function BattlePreview() {
               })}
             </div>
             <div className="mt-2.5 h-1 rounded-full bg-white/[0.04] overflow-hidden">
-              <div className="h-full rounded-full bg-gradient-to-r from-orange-500 to-amber-400 transition-all duration-700" style={{ width: `${(joinedCount / 5) * 100}%` }} />
+              <div className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-violet-400 transition-all duration-700" style={{ width: `${(joinedCount / 5) * 100}%` }} />
             </div>
           </div>
 
           {/* Entry modes */}
           <div className="grid grid-cols-2 gap-2">
-            <div className="rounded-lg p-2.5 border border-amber-500/10" style={{ background: "linear-gradient(135deg, rgba(245,158,11,0.06), rgba(245,158,11,0.02))" }}>
-              <p className="text-[10px] font-bold text-white/70">⚡ Quick Match</p>
-              <p className="text-[8px] text-white/25 mt-0.5">Auto-matched instantly</p>
+            <div className="rounded-lg p-2.5 border border-violet-500/15" style={{ background: "linear-gradient(135deg, rgba(124,92,255,0.08), rgba(95,149,255,0.03))" }}>
+              <p className="text-[10px] font-bold text-white/70">{t("preview.quickMatch")}</p>
+              <p className="text-[8px] text-white/25 mt-0.5">{t("preview.quickMatch.desc")}</p>
             </div>
             <div className="rounded-lg p-2.5 border border-violet-500/10" style={{ background: "linear-gradient(135deg, rgba(139,92,246,0.06), rgba(139,92,246,0.02))" }}>
-              <p className="text-[10px] font-bold text-white/70">🔑 Room Code</p>
-              <p className="text-[8px] text-white/25 mt-0.5">Invite friends to play</p>
+              <p className="text-[10px] font-bold text-white/70">{t("preview.roomCode")}</p>
+              <p className="text-[8px] text-white/25 mt-0.5">{t("preview.roomCode.desc")}</p>
             </div>
           </div>
 
           {/* Round rules */}
           <div className="rounded-xl p-3 border border-white/[0.06]" style={{ background: "linear-gradient(135deg, rgba(255,255,255,0.025), rgba(255,255,255,0.008))" }}>
-            <p className="text-[9px] text-white/25 font-bold uppercase tracking-wider mb-2">Round Rules</p>
+            <p className="text-[9px] text-white/25 font-bold uppercase tracking-wider mb-2">{t("preview.rules")}</p>
             <div className="grid grid-cols-4 gap-2">
               {[
-                { val: "1 USDC", label: "Entry" },
-                { val: "30s", label: "Duration" },
-                { val: "5%", label: "Fee" },
-                { val: "5", label: "Max Players" },
+                { val: "1 USDC", label: t("preview.rules.entry") },
+                { val: "30s", label: t("preview.rules.duration") },
+                { val: "5%", label: t("preview.rules.fee") },
+                { val: "5", label: t("preview.rules.max") },
               ].map((r) => (
                 <div key={r.label} className="text-center">
                   <p className="text-xs font-mono font-black text-white/80">{r.val}</p>
@@ -197,7 +201,7 @@ export default function BattlePreview() {
                   ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/20"
                   : "bg-rose-500/15 text-rose-400 border border-rose-500/20"
               }`}>
-                {CHOICES[i] === "long" ? "▲ LONG" : "▼ SHORT"}
+                {CHOICES[i] === "long" ? `▲ ${t("preview.long")}` : `▼ ${t("preview.short")}`}
               </div>
             </div>
           ))}
@@ -208,9 +212,9 @@ export default function BattlePreview() {
               <div className="h-full bg-rose-500/50 rounded-r-full" style={{ width: `${(shortCount / 5) * 100}%` }} />
             </div>
             <div className="flex items-center gap-2 shrink-0">
-              <span className="text-emerald-400/70 text-[9px] font-bold">{longCount} Long</span>
+              <span className="text-emerald-400/70 text-[9px] font-bold">{longCount} {t("preview.longCount")}</span>
               <span className="text-white/10">·</span>
-              <span className="text-rose-400/70 text-[9px] font-bold">{shortCount} Short</span>
+              <span className="text-rose-400/70 text-[9px] font-bold">{shortCount} {t("preview.shortCount")}</span>
             </div>
           </div>
         </div>
@@ -223,7 +227,7 @@ export default function BattlePreview() {
           <div className="flex items-center gap-3 mb-3">
             {/* Long team */}
             <div className="flex-1 rounded-xl p-2.5 border border-emerald-500/10" style={{ background: "linear-gradient(135deg, rgba(16,185,129,0.06), rgba(16,185,129,0.02))" }}>
-              <p className="text-[9px] text-emerald-400/60 font-bold uppercase tracking-wider mb-1.5">Long Team</p>
+              <p className="text-[9px] text-emerald-400/60 font-bold uppercase tracking-wider mb-1.5">{t("preview.longTeam")}</p>
               <div className="flex gap-1">
                 {PLAYERS.filter((_, i) => CHOICES[i] === "long").map((p, i) => (
                   <div key={i} className="w-7 h-7 rounded-md bg-emerald-500/15 border border-emerald-500/15 flex items-center justify-center text-[8px] font-black text-emerald-400/70">
@@ -249,7 +253,7 @@ export default function BattlePreview() {
 
             {/* Short team */}
             <div className="flex-1 rounded-xl p-2.5 border border-rose-500/10" style={{ background: "linear-gradient(135deg, rgba(244,63,94,0.06), rgba(244,63,94,0.02))" }}>
-              <p className="text-[9px] text-rose-400/60 font-bold uppercase tracking-wider mb-1.5">Short Team</p>
+              <p className="text-[9px] text-rose-400/60 font-bold uppercase tracking-wider mb-1.5">{t("preview.shortTeam")}</p>
               <div className="flex gap-1">
                 {PLAYERS.filter((_, i) => CHOICES[i] === "short").map((p, i) => (
                   <div key={i} className="w-7 h-7 rounded-md bg-rose-500/15 border border-rose-500/15 flex items-center justify-center text-[8px] font-black text-rose-400/70">
@@ -264,18 +268,18 @@ export default function BattlePreview() {
           <div className="flex items-center justify-between rounded-lg px-3 py-2 border border-white/[0.05]" style={{ background: "linear-gradient(135deg, rgba(255,255,255,0.02), rgba(255,255,255,0.005))" }}>
             <div className="flex items-center gap-3">
               <div>
-                <p className="text-[8px] text-white/25 uppercase tracking-wider">Pool</p>
+                <p className="text-[8px] text-white/25 uppercase tracking-wider">{t("preview.pool")}</p>
                 <p className="text-xs font-mono font-bold text-white/70">{totalPool} USDC</p>
               </div>
               <div className="w-px h-6 bg-white/[0.06]" />
               <div>
-                <p className="text-[8px] text-white/25 uppercase tracking-wider">Players</p>
+                <p className="text-[8px] text-white/25 uppercase tracking-wider">{t("preview.players")}</p>
                 <p className="text-xs font-mono font-bold text-white/70">{longCount}v{shortCount}</p>
               </div>
             </div>
             <div className="flex items-center gap-1">
               <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: pc }} />
-              <span className="text-[9px] text-white/30">Live</span>
+              <span className="text-[9px] text-white/30">{t("preview.live")}</span>
             </div>
           </div>
         </div>
@@ -285,11 +289,11 @@ export default function BattlePreview() {
       {current.id === "result" && (
         <div className="mb-3">
           {/* Winner banner */}
-          <div className="rounded-xl p-3 mb-2 border border-amber-400/15" style={{ background: "linear-gradient(135deg, rgba(251,191,36,0.06), rgba(245,158,11,0.02))" }}>
+          <div className="rounded-xl p-3 mb-2 border border-violet-400/20" style={{ background: "linear-gradient(135deg, rgba(124,92,255,0.08), rgba(95,149,255,0.03))" }}>
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-2">
                 <span className="text-base">🏆</span>
-                <span className="text-[10px] font-black text-amber-400 uppercase tracking-wider">Long Wins — BTC Went Up</span>
+                <span className="text-[10px] font-black text-violet-300 uppercase tracking-wider">{t("preview.winner")}</span>
               </div>
               <span className="text-[10px] font-mono font-bold text-emerald-400">+{(endDelta).toFixed(2)}</span>
             </div>
@@ -317,7 +321,7 @@ export default function BattlePreview() {
                   </div>
                   <span className="text-[9px] font-mono text-white/30 flex-1 truncate">{p.name}</span>
                   <span className={`text-[9px] font-bold ${choice === "long" ? "text-emerald-400/50" : "text-rose-400/50"}`}>
-                    {choice === "long" ? "LONG" : "SHORT"}
+                    {choice === "long" ? t("preview.long") : t("preview.short")}
                   </span>
                   <span className={`text-[10px] font-mono font-black ml-1 ${
                     isW ? "text-emerald-400" : "text-rose-400/40"
@@ -332,10 +336,10 @@ export default function BattlePreview() {
 
           {/* Settlement summary */}
           <div className="flex items-center justify-between mt-2.5 pt-2 border-t border-white/[0.04]">
-            <span className="text-[9px] text-white/25">Settlement complete</span>
+            <span className="text-[9px] text-white/25">{t("preview.settled")}</span>
             <div className="flex items-center gap-1">
               <span className="w-1 h-1 rounded-full bg-emerald-400" />
-              <span className="text-[9px] text-emerald-400/60 font-mono">On-chain verified</span>
+              <span className="text-[9px] text-emerald-400/60 font-mono">{t("preview.onchain")}</span>
             </div>
           </div>
         </div>
@@ -346,13 +350,13 @@ export default function BattlePreview() {
         current.id === "countdown"
           ? `${isGreen ? "border-emerald-500/10" : "border-rose-500/10"}`
           : current.id === "result"
-          ? "border-amber-500/10"
+          ? "border-violet-500/15"
           : "border-white/[0.06]"
       }`} style={{
         background: current.id === "countdown"
           ? `linear-gradient(135deg, ${isGreen ? "rgba(16,185,129,0.06)" : "rgba(244,63,94,0.06)"}, transparent)`
           : current.id === "result"
-          ? "linear-gradient(135deg, rgba(251,191,36,0.04), transparent)"
+          ? "linear-gradient(135deg, rgba(124,92,255,0.06), transparent)"
           : "linear-gradient(135deg, rgba(255,255,255,0.025), rgba(255,255,255,0.01))"
       }}>
         <div className="flex items-center justify-between">
@@ -375,15 +379,15 @@ export default function BattlePreview() {
           </div>
           <div className="flex items-center gap-1.5">
             <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: current.id === "countdown" ? pc : "#10b981" }} />
-            <span className="text-white/25 text-[9px]">Live</span>
+            <span className="text-white/25 text-[9px]">{t("preview.live")}</span>
           </div>
         </div>
         <p className={`text-[9px] mt-2 pt-2 border-t border-white/[0.04] ${
           current.id === "predict" ? "text-white/30" : current.id === "countdown" ? "text-white/35" : "text-white/30"
         }`}>
-          {current.id === "predict" && "📌 Base price — locked when game starts, all players share the same price"}
-          {current.id === "countdown" && "⏱ Live price — 30s countdown, price moving in real-time"}
-          {current.id === "result" && "✅ Final price — compared with base price to determine winners"}
+          {current.id === "predict" && t("preview.hint.predict")}
+          {current.id === "countdown" && t("preview.hint.countdown")}
+          {current.id === "result" && t("preview.hint.result")}
         </p>
       </div>}
     </div>
