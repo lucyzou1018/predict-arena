@@ -10,6 +10,7 @@ import{useBtcPrice}from"../hooks/useBtcPrice";
 import{BtcTicker,TeamSlots,MatchAnimation,PaymentModal}from"../components";
 import{ENTRY_FEE,TEAM_SIZES,PAYMENT_TIMEOUT}from"../config/constants";
 import{useT}from"../context/LangContext";
+import{Trophy,XCircle,TrendingUp}from"lucide-react";
 
 function formatPaymentUiError(message){
   const text=(message||"").toLowerCase();
@@ -77,12 +78,12 @@ function getHistoryResult(game){
 function getHistoryResultClass(result){
   if(result==="Win")return"text-emerald-400";
   if(result==="Lose")return"text-rose-400";
-  if(result==="Failed")return"text-violet-300";
-  if(result==="Expired")return"text-violet-300";
+  if(result==="Failed")return"text-fuchsia-300";
+  if(result==="Expired")return"text-fuchsia-300";
   if(result==="Cancelled")return"text-white/30";
-  if(result==="Waiting")return"text-violet-300";
+  if(result==="Waiting")return"text-fuchsia-300";
   if(result==="Playing")return"text-sky-300";
-  if(result==="Refund Ready"||result==="Refunded")return"text-violet-300";
+  if(result==="Refund Ready"||result==="Refunded")return"text-fuchsia-300";
   if(result==="Settled")return"text-emerald-300";
   return"text-white/35";
 }
@@ -172,7 +173,7 @@ function SizeSelectorBase({selectedSize,onSelect,onAction,actionLabel,disabled,l
           <button key={s} onClick={()=>onSelect(s)} disabled={disabled}
             className={`py-3 rounded-xl font-black text-base transition-all
               ${selectedSize===s
-                ?"bg-gradient-to-br from-indigo-500 to-violet-600 text-white shadow-lg shadow-violet-500/25 -translate-y-0.5"
+                ?"bg-gradient-to-br from-purple-500 to-fuchsia-600 text-white shadow-lg shadow-fuchsia-500/25 -translate-y-0.5"
                 :"bg-white/[0.03] border border-white/[0.06] text-white/20 hover:bg-white/[0.06] hover:text-white/40"}
               ${disabled?"!opacity-30 cursor-not-allowed":""}`}
           >{s}P</button>
@@ -180,6 +181,200 @@ function SizeSelectorBase({selectedSize,onSelect,onAction,actionLabel,disabled,l
       </div>
       <button onClick={onAction} disabled={disabled} className={`btn-primary w-full py-3 font-bold text-sm ${disabled?"!opacity-30 cursor-not-allowed":""}`}>{actionLabel}</button>
     </div>
+  );
+}
+
+function RoomGlyph({ className = "w-5 h-5" }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      className={className}
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M4 8.5 12 4l8 4.5v8L12 20l-8-3.5v-8Z" />
+      <path d="M12 4v16" />
+      <path d="M4 8.5 12 13l8-4.5" />
+    </svg>
+  );
+}
+
+function JoinGlyph({ className = "w-5 h-5" }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      className={className}
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M12 5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Z" />
+      <path d="M5 19c1.5-3.1 4-4.8 7-4.8s5.5 1.7 7 4.8" />
+      <path d="M18 8h3" />
+      <path d="M19.5 6.5v3" />
+    </svg>
+  );
+}
+
+function MatchGlyph({ className = "w-5 h-5" }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      className={className}
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M7 6h4l2 3-2 3H7l-2-3 2-3Z" />
+      <path d="M17 12h-4l-2 3 2 3h4l2-3-2-3Z" />
+      <path d="M11 9h2" />
+      <path d="M11 15h2" />
+    </svg>
+  );
+}
+
+function TeamSizeGrid({ selectedSize, onSelect, disabled }) {
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3 mb-5">
+      {TEAM_SIZES.map((size) => (
+        <button
+          key={size}
+          type="button"
+          onClick={() => onSelect(size)}
+          disabled={disabled}
+          className={`rounded-[18px] min-h-[68px] sm:min-h-[76px] px-3 py-2.5 border transition-all text-left ${
+            selectedSize === size
+              ? "border-fuchsia-400/45 bg-gradient-to-br from-fuchsia-500/22 via-violet-500/16 to-indigo-500/10 shadow-[0_0_32px_rgba(168,85,247,0.18)] -translate-y-0.5"
+              : "border-white/[0.08] bg-white/[0.03] text-white/55 hover:bg-white/[0.05] hover:border-white/[0.12]"
+            } ${disabled ? "!opacity-30 cursor-not-allowed" : ""}`}
+        >
+          <div className="text-[7px] uppercase tracking-[0.16em] text-white/34 mb-1">Team</div>
+          <div className="text-[1.25rem] sm:text-[1.4rem] font-black leading-none text-white">{size}P</div>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function CreateRoomSelectorCard({ selectedSize, onSelect, onAction, disabled, blockedMsg }) {
+  const t = useT();
+
+  return (
+    <>
+      <div className="text-[9px] font-medium uppercase tracking-[0.18em] text-white/28 mb-2">
+        Setup
+      </div>
+      <div className="text-white text-[1.3rem] sm:text-[1.55rem] font-black leading-[1.08] mb-2">
+        Create Room
+      </div>
+      <p className="max-w-2xl text-[12px] sm:text-[13px] text-white/48 leading-6 mb-5">
+        Choose the number of seats. The room starts as soon as every participant joins and pays the entry.
+      </p>
+      {blockedMsg && <p className="text-[10px] text-white/25 -mt-2 mb-4">{blockedMsg}</p>}
+
+      <div className="flex items-center gap-2 mb-3.5">
+        <p className="text-white/32 text-[10px] font-medium uppercase tracking-[0.18em]">{t("home.teamSize")}</p>
+        <PayoutInfo />
+      </div>
+
+      <TeamSizeGrid selectedSize={selectedSize} onSelect={onSelect} disabled={disabled} />
+
+      <button
+        type="button"
+        onClick={onAction}
+        disabled={disabled}
+        className={`btn-primary w-full !py-3.5 !text-[15px] ${disabled ? "!opacity-30 cursor-not-allowed" : ""}`}
+      >
+        Create Arena
+      </button>
+    </>
+  );
+}
+
+function JoinRoomSelectorCard({ value, onChange, onSubmit, disabled, blockedMsg }) {
+  const t = useT();
+
+  return (
+    <>
+      <div className="text-[9px] font-medium uppercase tracking-[0.18em] text-white/28 mb-2">
+        Access
+      </div>
+      <div className="text-white text-[1.3rem] sm:text-[1.55rem] font-black leading-[1.08] mb-2">
+        Join Room
+      </div>
+      <p className="max-w-2xl text-[12px] sm:text-[13px] text-white/48 leading-6 mb-5">
+        Enter the code shared by your host to take the open seat in the same arena.
+      </p>
+
+      <div className="text-white/32 text-[10px] font-medium uppercase tracking-[0.18em] mb-3.5">
+        {t("home.arenaCode")}
+      </div>
+
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => onChange(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))}
+        placeholder={t("home.codePlaceholder")}
+        maxLength={6}
+        disabled={disabled}
+        className={`w-full min-h-[68px] sm:min-h-[76px] rounded-[22px] border border-white/[0.08] bg-white/[0.03] px-4 py-3 text-center text-[1.45rem] font-mono font-black tracking-[0.4em] text-fuchsia-300 placeholder:text-white/[0.12] placeholder:tracking-normal placeholder:text-xs placeholder:font-normal transition mb-5 ${disabled ? "cursor-not-allowed opacity-40" : "focus:outline-none focus:border-fuchsia-500/30 focus:bg-white/[0.04]"}`}
+      />
+      {blockedMsg && <p className="text-[10px] text-white/25 -mt-2 mb-4">{blockedMsg}</p>}
+
+      <button
+        type="button"
+        onClick={onSubmit}
+        disabled={value.length < 6 || disabled}
+        className="btn-primary w-full !py-3.5 !text-[15px] disabled:!opacity-30"
+      >
+        {t("home.action.joinArena")}
+      </button>
+    </>
+  );
+}
+
+function QuickMatchSelectorCard({ selectedSize, onSelect, onAction, disabled, blockedMsg }) {
+  const t = useT();
+
+  return (
+    <>
+      <div className="text-[9px] font-medium uppercase tracking-[0.18em] text-white/28 mb-2">
+        Matchmaking
+      </div>
+      <div className="text-white text-[1.3rem] sm:text-[1.55rem] font-black leading-[1.08] mb-2">
+        Fast Match
+      </div>
+      <p className="max-w-2xl text-[12px] sm:text-[13px] text-white/48 leading-6 mb-5">
+        Pick a room size and get matched instantly. The game starts as soon as every seat is filled.
+      </p>
+      {blockedMsg && <p className="text-[10px] text-white/25 -mt-2 mb-4">{blockedMsg}</p>}
+
+      <div className="flex items-center gap-2 mb-3.5">
+        <p className="text-white/32 text-[10px] font-medium uppercase tracking-[0.18em]">{t("home.teamSize")}</p>
+        <PayoutInfo />
+      </div>
+
+      <TeamSizeGrid selectedSize={selectedSize} onSelect={onSelect} disabled={disabled} />
+
+      <button
+        type="button"
+        onClick={onAction}
+        disabled={disabled}
+        className={`btn-primary w-full !py-3.5 !text-[15px] ${disabled ? "!opacity-30 cursor-not-allowed" : ""}`}
+      >
+        Match
+      </button>
+    </>
   );
 }
 
@@ -329,7 +524,7 @@ export default function Home(){
     setPaymentProgress(prev=>({paidCount:prev?.paidCount||0,total}));
     setPaymentErr(null);
     setPaymentNotice(null);
-    setPaymentStartedAt(prev=>prev||Date.now());
+    setPaymentStartedAt(prev=>prev||d?.paymentStartedAt||Date.now());
     setRoomExpiresAt(null);setRoomCountdown(null);
     setJoinExpiresAt(null);setJoinCountdown(null);
     if(players.length){
@@ -359,6 +554,8 @@ export default function Home(){
       setHistoryPage(1);
     }catch{}
   },[getGameClaimStatus]);
+
+  const isPaymentClosureReason=useCallback((reason="")=>/timed out|timeout|window closed|did not complete payment|room has been dissolved/i.test(String(reason)),[]);
 
   const handleRoomPaymentFailure=useCallback((reason)=>{
     reason = reason || t("home.err.timeoutTeam");
@@ -391,15 +588,26 @@ export default function Home(){
     setRoomCode("");
     setRoom({current:0,total:0,players:[]});
     setOpenRoom(null);
-    setCreateErr(wasCreateFlow?reason:null);
-    setJoinErr(wasJoinFlow?reason:null);
+    setCreateErr(null);
+    setJoinErr(null);
     reloadHistory(walletRef.current);
   },[refund,reloadHistory]);
 
-  // Carousel state
+  // Panel focus state
   const scrollRef=useRef(null);
   const[activeCard,setActiveCard]=useState(0);
+  const[isDesktopCarousel,setIsDesktopCarousel]=useState(()=>typeof window!=="undefined"&&window.innerWidth>=768);
   const CARDS=["create","join","match"];
+  const pageCount=isDesktopCarousel?2:CARDS.length;
+  const maxPageIndex=pageCount-1;
+
+  useEffect(()=>{
+    if(typeof window==="undefined")return;
+    const syncViewport=()=>setIsDesktopCarousel(window.innerWidth>=768);
+    syncViewport();
+    window.addEventListener("resize",syncViewport);
+    return()=>window.removeEventListener("resize",syncViewport);
+  },[]);
 
   const scrollToCard=(idx)=>{
     const el=scrollRef.current;
@@ -415,57 +623,89 @@ export default function Home(){
     if(!el)return;
     const cardWidth=el.children[0]?.offsetWidth||1;
     const gap=16;
-    const pos=Math.round(el.scrollLeft/(cardWidth+gap));
+    const pos=Math.max(0,Math.min(maxPageIndex,Math.round(el.scrollLeft/(cardWidth+gap))));
+    if(scrollPosRef.current===pos)return;
     scrollPosRef.current=pos;
+    setActiveCard(pos);
+    setMode(CARDS[pos]);
   };
 
   const goCard=(idx)=>{
-    setActiveCard(idx);
-    setMode(CARDS[idx]);
-    if(idx>=2) scrollToCard(1);
-    else scrollToCard(0);
+    const next=Math.max(0,Math.min(maxPageIndex,idx));
+    scrollPosRef.current=next;
+    setActiveCard(next);
+    setMode(CARDS[next]);
+    scrollToCard(next);
   };
 
-  const scrollRight=()=>{scrollToCard(1);};
-  const scrollLeft=()=>{scrollToCard(0);};
+  const scrollRight=()=>goCard(activeCard+1);
+  const scrollLeft=()=>goCard(activeCard-1);
+
+  useEffect(()=>{
+    if(activeCard<=maxPageIndex)return;
+    scrollPosRef.current=maxPageIndex;
+    setActiveCard(maxPageIndex);
+    setMode(CARDS[maxPageIndex]);
+    requestAnimationFrame(()=>scrollToCard(maxPageIndex));
+  },[activeCard,maxPageIndex]);
 
   // Room expiry countdown timer
   useEffect(()=>{
     if(!roomExpiresAt||createPhase!=="waiting"){setRoomCountdown(null);return;}
+    let iv=null;
     const tick=()=>{
       const rem=Math.max(0,Math.ceil((roomExpiresAt-Date.now())/1000));
       setRoomCountdown(rem);
-      if(rem<=0)clearInterval(iv);
+      if(rem<=0&&iv)clearInterval(iv);
     };
     tick();
-    const iv=setInterval(tick,1000);
+    iv=setInterval(tick,1000);
     return()=>clearInterval(iv);
   },[roomExpiresAt,createPhase]);
+
+  useEffect(()=>{
+    if(createPhase!=="waiting"||roomCountdown!==0)return;
+    setRoomExpiresAt(null);
+    setRoomCountdown(null);
+    setCreateHint(null);
+    setCreateErr(null);
+    setCreatePhase("expired");
+  },[createPhase,roomCountdown]);
 
   // Join room expiry countdown timer
   useEffect(()=>{
     if(!joinExpiresAt||joinPhase!=="waiting"){setJoinCountdown(null);return;}
+    let iv=null;
     const tick=()=>{
       const rem=Math.max(0,Math.ceil((joinExpiresAt-Date.now())/1000));
       setJoinCountdown(rem);
-      if(rem<=0)clearInterval(iv);
+      if(rem<=0&&iv)clearInterval(iv);
     };
     tick();
-    const iv=setInterval(tick,1000);
+    iv=setInterval(tick,1000);
     return()=>clearInterval(iv);
   },[joinExpiresAt,joinPhase]);
+
+  useEffect(()=>{
+    if(joinPhase!=="waiting"||joinCountdown!==0)return;
+    setJoinExpiresAt(null);
+    setJoinCountdown(null);
+    setJoinPhase("select");
+    setJoinErr(t("home.expiredMsg"));
+  },[joinPhase,joinCountdown,t]);
 
   // Payment countdown timer (60s after room full)
   useEffect(()=>{
     paymentStartedAtRef.current=paymentStartedAt;
     if(!paymentStartedAt){setPaymentCountdown(null);return;}
+    let iv=null;
     const tick=()=>{
       const rem=Math.max(0,Math.ceil((paymentStartedAt+PAYMENT_TIMEOUT*1000-Date.now())/1000));
       setPaymentCountdown(rem);
-      if(rem<=0)clearInterval(iv);
+      if(rem<=0&&iv)clearInterval(iv);
     };
     tick();
-    const iv=setInterval(tick,1000);
+    iv=setInterval(tick,1000);
     return()=>clearInterval(iv);
   },[paymentStartedAt]);
 
@@ -489,17 +729,18 @@ export default function Home(){
         const expiresAt=(d.room.expires_at?new Date(d.room.expires_at).getTime():new Date(d.room.created_at).getTime()+300000);
         const isExpired=expiresAt<=Date.now();
         const isPaymentPhase=d.room.phase==="payment"||d.room.phase==="paid_waiting";
+        const isPreparingPhase=d.room.phase==="preparing";
         const paymentStartedAt=d.room.payment_started_at?new Date(d.room.payment_started_at).getTime():null;
-        if(isPaymentPhase){
+        if(isPaymentPhase||isPreparingPhase){
           setRoomFullInfo({gameId:d.room.game_id||d.room.id,chainGameId:d.room.chain_game_id||null,inviteCode:code,maxPlayers:total,owner:d.room.owner||null,auth:d.room.auth||null,players,paymentTimeout:d.room.payment_timeout_ms});
           setPaymentProgress({paidCount:d.room.paid_count||0,total:d.room.total_players||total});
-          setPaymentStartedAt(paymentStartedAt);
+          setPaymentStartedAt(isPaymentPhase?paymentStartedAt:null);
         }
         if(d.room.is_owner){
           setCreateTeamSize(total);
           setRoomCode(code);
           setRoom({current,total,players});
-          if(isPaymentPhase){
+          if(isPaymentPhase||isPreparingPhase){
             setCreatePaid(d.room.phase==="paid_waiting");
             setCreatePhase(d.room.phase);
             setRoomExpiresAt(null);
@@ -512,7 +753,7 @@ export default function Home(){
         } else {
           setJoinCode(code);
           setJoinRoom({current,total,players});
-          if(isPaymentPhase){
+          if(isPaymentPhase||isPreparingPhase){
             setJoinPaid(d.room.phase==="paid_waiting");
             setJoinPhase(d.room.phase);
             setJoinExpiresAt(null);
@@ -523,7 +764,7 @@ export default function Home(){
             setJoinExpiresAt(expiresAt);
             setJoinPhase("waiting");
           }
-          setTimeout(()=>{setActiveCard(1);setMode("join");scrollToCard(0);},100);
+          setTimeout(()=>goCard(1),100);
         }
       }
     }).catch(()=>{});
@@ -557,7 +798,14 @@ export default function Home(){
           setJoinRoom({current:d.current,total,players:d.players});
           if(d.expiresAt)setJoinExpiresAt(d.expiresAt);
         }
-        if(d.status==="full"||(d.total&&d.current>=d.total))enterRoomPayment(d);
+        const roomIsFull=d.status==="full"||(d.total&&d.current>=d.total);
+        if(roomIsFull){
+          if(d.paymentOpen||d.chainGameId)enterRoomPayment(d);
+          else {
+            if(createPhaseRef.current==="waiting"||createPhaseRef.current==="creating")setCreatePhase("preparing");
+            if(joinPhaseRef.current==="waiting"||joinPhaseRef.current==="joining")setJoinPhase("preparing");
+          }
+        }
       }),
       on("room:preparing",d=>{
         const total=d.total||d.players?.length||0;
@@ -577,11 +825,13 @@ export default function Home(){
         if(joinPhaseRef.current==="waiting"||joinPhaseRef.current==="joining")setJoinPhase("preparing");
       }),
       on("room:full",d=>{
-        enterRoomPayment(d);
+        if(d.paymentOpen||d.chainGameId)enterRoomPayment(d);
+        else {
+          if(createPhaseRef.current==="waiting"||createPhaseRef.current==="creating")setCreatePhase("preparing");
+          if(joinPhaseRef.current==="waiting"||joinPhaseRef.current==="joining")setJoinPhase("preparing");
+        }
       }),
-      on("room:payment:opened",d=>{
-        setRoomFullInfo(prev=>prev?{...prev,chainGameId:d.chainGameId||prev.chainGameId}:prev);
-      }),
+      on("room:payment:opened",d=>{enterRoomPayment(d);}),
       on("room:error",d=>{
         if(createTimeoutRef.current){clearTimeout(createTimeoutRef.current);createTimeoutRef.current=null;}
         const uiMsg=formatPaymentUiError(d.message);
@@ -612,9 +862,9 @@ export default function Home(){
         setRoomFullInfo(null);setPaymentProgress({paidCount:0,total:0});setPaymentErr(null);setPaymentNotice(null);
         setCreatePhase("select");setJoinPhase("select");
         setCreateHint(null);
-        if(wasCreateFlow && d&&d.reason && !selfCancelledCreate)setCreateErr(d.reason);
+        if(wasCreateFlow && d&&d.reason && !selfCancelledCreate && !isPaymentClosureReason(d.reason))setCreateErr(d.reason);
         if(selfCancelledCreate)setCreateErr(null);
-        if(wasJoinFlow && d&&d.reason)setJoinErr(d.reason);
+        if(wasJoinFlow && d&&d.reason && !isPaymentClosureReason(d.reason))setJoinErr(d.reason);
         refreshHistory();
       }),
       on("room:expired",d=>{
@@ -649,7 +899,19 @@ export default function Home(){
         if(createTimeoutRef.current){clearTimeout(createTimeoutRef.current);createTimeoutRef.current=null;}
         createCancelPendingRef.current=false;
         createPhaseBeforeCancelRef.current="select";
-        handleRoomPaymentFailure(d?.reason||"Payment timeout — team disbanded");
+        const reason=d?.reason||"A player timed out before completing payment. This room has been dissolved.";
+        if(isPaymentClosureReason(reason)){
+          handleRoomPaymentFailure(reason);
+          return;
+        }
+        const uiMsg=translateUiError(formatPaymentUiError(reason));
+        setPaymentStartedAt(null);setPaymentCountdown(null);
+        setRoomFullInfo(null);setPaymentProgress({paidCount:0,total:0});
+        setPaymentErr(uiMsg);setPaymentNotice(null);
+        if(createPhaseRef.current!=="select")setCreateErr(uiMsg);
+        if(joinPhaseRef.current!=="select")setJoinErr(uiMsg);
+        setCreatePhase(prev=>(prev==="payment"||prev==="paid_waiting"||prev==="preparing")?"select":prev);
+        setJoinPhase(prev=>(prev==="payment"||prev==="paid_waiting"||prev==="preparing")?"select":prev);
       }),
       on("room:joined",d=>{
         if(d.error){setJoinErr(d.error);if(joinPaidRef.current){refund(ENTRY_FEE);setJoinPaid(false);}setJoinPhase("select");return;}
@@ -658,7 +920,8 @@ export default function Home(){
         setJoinRoom({current,total,players:d.players});
         if(d.expiresAt)setJoinExpiresAt(d.expiresAt);
         if(d.status==="full"){
-          enterRoomPayment(d);
+          if(d.paymentOpen||d.chainGameId)enterRoomPayment(d);
+          else setJoinPhase(current=>current==="waiting"||current==="joining"?"preparing":current);
         } else if(joinPhaseRef.current!=="payment"&&joinPhaseRef.current!=="paid_waiting"){
           setJoinPhase("waiting");
         }
@@ -666,31 +929,42 @@ export default function Home(){
       on("game:start",d=>{
         updateGame({gameId:d.gameId,chainGameId:d.chainGameId||d.gameId,mode:"room",teamSize:d.players.length,players:d.players,phase:"predicting",basePrice:d.basePrice,countdown:Math.round((d.predictTimeout||30000)/1000),predictSafeBuffer:Math.round((d.predictSafeBuffer||5000)/1000),predictionDeadline:d.predictionDeadline||null});
         setPaymentStartedAt(null);
-        setTimeout(()=>nav("/game"),500);
+        setTimeout(()=>nav("/game"),50);
       }),
       on("game:resume",d=>{
         updateGame({gameId:d.gameId,chainGameId:d.chainGameId||d.gameId,mode:"room",teamSize:d.players?.length||d.totalPlayers||0,players:d.players||[],phase:d.phase==="settling"?"settling":"predicting",basePrice:d.basePrice,countdown:d.remaining||Math.round((d.predictTimeout||30000)/1000),predictSafeBuffer:Math.round((d.predictSafeBuffer||5000)/1000),predictionDeadline:d.predictionDeadline||null,currentPrice:d.currentPrice||d.basePrice});
         setPaymentStartedAt(null);
-        setTimeout(()=>nav("/game"),300);
+        setTimeout(()=>nav("/game"),50);
       }),
     ];
     return()=>u.forEach(f=>f());
-  },[on,updateGame,nav,handleRoomPaymentFailure]);
+  },[on,updateGame,nav,handleRoomPaymentFailure,isPaymentClosureReason]);
 
   // Check if any mode is currently active (not in idle "select" state)
   const isCreateBusy=createPhase!=="select";
   const isJoinBusy=joinPhase!=="select";
   const isMatchBusy=matchPhase!=="select";
-  const anyBusy=isCreateBusy||isJoinBusy||isMatchBusy;
+  const createEntryDisabled=isJoinBusy||isMatchBusy;
+  const createBlockedMsg=isJoinBusy
+    ?t("home.err.createBlocked.join")
+    :isMatchBusy
+      ?t("home.err.createBlocked.match")
+      :null;
   const joinEntryDisabled=isCreateBusy||isMatchBusy;
   const joinBlockedMsg=isCreateBusy
     ?t("home.err.joinBlocked.create")
     :isMatchBusy
       ?t("home.err.joinBlocked.match")
       :null;
+  const matchEntryDisabled=isCreateBusy||isJoinBusy;
+  const matchBlockedMsg=isCreateBusy
+    ?t("home.err.matchBlocked.create")
+    :isJoinBusy
+      ?t("home.err.matchBlocked.join")
+      :null;
 
   const createRoom=()=>{if(isJoinBusy||isMatchBusy){setCreateErr(t("home.err.finishFirst"));return;}if(isCreateBusy){setCreateErr(t("home.err.alreadyCreating"));return;}if(!mockMode && (!wallet || !provider || !signer)){connect({type:"create-room"});return;}createCancelPendingRef.current=false;createPhaseBeforeCancelRef.current="select";setCreateErr(null);setCreateHint(null);setCreatePhase("creating");if(createTimeoutRef.current)clearTimeout(createTimeoutRef.current);createTimeoutRef.current=setTimeout(()=>{createTimeoutRef.current=null;if(createPhaseRef.current==="creating")setCreateHint(t("home.err.baseSlow"));},12000);emit("room:create",{teamSize:createTeamSize});};
-  const payCreate=useCallback(async()=>{try{setPaymentErr(null);setPaymentNotice(null);if(!roomFullInfo?.gameId||!wallet)throw new Error("Missing game id");const startedAt=paymentStartedAtRef.current;const deadline=startedAt?startedAt+PAYMENT_TIMEOUT*1000:null;if((deadline&&Date.now()>=deadline)||paymentFailureDialogRef.current){handleRoomPaymentFailure(t("home.err.windowClosed"));return;}const paymentResult=await payForRoomEntry({inviteCode:roomCode,maxPlayers:roomFullInfo?.maxPlayers||createTeamSizeRef.current,isOwner:true,auth:roomFullInfo?.auth});const nowDeadline=paymentStartedAtRef.current?paymentStartedAtRef.current+PAYMENT_TIMEOUT*1000:deadline;if((nowDeadline&&Date.now()>=nowDeadline)||paymentFailureDialogRef.current){if(paymentResult?.paid)refund(ENTRY_FEE);handleRoomPaymentFailure(t("home.err.windowClosed"));return;}if(paymentResult?.chainGameId){setRoomFullInfo(prev=>prev?{...prev,chainGameId:paymentResult.chainGameId}:prev);}setCreatePaid(true);setCreateErr(null);emit("room:payment:confirm",{gameId:roomFullInfo.gameId,chainGameId:paymentResult?.chainGameId||roomFullInfo?.chainGameId||null,inviteCode:roomCode,wallet});setCreatePhase("paid_waiting");}catch(e){const startedAtCatch=paymentStartedAtRef.current;const deadlineCatch=startedAtCatch?startedAtCatch+PAYMENT_TIMEOUT*1000:null;const timedOut=(deadlineCatch&&Date.now()>=deadlineCatch)||!!paymentFailureDialogRef.current;if(timedOut)return;const msg=formatPaymentUiError(e?.message||"Payment failed");setCreateErr(msg);setPaymentErr(msg);}},[payForRoomEntry,roomFullInfo,roomCode,emit,wallet,refund,handleRoomPaymentFailure]);
+  const payCreate=useCallback(async()=>{try{setPaymentErr(null);setPaymentNotice(null);if(!roomFullInfo?.gameId||!wallet)throw new Error("Missing game id");const startedAt=paymentStartedAtRef.current;const deadline=startedAt?startedAt+PAYMENT_TIMEOUT*1000:null;if((deadline&&Date.now()>=deadline)||paymentFailureDialogRef.current){handleRoomPaymentFailure(t("home.err.windowClosed"));return;}const paymentResult=await payForRoomEntry({inviteCode:roomCode,chainGameId:roomFullInfo?.chainGameId||null});const nowDeadline=paymentStartedAtRef.current?paymentStartedAtRef.current+PAYMENT_TIMEOUT*1000:deadline;if((nowDeadline&&Date.now()>=nowDeadline)||paymentFailureDialogRef.current){if(paymentResult?.paid)refund(ENTRY_FEE);handleRoomPaymentFailure(t("home.err.windowClosed"));return;}if(paymentResult?.chainGameId){setRoomFullInfo(prev=>prev?{...prev,chainGameId:paymentResult.chainGameId}:prev);}setPaymentProgress(prev=>({paidCount:Math.min(prev.total||roomFullInfo?.maxPlayers||1,Math.max(prev.paidCount||0,1)),total:prev.total||roomFullInfo?.maxPlayers||1}));setCreatePaid(true);setCreateErr(null);emit("room:payment:confirm",{gameId:roomFullInfo.gameId,chainGameId:paymentResult?.chainGameId||roomFullInfo?.chainGameId||null,inviteCode:roomCode,wallet});setCreatePhase("paid_waiting");}catch(e){const startedAtCatch=paymentStartedAtRef.current;const deadlineCatch=startedAtCatch?startedAtCatch+PAYMENT_TIMEOUT*1000:null;const timedOut=(deadlineCatch&&Date.now()>=deadlineCatch)||!!paymentFailureDialogRef.current;if(timedOut)return;const msg=formatPaymentUiError(e?.message||"Payment failed");setCreateErr(msg);setPaymentErr(msg);}},[payForRoomEntry,roomFullInfo,roomCode,emit,wallet,refund,handleRoomPaymentFailure]);
   const beginCreateRoomCancel=()=>{createCancelPendingRef.current=true;createPhaseBeforeCancelRef.current=createPhaseRef.current;setCreateErr(null);setCreateHint(t("home.cancelling"));setRoomCountdown(null);setCreatePhase("dissolving");emit("room:dissolve",{inviteCode:roomCodeRef.current||roomCode});};
   const cancelCreate=()=>{beginCreateRoomCancel();};
   const dissolveRoom=()=>{beginCreateRoomCancel();};
@@ -701,7 +975,7 @@ export default function Home(){
   // Join flow: confirm dialog (no payment), then join directly
   const submitJoin=()=>{if(isCreateBusy||isMatchBusy){setJoinErr(t("home.err.finishFirst"));return;}if(isJoinBusy){setJoinErr(t("home.err.alreadyJoin"));return;}if(!mockMode && (!wallet || !provider || !signer)){connect({type:"join-room",code:joinCode});return;}if(joinCode.length<6)return setJoinErr(t("home.err.incompleteCode"));setJoinErr(null);setJoinPhase("validating");if(joinTimeoutRef.current)clearTimeout(joinTimeoutRef.current);joinTimeoutRef.current=setTimeout(()=>{setJoinErr(t("home.err.invalidCode"));setJoinPhase("select");},4000);emit("room:validate",{inviteCode:joinCode.toUpperCase()});};
   const confirmJoin=()=>{emit("room:join",{inviteCode:joinCode.toUpperCase()});setJoinPhase("joining");};
-  const payJoin=useCallback(async()=>{try{setPaymentErr(null);setPaymentNotice(null);if(!roomFullInfo?.gameId||!wallet)throw new Error("Missing game id");const startedAt=paymentStartedAtRef.current;const deadline=startedAt?startedAt+PAYMENT_TIMEOUT*1000:null;if((deadline&&Date.now()>=deadline)||paymentFailureDialogRef.current){handleRoomPaymentFailure(t("home.err.windowClosed"));return;}const paymentResult=await payForRoomEntry({inviteCode:roomFullInfo.inviteCode||joinCode,isOwner:false,auth:roomFullInfo?.auth});const nowDeadline=paymentStartedAtRef.current?paymentStartedAtRef.current+PAYMENT_TIMEOUT*1000:deadline;if((nowDeadline&&Date.now()>=nowDeadline)||paymentFailureDialogRef.current){if(paymentResult?.paid)refund(ENTRY_FEE);handleRoomPaymentFailure(t("home.err.windowClosed"));return;}if(paymentResult?.chainGameId){setRoomFullInfo(prev=>prev?{...prev,chainGameId:paymentResult.chainGameId}:prev);}setJoinPaid(true);setJoinErr(null);emit("room:payment:confirm",{gameId:roomFullInfo.gameId,chainGameId:paymentResult?.chainGameId||roomFullInfo?.chainGameId||null,inviteCode:roomFullInfo.inviteCode||joinCode,wallet});setJoinPhase("paid_waiting");}catch(e){const startedAtCatch=paymentStartedAtRef.current;const deadlineCatch=startedAtCatch?startedAtCatch+PAYMENT_TIMEOUT*1000:null;const timedOut=(deadlineCatch&&Date.now()>=deadlineCatch)||!!paymentFailureDialogRef.current;if(timedOut)return;const msg=formatPaymentUiError(e?.message||"Payment failed");setJoinErr(msg);setPaymentErr(msg);}},[joinCode,payForRoomEntry,emit,roomFullInfo,wallet,refund,handleRoomPaymentFailure]);
+  const payJoin=useCallback(async()=>{try{setPaymentErr(null);setPaymentNotice(null);if(!roomFullInfo?.gameId||!wallet)throw new Error("Missing game id");const startedAt=paymentStartedAtRef.current;const deadline=startedAt?startedAt+PAYMENT_TIMEOUT*1000:null;if((deadline&&Date.now()>=deadline)||paymentFailureDialogRef.current){handleRoomPaymentFailure(t("home.err.windowClosed"));return;}const paymentResult=await payForRoomEntry({inviteCode:roomFullInfo.inviteCode||joinCode,chainGameId:roomFullInfo?.chainGameId||null});const nowDeadline=paymentStartedAtRef.current?paymentStartedAtRef.current+PAYMENT_TIMEOUT*1000:deadline;if((nowDeadline&&Date.now()>=nowDeadline)||paymentFailureDialogRef.current){if(paymentResult?.paid)refund(ENTRY_FEE);handleRoomPaymentFailure(t("home.err.windowClosed"));return;}if(paymentResult?.chainGameId){setRoomFullInfo(prev=>prev?{...prev,chainGameId:paymentResult.chainGameId}:prev);}setPaymentProgress(prev=>({paidCount:Math.min(prev.total||roomFullInfo?.maxPlayers||1,Math.max(prev.paidCount||0,1)),total:prev.total||roomFullInfo?.maxPlayers||1}));setJoinPaid(true);setJoinErr(null);emit("room:payment:confirm",{gameId:roomFullInfo.gameId,chainGameId:paymentResult?.chainGameId||roomFullInfo?.chainGameId||null,inviteCode:roomFullInfo.inviteCode||joinCode,wallet});setJoinPhase("paid_waiting");}catch(e){const startedAtCatch=paymentStartedAtRef.current;const deadlineCatch=startedAtCatch?startedAtCatch+PAYMENT_TIMEOUT*1000:null;const timedOut=(deadlineCatch&&Date.now()>=deadlineCatch)||!!paymentFailureDialogRef.current;if(timedOut)return;const msg=formatPaymentUiError(e?.message||"Payment failed");setJoinErr(msg);setPaymentErr(msg);}},[joinCode,payForRoomEntry,emit,roomFullInfo,wallet,refund,handleRoomPaymentFailure]);
   const leaveRoom=()=>{emit("room:leave");if(joinPaid){refund(ENTRY_FEE);setJoinPaid(false);}setJoinPhase("select");setJoinExpiresAt(null);};
 
   // ===== QUICK MATCH =====
@@ -775,7 +1049,15 @@ export default function Home(){
     setPaymentNotice(null);
     setPaymentErr(null);
   };
-  const closePaymentFailureDialog=useCallback(()=>{setPaymentFailureDialog(null);paymentFailureDialogRef.current=null;},[]);
+  const closePaymentFailureDialog=useCallback(()=>{
+    setPaymentFailureDialog(null);
+    paymentFailureDialogRef.current=null;
+    setPaymentErr(null);
+    setPaymentNotice(null);
+    setCreateErr(null);
+    setJoinErr(null);
+    setMatchErr(null);
+  },[]);
   const classifyFailure=(reason)=>{const raw=(reason||"").toString();const cancelled=/walked away|left the room|player left|host left|取消|退出|离开/i.test(raw);if(!cancelled)return{kind:"timeout",text:raw};const isHost=/host/i.test(raw)||/房主/.test(raw);return{kind:"cancelled",text:isHost?t("home.err.hostLeft"):t("home.err.playerLeft")};};
   const failureInfo=paymentFailureDialog?classifyFailure(paymentFailureDialog):null;
   const isFailureCancelled=failureInfo?.kind==="cancelled";
@@ -832,50 +1114,287 @@ export default function Home(){
   // Format countdown as mm:ss
   const fmtCountdown=(s)=>{if(s===null||s===undefined)return"";return`${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`;};
   const createRoomTotal=room.total||createTeamSize;
+  const hasGeneratedRoom=(createPhase==="waiting"||createPhase==="paid_waiting"||createPhase==="preparing"||createPhase==="expired"||!!openRoom);
+  const showCreateRoomCountdown=roomCountdown!==null&&roomCountdown>0&&room.current<createRoomTotal;
+  const showCreatePaymentCountdown=paymentCountdown!==null&&paymentCountdown>0&&createPhase==="paid_waiting";
+  const createCountdownLabel=showCreatePaymentCountdown?t("home.countdown.payment"):t("home.countdown.expires");
+  const createCountdownValue=showCreatePaymentCountdown?`${paymentCountdown}s`:fmtCountdown(roomCountdown);
+
+  const renderCreatePanel=()=>(
+    <div className={`relative transition-all duration-300 ${activeCard===0?"[filter:drop-shadow(0_0_22px_rgba(217,70,239,0.3))]":"hover:[filter:drop-shadow(0_0_18px_rgba(217,70,239,0.18))]"}`}>
+      <div className="landing-story-card h-full min-h-[340px] sm:min-h-[360px] w-full !p-4 sm:!p-5">
+        {hasGeneratedRoom&&(
+          <div className="flex items-start justify-between gap-3 mb-5">
+            <div className="flex items-start gap-3 min-w-0">
+              <div className="w-10 h-10 rounded-2xl bg-fuchsia-500/18 border border-fuchsia-500/20 flex items-center justify-center text-fuchsia-100/80 shrink-0">
+                <RoomGlyph />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-white">{t("home.card.create.generated")}</h3>
+              </div>
+            </div>
+            {(showCreateRoomCountdown||showCreatePaymentCountdown)&&(
+              <div className={`shrink-0 inline-flex items-center gap-2 rounded-[18px] border px-3.5 py-2 backdrop-blur-sm shadow-[0_0_20px_rgba(168,85,247,0.14)] ${
+                showCreatePaymentCountdown
+                  ? paymentCountdown<=10
+                    ? "border-rose-500/28 bg-rose-500/[0.10] text-rose-200"
+                    : "border-fuchsia-500/22 bg-fuchsia-500/[0.10] text-fuchsia-100"
+                  : roomCountdown<=30
+                    ? "border-rose-500/28 bg-rose-500/[0.10] text-rose-200"
+                    : "border-fuchsia-500/22 bg-fuchsia-500/[0.10] text-fuchsia-100"
+              }`}>
+                <span className={`w-2 h-2 rounded-full ${showCreatePaymentCountdown?(paymentCountdown<=10?"bg-rose-300":"bg-fuchsia-300"):(roomCountdown<=30?"bg-rose-300":"bg-fuchsia-300")} ${showCreatePaymentCountdown||roomCountdown<=30?"animate-pulse":""}`}/>
+                <div className="flex flex-col items-end leading-none">
+                  <span className="text-[8px] uppercase tracking-[0.22em] text-white/45">{createCountdownLabel}</span>
+                  <span className="mt-1 font-mono font-black text-[0.98rem] sm:text-[1.08rem] tracking-[0.08em] text-white">{createCountdownValue}</span>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {createErr&&<div className="bg-rose-500/10 border border-rose-500/15 text-rose-400 px-3 py-2 rounded-lg mb-3 text-[10px]">⚠️ {createErr}</div>}
+        {createHint&&<div className="bg-white/[0.03] border border-white/[0.06] text-white/45 px-3 py-2 rounded-lg mb-3 text-[10px]">{createHint}</div>}
+
+        {createPhase==="select"&& !openRoom&&(
+          <CreateRoomSelectorCard
+            selectedSize={createTeamSize}
+            onSelect={setCreateTeamSize}
+            onAction={createRoom}
+            disabled={createEntryDisabled}
+            blockedMsg={createBlockedMsg}
+          />
+        )}
+        {createPhase==="creating"&&(<div className="text-center py-10"><div className="w-8 h-8 mx-auto rounded-full border-2 border-fuchsia-400/30 border-t-fuchsia-300 animate-spin mb-3"/><p className="text-white/40 text-xs">{t("home.creating")}</p></div>)}
+        {createPhase==="dissolving"&&(<div className="text-center py-10"><div className="w-8 h-8 mx-auto rounded-full border-2 border-fuchsia-400/30 border-t-fuchsia-300 animate-spin mb-3"/><p className="text-white/40 text-xs">{t("home.cancelling")}</p></div>)}
+        {(createPhase==="waiting"||createPhase==="paid_waiting"||createPhase==="preparing")&&(
+          <div className="text-center">
+            <div className="rounded-[28px] border border-white/[0.08] bg-white/[0.03] px-5 py-4 mb-3 text-left">
+              <div className="flex items-start justify-between gap-3 mb-1">
+                <p className="text-white/34 text-[9px] uppercase tracking-[0.28em]">{t("home.arenaCode")}</p>
+                <button
+                  type="button"
+                  onClick={shareTwitter}
+                  aria-label={t("home.share.twitter")}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-white/[0.08] bg-white/[0.03] px-3 py-1.5 text-[11px] font-medium text-white/55 transition hover:bg-sky-500/10 hover:border-sky-500/25 hover:text-sky-300"
+                >
+                  <svg viewBox="0 0 24 24" className="w-3.5 h-3.5 fill-current" aria-hidden="true">
+                    <path d="M18.244 2H21l-6.52 7.45L22 22h-6.828l-4.76-6.23L4.8 22H2l7.02-8.02L2 2h6.91l4.29 5.68L18.244 2Zm-2.397 18h1.86L7.24 4H5.3l10.547 16Z"/>
+                  </svg>
+                  <span>{t("home.share.twitter")}</span>
+                </button>
+              </div>
+              <button
+                type="button"
+                onClick={copyCode}
+                aria-label={t("home.copy.cta")}
+                className={`group w-full text-left transition ${copied?"text-emerald-300":"text-white hover:text-white"}`}
+              >
+                <span className="block -mt-2 text-[1.65rem] sm:text-[1.95rem] font-mono font-black tracking-[0.24em] text-gradient-fuchsia">{roomCode}</span>
+                <span className={`mt-1.5 block text-[10px] leading-5 ${copied?"text-emerald-400":"text-white/42 group-hover:text-white/58"}`}>
+                  {copied?t("home.copy.done"):t("home.card.create.generatedDesc")}
+                </span>
+              </button>
+            </div>
+            <TeamSlots total={createRoomTotal} players={room.players} current={room.current}/>
+            <div className="mt-2 flex flex-wrap items-center justify-center gap-2 text-[10px]">
+              <div className="inline-flex items-center gap-1.5 rounded-full border border-white/[0.06] bg-white/[0.03] px-3 py-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-fuchsia-400 animate-pulse"/>
+                <span className="text-white/34 font-mono">{createPhase==="preparing" ? t("home.preparingPayment") : createPaid && paymentProgress.total ? `${paymentProgress.paidCount}/${paymentProgress.total} ${t("home.paid")}` : `${room.current}/${createRoomTotal} ${t("home.ready")}`}</span>
+              </div>
+            </div>
+            <button onClick={dissolveRoom} disabled={createPhase==="preparing"} className="mt-3 w-full py-2 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:bg-rose-500/[0.06] hover:text-rose-400 transition text-[10px] text-white/20 disabled:opacity-30 disabled:cursor-not-allowed">{t("home.cancel")}</button>
+          </div>
+        )}
+        {createPhase==="expired"&&(
+          <div className="text-center">
+            <p className="text-white/20 text-[8px] uppercase tracking-[0.3em] mb-2">{t("home.arenaCode")}</p>
+            <div className="bg-white/[0.04] border border-white/[0.06] rounded-xl px-4 py-3 mb-3">
+              <span className="text-2xl font-mono font-black tracking-[0.4em] text-white/15 line-through">{roomCode}</span>
+            </div>
+            <p className="text-rose-400 text-xs mb-3">{t("home.expiredMsg")}</p>
+            <button onClick={clearExpired} className="w-full py-2.5 rounded-xl bg-gradient-to-br from-rose-500 to-rose-600 text-white font-bold text-sm shadow-lg shadow-rose-500/20 hover:shadow-rose-500/30 transition">
+              {t("home.expiredCta")}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  const renderJoinPanel=()=>(
+    <div className={`relative transition-all duration-300 ${activeCard===1?"[filter:drop-shadow(0_0_22px_rgba(217,70,239,0.3))]":"hover:[filter:drop-shadow(0_0_18px_rgba(217,70,239,0.18))]"}`}>
+      <div className="landing-story-card h-full min-h-[340px] sm:min-h-[360px] w-full !p-4 sm:!p-5">
+        {joinPhase!=="select"&&(
+          <div className="flex items-start gap-3 mb-5">
+            <div className="w-10 h-10 rounded-2xl bg-fuchsia-500/18 border border-fuchsia-500/20 flex items-center justify-center text-fuchsia-100/80 shrink-0">
+              <JoinGlyph />
+            </div>
+            <div>
+              <h3 className="text-lg font-bold text-white">{t("home.card.join.title")}</h3>
+              <p className="text-[12px] text-white/42 leading-6">{t("home.card.join.desc")}</p>
+            </div>
+          </div>
+        )}
+
+        {joinErr&&<div className="bg-rose-500/10 border border-rose-500/15 text-rose-400 px-3 py-2 rounded-lg mb-3 text-[10px]">⚠️ {joinErr}</div>}
+
+        {joinPhase==="validating"&&(<div className="text-center py-10"><div className="w-8 h-8 mx-auto rounded-full border-2 border-fuchsia-400/30 border-t-fuchsia-300 animate-spin mb-3"/><p className="text-white/40 text-xs">{t("home.validating")}</p></div>)}
+        {joinPhase==="joining"&&(<div className="text-center py-10"><div className="w-8 h-8 mx-auto rounded-full border-2 border-fuchsia-400/30 border-t-fuchsia-300 animate-spin mb-3"/><p className="text-white/40 text-xs">{t("home.joining")}</p></div>)}
+        {joinPhase==="select"&&(
+          <JoinRoomSelectorCard
+            value={joinCode}
+            onChange={setJoinCode}
+            onSubmit={submitJoin}
+            disabled={joinEntryDisabled}
+            blockedMsg={joinBlockedMsg}
+          />
+        )}
+        {joinPhase==="confirm"&&(
+          <div className="text-center">
+            <p className="text-white/40 text-xs mb-3">{t("home.joinConfirm")}</p>
+            <div className="bg-white/[0.04] border border-white/[0.06] rounded-xl px-4 py-3 mb-4">
+              <span className="text-xl font-mono font-black tracking-[0.4em] text-gradient-fuchsia">{joinCode}</span>
+            </div>
+            <p className="text-white/25 text-[10px] mb-4">{joinValidInfo?t("home.joinPlayersInRoom",{n:joinValidInfo.current,total:joinValidInfo.total}):""}</p>
+            <div className="flex gap-2">
+              <button onClick={()=>{setJoinPhase("select");setJoinValidInfo(null);}} className="flex-1 py-2.5 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:bg-white/[0.04] text-white/30 text-xs transition">{t("home.cancel")}</button>
+              <button onClick={confirmJoin} className="flex-1 btn-primary !py-2.5 !text-sm font-bold">{t("home.join")}</button>
+            </div>
+          </div>
+        )}
+        {(joinPhase==="waiting"||joinPhase==="paid_waiting"||joinPhase==="preparing")&&(
+          <div className="text-center">
+            <p className="text-white/20 text-[8px] uppercase tracking-[0.3em] mb-2">{t("home.joinedArena")}</p>
+            <div className="bg-white/[0.04] border border-white/[0.06] rounded-xl px-4 py-3 mb-3">
+              <span className="text-xl font-mono font-black tracking-[0.4em] text-gradient-fuchsia">{joinCode}</span>
+            </div>
+            <TeamSlots total={joinRoom.total} players={joinRoom.players}/>
+            <div className="mt-2 inline-flex items-center gap-1.5 text-[10px]">
+              <span className="w-1.5 h-1.5 rounded-full bg-fuchsia-400 animate-pulse"/>
+              <span className="text-white/30 font-mono">{joinPhase==="preparing" ? t("home.preparingPayment") : joinPaid && paymentProgress.total ? `${paymentProgress.paidCount}/${paymentProgress.total} ${t("home.paid")}` : `${joinRoom.current}/${joinRoom.total} ${t("home.waiting")}`}</span>
+            </div>
+            {joinCountdown!==null&&joinCountdown>0&&joinRoom.current<joinRoom.total&&(
+              <div className={`mt-2 flex items-center justify-center gap-1.5 ${joinCountdown<=30?"text-rose-400":"text-fuchsia-300"}`}>
+                <span className="text-sm">⏱️</span>
+                <span className="text-sm font-mono font-bold">{fmtCountdown(joinCountdown)}</span>
+                <span className="text-[9px] text-white/25 ml-1">{t("home.remaining")}</span>
+              </div>
+            )}
+            {paymentCountdown!==null&&paymentCountdown>0&&joinPhase==="paid_waiting"&&(
+              <div className={`mt-2 flex items-center justify-center gap-1.5 ${paymentCountdown<=10?"text-rose-400":"text-fuchsia-300"}`}>
+                <span className="text-sm">💰</span>
+                <span className="text-sm font-mono font-bold">{paymentCountdown}s</span>
+                <span className="text-[9px] text-white/25 ml-1">{t("home.payment.countdown")}</span>
+              </div>
+            )}
+            <button onClick={leaveRoom} disabled={joinPhase==="preparing"} className="mt-3 w-full py-2 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:bg-rose-500/[0.06] hover:text-rose-400 transition text-[10px] text-white/20 disabled:opacity-30 disabled:cursor-not-allowed">{t("home.leave")}</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  const renderMatchPanel=()=>(
+    <div className={`relative transition-all duration-300 ${activeCard===2?"[filter:drop-shadow(0_0_22px_rgba(217,70,239,0.3))]":"hover:[filter:drop-shadow(0_0_18px_rgba(217,70,239,0.18))]"}`}>
+      <div className="landing-story-card h-full min-h-[340px] sm:min-h-[360px] w-full !p-4 sm:!p-5">
+        {matchPhase!=="select"&&(
+          <div className="flex items-start gap-3 mb-5">
+            <div className="w-10 h-10 rounded-2xl bg-fuchsia-500/18 border border-fuchsia-500/20 flex items-center justify-center text-fuchsia-100/80 shrink-0">
+              <MatchGlyph />
+            </div>
+            <div>
+              <h3 className="text-lg font-bold text-white">{t("home.card.match.title")}</h3>
+              <p className="text-[12px] text-white/42 leading-6">{t("home.card.match.desc")}</p>
+            </div>
+          </div>
+        )}
+
+        {matchErr&&<div className="bg-rose-500/10 border border-rose-500/15 text-rose-400 px-3 py-2 rounded-lg mb-3 text-[10px]">⚠️ {matchErr}</div>}
+
+        {matchPhase==="select"&&(
+          <QuickMatchSelectorCard
+            selectedSize={matchTeamSize}
+            onSelect={setMatchTeamSize}
+            onAction={startMatch}
+            disabled={matchEntryDisabled}
+            blockedMsg={matchBlockedMsg}
+          />
+        )}
+        {matchPhase==="matching"&&(
+          <div>
+            <MatchAnimation teamSize={matchTeamSize} current={matchInfo.current} countdown={cd} status="matching"/>
+            <button onClick={cancelMatch} className="w-full mt-3 py-2 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:bg-white/[0.04] transition text-[10px] text-white/20">{t("home.cancel")}</button>
+          </div>
+        )}
+        {matchPhase==="preparing"&&(
+          <div>
+            <MatchAnimation teamSize={matchTeamSize} current={matchTeamSize} status="preparing"/>
+            <p className="mt-3 text-center text-[10px] text-white/25">{t("home.preparingNote")}</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
 
   return(
-    <div className="max-w-5xl mx-auto px-6 py-8 min-h-screen">
+    <div className="relative min-h-screen overflow-x-hidden">
+      <div className="landing-bg" aria-hidden="true">
+        <div className="orb orb-1"/><div className="orb orb-2"/><div className="orb orb-3"/>
+      </div>
+      <div className="relative z-10 max-w-5xl mx-auto px-6 py-8">
 
       {/* Top section */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-        <div className="lg:col-span-2">
-          <h1 className="text-2xl sm:text-3xl font-black tracking-tight mb-2">
+      <div className="grid grid-cols-1 mb-8">
+        <div>
+          <span className="landing-kicker mb-3 block">ARENA DASHBOARD</span>
+          <h1 className="neon-title text-2xl sm:text-3xl mb-2 uppercase">
             {t("home.hero.title.pre")} <span className="text-gradient">{t("home.hero.title.highlight")}</span>
           </h1>
           <p className="text-white/50 text-sm leading-relaxed max-w-lg">
             {t("home.hero.desc", { fee: ENTRY_FEE })}
           </p>
-          {mockMode&&<div className="inline-flex items-center gap-1.5 bg-violet-500/10 border border-violet-500/20 rounded-full px-3 py-1 mt-3">
-            <span className="text-violet-300/80 text-[10px] font-bold">{t("home.demoBadge")}</span>
+          {mockMode&&<div className="inline-flex items-center gap-1.5 bg-fuchsia-500/10 border border-fuchsia-500/20 rounded-full px-3 py-1 mt-3">
+            <span className="text-fuchsia-300/80 text-[10px] font-bold">{t("home.demoBadge")}</span>
           </div>}
           {!wallet&&!mockMode&&<p className="text-white/30 text-xs mt-3">
             {window.ethereum?t("home.hint.connectWallet"):t("home.hint.noWallet")}
           </p>}
         </div>
-        <div className="card glow-orange flex flex-col items-center justify-center">
-          <BtcTicker price={price} size="lg" label={t("home.ticker.label")}/>
-          <div className="flex items-center justify-center gap-1.5 mt-2.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"/>
-            <span className="text-white/30 text-[9px] uppercase tracking-[0.2em]">{t("home.ticker.live")}</span>
-          </div>
-        </div>
+        {/* BTC price panel — hidden */}
       </div>
 
       {/* Stats bar */}
-      {stats&&(stats.wins>0||stats.losses>0)&&<div className="grid grid-cols-3 gap-3 mb-6">
-        <div className="stat-card"><p className="text-[10px] text-white/35 uppercase tracking-wider">{t("home.stats.wins")}</p><p className="text-xl font-black text-emerald-400">{stats.wins}</p></div>
-        <div className="stat-card"><p className="text-[10px] text-white/35 uppercase tracking-wider">{t("home.stats.losses")}</p><p className="text-xl font-black text-rose-400">{stats.losses}</p></div>
-        <div className="stat-card"><p className="text-[10px] text-white/35 uppercase tracking-wider">{t("home.stats.profit")}</p><p className={`text-xl font-black ${parseFloat(stats.total_earned)-parseFloat(stats.total_lost)>=0?"text-emerald-400":"text-rose-400"}`}>{(parseFloat(stats.total_earned)-parseFloat(stats.total_lost)).toFixed(2)}</p></div>
+      {stats&&(stats.wins>0||stats.losses>0)&&<div className="flex items-center gap-6 mb-6 px-1">
+        <div className="flex items-center gap-2">
+          <Trophy size={18} className="text-emerald-400/70"/>
+          <span className="text-xs text-white/35 uppercase tracking-wider">{t("home.stats.wins")}</span>
+          <span className="text-base font-black text-emerald-400">{stats.wins}</span>
+        </div>
+        <div className="w-px h-5 bg-white/10"/>
+        <div className="flex items-center gap-2">
+          <XCircle size={18} className="text-rose-400/70"/>
+          <span className="text-xs text-white/35 uppercase tracking-wider">{t("home.stats.losses")}</span>
+          <span className="text-base font-black text-rose-400">{stats.losses}</span>
+        </div>
+        <div className="w-px h-5 bg-white/10"/>
+        <div className="flex items-center gap-2">
+          <TrendingUp size={18} className={parseFloat(stats.total_earned)-parseFloat(stats.total_lost)>=0?"text-emerald-400/70":"text-rose-400/70"}/>
+          <span className="text-xs text-white/35 uppercase tracking-wider">{t("home.stats.profit")}</span>
+          <span className={`text-base font-black ${parseFloat(stats.total_earned)-parseFloat(stats.total_lost)>=0?"text-emerald-400":"text-rose-400"}`}>{(parseFloat(stats.total_earned)-parseFloat(stats.total_lost)).toFixed(2)}</span>
+        </div>
       </div>}
 
-      {/* ===== Card Carousel ===== */}
+      {/* ===== Action Panels ===== */}
       <div className="relative mb-8">
         <button onClick={scrollLeft}
-          className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-3 z-10 w-8 h-8 rounded-full bg-white/[0.06] border border-white/[0.08] flex items-center justify-center text-white/40 hover:text-white/70 hover:bg-white/[0.1] transition backdrop-blur-sm">
+          disabled={activeCard===0}
+          className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-3 z-10 w-8 h-8 rounded-full bg-white/[0.06] border border-white/[0.08] flex items-center justify-center text-white/40 hover:text-white/70 hover:bg-white/[0.1] transition backdrop-blur-sm disabled:opacity-25 disabled:cursor-not-allowed disabled:hover:bg-white/[0.06]">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="15 18 9 12 15 6"/></svg>
         </button>
         <button onClick={scrollRight}
-          className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-3 z-10 w-8 h-8 rounded-full bg-white/[0.06] border border-white/[0.08] flex items-center justify-center text-white/40 hover:text-white/70 hover:bg-white/[0.1] transition backdrop-blur-sm">
+          disabled={activeCard===maxPageIndex}
+          className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-3 z-10 w-8 h-8 rounded-full bg-white/[0.06] border border-white/[0.08] flex items-center justify-center text-white/40 hover:text-white/70 hover:bg-white/[0.1] transition backdrop-blur-sm disabled:opacity-25 disabled:cursor-not-allowed disabled:hover:bg-white/[0.06]">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="9 18 15 12 9 6"/></svg>
         </button>
 
@@ -883,221 +1402,20 @@ export default function Home(){
           className="flex gap-4 overflow-x-auto scroll-smooth pb-2 hide-scrollbar"
           style={{scrollbarWidth:"none",msOverflowStyle:"none"}}
         >
-          {/* Card 1: Create Room */}
-          <div className="flex-shrink-0 w-[calc(50%-8px)] min-w-[280px]">
-            <div className={`rounded-2xl border p-5 h-full transition-all duration-300
-              ${activeCard===0
-                ?"border-violet-500/30 bg-gradient-to-br from-indigo-500/[0.1] to-violet-500/[0.08] shadow-lg shadow-violet-500/[0.08]"
-                :"border-white/[0.06] bg-white/[0.02] opacity-70 hover:opacity-90"}`}
-              onClick={()=>{if(activeCard!==0){setActiveCard(0);setMode("create");}}}
-            >
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-10 h-10 rounded-xl bg-violet-500/20 flex items-center justify-center text-xl">🏟️</div>
-                <div>
-                  <h3 className="text-sm font-bold">{t("home.card.create.title")}</h3>
-                  <p className="text-[10px] text-white/30">{t("home.card.create.desc")}</p>
-                </div>
-              </div>
-
-              {createErr&&<div className="bg-rose-500/10 border border-rose-500/15 text-rose-400 px-3 py-2 rounded-lg mb-3 text-[10px]">⚠️ {createErr}</div>}
-              {createHint&&<div className="bg-white/[0.03] border border-white/[0.06] text-white/45 px-3 py-2 rounded-lg mb-3 text-[10px]">{createHint}</div>}
-
-              {createPhase==="select"&& !openRoom&&(
-                <SizeSelector label={t("home.teamSize")} selectedSize={createTeamSize} onSelect={setCreateTeamSize} onAction={createRoom} actionLabel="Create" disabled={isJoinBusy||isMatchBusy}/>
-              )}
-              {createPhase==="creating"&&(<div className="text-center py-10"><div className="w-8 h-8 mx-auto rounded-full border-2 border-violet-400/30 border-t-violet-300 animate-spin mb-3"/><p className="text-white/40 text-xs">{t("home.creating")}</p></div>)}
-              {createPhase==="dissolving"&&(<div className="text-center py-10"><div className="w-8 h-8 mx-auto rounded-full border-2 border-violet-400/30 border-t-violet-300 animate-spin mb-3"/><p className="text-white/40 text-xs">{t("home.cancelling")}</p></div>)}
-              {(createPhase==="waiting"||createPhase==="paid_waiting"||createPhase==="preparing")&&(
-                <div className="text-center">
-                  <p className="text-white/20 text-[8px] uppercase tracking-[0.3em] mb-2">{t("home.arenaCode")}</p>
-                  <button
-                    type="button"
-                    onClick={copyCode}
-                    aria-label={t("home.copy.cta")}
-                    className={`group relative w-full rounded-xl px-4 py-3 mb-2 transition border ${copied?"bg-emerald-500/10 border-emerald-500/25":"bg-white/[0.04] border-white/[0.06] hover:bg-white/[0.06] hover:border-white/[0.12]"}`}
-                  >
-                    <span className="text-2xl font-mono font-black tracking-[0.4em] text-gradient">{roomCode}</span>
-                    <span className={`block mt-1 text-[9px] tracking-wider ${copied?"text-emerald-400":"text-white/25 group-hover:text-white/45"}`}>
-                      {copied?t("home.copy.done"):t("home.copy.clickHint")}
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={shareTwitter}
-                    aria-label={t("home.share.twitter")}
-                    className="w-full rounded-xl px-3 py-2 mb-2 text-[11px] tracking-wider transition border bg-white/[0.03] border-white/[0.06] text-white/50 hover:bg-sky-500/10 hover:border-sky-500/25 hover:text-sky-300 inline-flex items-center justify-center gap-1.5"
-                  >
-                    <svg viewBox="0 0 24 24" className="w-3 h-3 fill-current" aria-hidden="true"><path d="M18.244 2H21l-6.52 7.45L22 22h-6.828l-4.76-6.23L4.8 22H2l7.02-8.02L2 2h6.91l4.29 5.68L18.244 2Zm-2.397 18h1.86L7.24 4H5.3l10.547 16Z"/></svg>
-                    <span>{t("home.share.twitter")}</span>
-                  </button>
-                  <TeamSlots total={createRoomTotal} players={room.players} current={room.current}/>
-                  <div className="mt-2 inline-flex items-center gap-1.5 text-[10px]">
-                    <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse"/>
-                    <span className="text-white/30 font-mono">{createPhase==="preparing" ? t("home.preparingPayment") : createPaid && paymentProgress.total ? `${paymentProgress.paidCount}/${paymentProgress.total} ${t("home.paid")}` : `${room.current}/${createRoomTotal} ${t("home.ready")}`}</span>
-                  </div>
-                  {/* Room expiry countdown — only when not full */}
-                  {roomCountdown!==null&&roomCountdown>0&&room.current<createRoomTotal&&(
-                    <div className={`mt-2 flex items-center justify-center gap-1.5 ${roomCountdown<=30?"text-rose-400":"text-violet-300"}`}>
-                      <span className="text-sm">⏱️</span>
-                      <span className="text-sm font-mono font-bold">{fmtCountdown(roomCountdown)}</span>
-                      <span className="text-[9px] text-white/25 ml-1">{t("home.remaining")}</span>
-                    </div>
-                  )}
-                  {/* Payment countdown (after full, 60s) */}
-                  {paymentCountdown!==null&&paymentCountdown>0&&createPhase==="paid_waiting"&&(
-                    <div className={`mt-2 flex items-center justify-center gap-1.5 ${paymentCountdown<=10?"text-rose-400":"text-violet-300"}`}>
-                      <span className="text-sm">💰</span>
-                      <span className="text-sm font-mono font-bold">{paymentCountdown}s</span>
-                      <span className="text-[9px] text-white/25 ml-1">{t("home.payment.countdown")}</span>
-                    </div>
-                  )}
-                  <button onClick={dissolveRoom} disabled={createPhase==="preparing"} className="mt-3 w-full py-2 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:bg-rose-500/[0.06] hover:text-rose-400 transition text-[10px] text-white/20 disabled:opacity-30 disabled:cursor-not-allowed">{t("home.cancel")}</button>
-                </div>
-              )}
-              {/* Expired state — highlighted Expired button */}
-              {createPhase==="expired"&&(
-                <div className="text-center">
-                  <p className="text-white/20 text-[8px] uppercase tracking-[0.3em] mb-2">{t("home.arenaCode")}</p>
-                  <div className="bg-white/[0.04] border border-white/[0.06] rounded-xl px-4 py-3 mb-3">
-                    <span className="text-2xl font-mono font-black tracking-[0.4em] text-white/15 line-through">{roomCode}</span>
-                  </div>
-                  <p className="text-rose-400 text-xs mb-3">{t("home.expiredMsg")}</p>
-                  <button onClick={clearExpired} className="w-full py-2.5 rounded-xl bg-gradient-to-br from-rose-500 to-rose-600 text-white font-bold text-sm shadow-lg shadow-rose-500/20 hover:shadow-rose-500/30 transition">
-                    {t("home.expiredCta")}
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Card 2: Join Room */}
-          <div className="flex-shrink-0 w-[calc(50%-8px)] min-w-[280px]">
-            <div className={`rounded-2xl border p-5 h-full transition-all duration-300
-              ${activeCard===1
-                ?"border-violet-500/30 bg-gradient-to-br from-indigo-500/[0.1] to-violet-500/[0.08] shadow-lg shadow-violet-500/[0.08]"
-                :"border-white/[0.06] bg-white/[0.02] opacity-70 hover:opacity-90"}`}
-              onClick={()=>{if(activeCard!==1){setActiveCard(1);setMode("join");}}}
-            >
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-10 h-10 rounded-xl bg-violet-500/20 flex items-center justify-center text-xl">🎯</div>
-                <div>
-                  <h3 className="text-sm font-bold">{t("home.card.join.title")}</h3>
-                  <p className="text-[10px] text-white/30">{t("home.card.join.desc")}</p>
-                </div>
-              </div>
-
-              {joinErr&&<div className="bg-rose-500/10 border border-rose-500/15 text-rose-400 px-3 py-2 rounded-lg mb-3 text-[10px]">⚠️ {joinErr}</div>}
-
-              {joinPhase==="validating"&&(<div className="text-center py-10"><div className="w-8 h-8 mx-auto rounded-full border-2 border-violet-400/30 border-t-violet-300 animate-spin mb-3"/><p className="text-white/40 text-xs">{t("home.validating")}</p></div>)}
-              {joinPhase==="joining"&&(<div className="text-center py-10"><div className="w-8 h-8 mx-auto rounded-full border-2 border-violet-400/30 border-t-violet-300 animate-spin mb-3"/><p className="text-white/40 text-xs">{t("home.joining")}</p></div>)}
-              {joinPhase==="select"&&(
-                <div>
-                  <p className="text-white/30 text-[11px] mb-3 font-medium">{t("home.arenaCode")}</p>
-                  <input type="text" value={joinCode}
-                    onChange={e=>setJoinCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g,""))}
-                    placeholder={t("home.codePlaceholder")}
-                    maxLength={6}
-                    disabled={joinEntryDisabled}
-                    className={`w-full bg-white/[0.03] border border-white/[0.06] rounded-xl px-4 py-3 text-center text-xl font-mono font-black tracking-[0.4em] text-violet-300 placeholder:text-white/[0.08] placeholder:tracking-normal placeholder:text-xs placeholder:font-normal transition mb-3 ${joinEntryDisabled?"cursor-not-allowed opacity-40":"focus:outline-none focus:border-violet-500/30"}`}
-                  />
-                  {joinBlockedMsg&&<p className="text-[10px] text-white/25 mb-3">{joinBlockedMsg}</p>}
-                  <button onClick={submitJoin} disabled={joinCode.length<6||joinEntryDisabled} className="btn-primary w-full py-3 font-bold text-sm disabled:!opacity-15">{t("home.join")}</button>
-                </div>
-              )}
-              {/* Confirm dialog: no payment, just confirm joining */}
-              {joinPhase==="confirm"&&(
-                <div className="text-center">
-                  <p className="text-white/40 text-xs mb-3">{t("home.joinConfirm")}</p>
-                  <div className="bg-white/[0.04] border border-white/[0.06] rounded-xl px-4 py-3 mb-4">
-                    <span className="text-xl font-mono font-black tracking-[0.4em] text-gradient">{joinCode}</span>
-                  </div>
-                  <p className="text-white/25 text-[10px] mb-4">{joinValidInfo?t("home.joinPlayersInRoom",{n:joinValidInfo.current,total:joinValidInfo.total}):""}</p>
-                  <div className="flex gap-2">
-                    <button onClick={()=>{setJoinPhase("select");setJoinValidInfo(null);}} className="flex-1 py-2.5 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:bg-white/[0.04] text-white/30 text-xs transition">{t("home.cancel")}</button>
-                    <button onClick={confirmJoin} className="flex-1 btn-primary !py-2.5 !text-sm font-bold">{t("home.join")}</button>
-                  </div>
-                </div>
-              )}
-              {(joinPhase==="waiting"||joinPhase==="paid_waiting"||joinPhase==="preparing")&&(
-                <div className="text-center">
-                  <p className="text-white/20 text-[8px] uppercase tracking-[0.3em] mb-2">{t("home.joinedArena")}</p>
-                  <div className="bg-white/[0.04] border border-white/[0.06] rounded-xl px-4 py-3 mb-3">
-                    <span className="text-xl font-mono font-black tracking-[0.4em] text-gradient">{joinCode}</span>
-                  </div>
-                  <TeamSlots total={joinRoom.total} players={joinRoom.players}/>
-                  <div className="mt-2 inline-flex items-center gap-1.5 text-[10px]">
-                    <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse"/>
-                    <span className="text-white/30 font-mono">{joinPhase==="preparing" ? t("home.preparingPayment") : joinPaid && paymentProgress.total ? `${paymentProgress.paidCount}/${paymentProgress.total} ${t("home.paid")}` : `${joinRoom.current}/${joinRoom.total} ${t("home.waiting")}`}</span>
-                  </div>
-                  {/* Join room expiry countdown */}
-                  {joinCountdown!==null&&joinCountdown>0&&joinRoom.current<joinRoom.total&&(
-                    <div className={`mt-2 flex items-center justify-center gap-1.5 ${joinCountdown<=30?"text-rose-400":"text-violet-300"}`}>
-                      <span className="text-sm">⏱️</span>
-                      <span className="text-sm font-mono font-bold">{fmtCountdown(joinCountdown)}</span>
-                      <span className="text-[9px] text-white/25 ml-1">{t("home.remaining")}</span>
-                    </div>
-                  )}
-                  {/* Payment countdown (after full, 60s) */}
-                  {paymentCountdown!==null&&paymentCountdown>0&&joinPhase==="paid_waiting"&&(
-                    <div className={`mt-2 flex items-center justify-center gap-1.5 ${paymentCountdown<=10?"text-rose-400":"text-violet-300"}`}>
-                      <span className="text-sm">💰</span>
-                      <span className="text-sm font-mono font-bold">{paymentCountdown}s</span>
-                      <span className="text-[9px] text-white/25 ml-1">{t("home.payment.countdown")}</span>
-                    </div>
-                  )}
-                  <button onClick={leaveRoom} disabled={joinPhase==="preparing"} className="mt-3 w-full py-2 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:bg-rose-500/[0.06] hover:text-rose-400 transition text-[10px] text-white/20 disabled:opacity-30 disabled:cursor-not-allowed">{t("home.leave")}</button>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Card 3: Quick Match */}
-          <div className="flex-shrink-0 w-[calc(50%-8px)] min-w-[280px]">
-            <div className={`rounded-2xl border p-5 h-full transition-all duration-300
-              ${activeCard===2
-                ?"border-violet-500/30 bg-gradient-to-br from-indigo-500/[0.1] to-violet-500/[0.08] shadow-lg shadow-violet-500/[0.08]"
-                :"border-white/[0.06] bg-white/[0.02] opacity-70 hover:opacity-90"}`}
-              onClick={()=>activeCard!==2&&goCard(2)}
-            >
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-10 h-10 rounded-xl bg-violet-500/20 flex items-center justify-center text-xl">⚔️</div>
-                <div>
-                  <h3 className="text-sm font-bold">{t("home.card.match.title")}</h3>
-                  <p className="text-[10px] text-white/30">{t("home.card.match.desc")}</p>
-                </div>
-              </div>
-
-              {matchErr&&<div className="bg-rose-500/10 border border-rose-500/15 text-rose-400 px-3 py-2 rounded-lg mb-3 text-[10px]">⚠️ {matchErr}</div>}
-
-              {matchPhase==="select"&&(
-                <SizeSelector label={t("home.teamSize")} selectedSize={matchTeamSize} onSelect={setMatchTeamSize} onAction={startMatch} actionLabel="Match" disabled={isCreateBusy||isJoinBusy}/>
-              )}
-              {matchPhase==="matching"&&(
-                <div>
-                  <MatchAnimation teamSize={matchTeamSize} current={matchInfo.current} countdown={cd} status="matching"/>
-                  <button onClick={cancelMatch} className="w-full mt-3 py-2 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:bg-white/[0.04] transition text-[10px] text-white/20">{t("home.cancel")}</button>
-                </div>
-              )}
-              {matchPhase==="preparing"&&(
-                <div>
-                  <MatchAnimation teamSize={matchTeamSize} current={matchTeamSize} status="preparing"/>
-                  <p className="mt-3 text-center text-[10px] text-white/25">{t("home.preparingNote")}</p>
-                </div>
-              )}
-            </div>
-          </div>
+          <div className="flex-shrink-0 w-full min-w-full md:w-[calc(50%-8px)] md:min-w-[calc(50%-8px)] self-stretch">{renderCreatePanel()}</div>
+          <div className="flex-shrink-0 w-full min-w-full md:w-[calc(50%-8px)] md:min-w-[calc(50%-8px)] self-stretch">{renderJoinPanel()}</div>
+          <div className="flex-shrink-0 w-full min-w-full md:w-[calc(50%-8px)] md:min-w-[calc(50%-8px)] self-stretch">{renderMatchPanel()}</div>
         </div>
 
-        {/* Dot indicators + swipe hint */}
         <div className="flex items-center justify-center gap-3 mt-4">
-          {activeCard>0&&<span className="text-white/15 text-[10px] mr-1">{t("home.swipe.left")}</span>}
-          {CARDS.map((_,i)=>(
-            <button key={i} onClick={()=>{goCard(i);if(i>=2)scrollToCard(1);else scrollToCard(0);}}
+          {activeCard>0&&<span className="text-white/40 text-[10px] mr-1">{t("home.swipe.left")}</span>}
+          {Array.from({length:pageCount}).map((_,i)=>(
+            <button key={i} onClick={()=>goCard(i)}
               className={`rounded-full transition-all duration-300
-                ${activeCard===i?"w-6 h-2 bg-gradient-to-r from-indigo-500 via-violet-500 to-blue-500":"w-2 h-2 bg-white/15 hover:bg-white/25"}`}
+                ${activeCard===i?"w-7 h-2.5 bg-gradient-to-r from-purple-500 via-fuchsia-500 to-purple-500":"w-2.5 h-2.5 bg-white/35 hover:bg-white/55"}`}
             />
           ))}
-          {activeCard<2&&<span className="text-white/15 text-[10px] ml-1">{t("home.swipe.right")}</span>}
+          {activeCard<maxPageIndex&&<span className="text-white/40 text-[10px] ml-1">{t("home.swipe.right")}</span>}
         </div>
       </div>
 
@@ -1152,14 +1470,15 @@ export default function Home(){
         singleAction={!!paymentFailureDialog}
       />
 
-      {/* Bottom row */}
-      <div className="card !p-4 mb-4">
+      {/* History */}
+      <div className="landing-advantage-card p-4 mb-4">
         <div className="flex items-center justify-between mb-3">
-          <h3 className="text-xs font-bold text-white/40 uppercase tracking-widest">{t("home.history.title")}</h3>
+          <span className="landing-kicker">{t("home.history.title")}</span>
           <div className="flex gap-1">
-            {[["all","home.history.filter.all"],["create","home.history.filter.create"],["join","home.history.filter.join"],["random","home.history.filter.random"]].map(([k,l])=><button key={k} onClick={()=>setHistoryFilter(k)} className={`px-2 py-1 rounded-lg text-[10px] ${historyFilter===k?"bg-violet-500/20 text-violet-300 border border-violet-500/25":"bg-white/[0.03] text-white/25 border border-white/[0.04]"}`}>{t(l)}</button>)}
+            {[["all","home.history.filter.all"],["create","home.history.filter.create"],["join","home.history.filter.join"],["random","home.history.filter.random"]].map(([k,l])=><button key={k} onClick={()=>setHistoryFilter(k)} className={`px-2 py-1 rounded-lg text-[10px] ${historyFilter===k?"bg-fuchsia-500/20 text-fuchsia-300 border border-fuchsia-500/25":"bg-white/[0.03] text-white/25 border border-white/[0.04]"}`}>{t(l)}</button>)}
           </div>
         </div>
+        <div>
         {!wallet ? (
           <p className="text-white/20 text-xs">{t("home.history.connect")}</p>
         ) : history.length===0 ? (
@@ -1182,7 +1501,7 @@ export default function Home(){
               const actionLabel = translateHistoryLabel(g.claimLabel, t("home.history.claim"));
               const claimedLabel = translateHistoryLabel(g.claimedLabel, t("home.history.claimed"));
               return (
-                <div key={g.id} className="bg-white/[0.02] border border-white/[0.05] rounded-xl px-3 py-2.5">
+                <div key={g.id} className={`bg-white/[0.02] border border-white/[0.05] rounded-xl px-3 py-2.5 border-l-2 ${result==="Win"?"border-l-emerald-500/60":result==="Lose"?"border-l-rose-500/60":result==="Playing"?"border-l-sky-500/60":"border-l-fuchsia-500/40"}`}>
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <p className="text-sm font-bold leading-none">{title}</p>
@@ -1190,15 +1509,15 @@ export default function Home(){
                     </div>
                     <div className="flex-1 text-center min-w-0 px-2">
                       <p className="text-[10px] text-white/30">{t("home.arenaCode")}</p>
-                      <p className="text-[11px] font-mono text-violet-300 truncate">{isRoom && g.invite_code ? g.invite_code : "—"}</p>
+                      <p className="text-[11px] font-mono text-fuchsia-300 truncate">{isRoom && g.invite_code ? g.invite_code : "—"}</p>
                     </div>
                     <div className="text-right shrink-0">
                       <p className="text-[10px] text-white/35">{g.max_players}P</p>
-                      <p className={`text-xs font-bold mt-1 ${getHistoryResultClass(result)}`}>{result}</p>
+                      <span className={`text-[10px] font-bold mt-1 px-2 py-0.5 rounded-full inline-block border ${result==="Win"?"bg-emerald-500/15 text-emerald-400 border-emerald-500/25":result==="Lose"?"bg-rose-500/15 text-rose-400 border-rose-500/25":result==="Playing"?"bg-sky-500/15 text-sky-300 border-sky-500/25":"bg-fuchsia-500/15 text-fuchsia-300 border-fuchsia-500/25"}`}>{result}</span>
                     </div>
                   </div>
                   {g.error_message&&g.state==="failed"&&(
-                    <p className="mt-2 text-[10px] text-violet-200/80 leading-relaxed">{g.error_message}</p>
+                    <p className="mt-2 text-[10px] text-fuchsia-200/80 leading-relaxed">{g.error_message}</p>
                   )}
                   {(canClaim||isClaimed||isClaiming) && <div className="mt-3 flex justify-end">
                     <button
@@ -1225,19 +1544,21 @@ export default function Home(){
             </div>}
           </div>;
         })()}
+        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-4">
-        <div className="card !p-4">
+        <div className="landing-advantage-card p-4">
+          <div>
           <div className="flex items-center justify-between mb-3">
-            <h3 className="text-xs font-bold text-white/40 uppercase tracking-widest">{t("home.quickRules")}</h3>
-            <button onClick={()=>nav("/how-to-play")} className="text-[10px] text-violet-300/60 hover:text-violet-300 transition font-semibold">{t("home.learnMore")}</button>
+            <span className="landing-kicker">{t("home.quickRules")}</span>
+            <button onClick={()=>nav("/how-to-play")} className="text-[10px] text-fuchsia-300/60 hover:text-fuchsia-300 transition font-semibold">{t("home.learnMore")}</button>
           </div>
-          <div className="grid grid-cols-2 gap-2 text-xs text-white/45">
-            <div className="bg-white/[0.02] rounded-lg px-3 py-2.5 flex items-center gap-2"><span>💰</span>{t("home.rule.entry",{fee:ENTRY_FEE})}</div>
-            <div className="bg-white/[0.02] rounded-lg px-3 py-2.5 flex items-center gap-2"><span>⏱️</span>{t("home.rule.predict")}</div>
-            <div className="bg-white/[0.02] rounded-lg px-3 py-2.5 flex items-center gap-2"><span>📊</span>{t("home.rule.settle")}</div>
-            <div className="bg-white/[0.02] rounded-lg px-3 py-2.5 flex items-center gap-2"><span>🏆</span>{t("home.rule.pool")}</div>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs text-white/55">
+            <div className="flex items-center gap-2 py-1"><span>💰</span>{t("home.rule.entry",{fee:ENTRY_FEE})}</div>
+            <div className="flex items-center gap-2 py-1"><span>⏱️</span>{t("home.rule.predict")}</div>
+            <div className="flex items-center gap-2 py-1"><span>📊</span>{t("home.rule.settle")}</div>
+            <div className="flex items-center gap-2 py-1"><span>🏆</span>{t("home.rule.pool")}</div>
           </div>
           <div className="mt-2 rounded-lg bg-white/[0.02] border border-white/[0.04]">
             <button
@@ -1261,9 +1582,11 @@ export default function Home(){
               <div className="text-[10px] text-white/35 leading-relaxed">{t("home.payout.quickRulesNote")}</div>
             </div>}
           </div>
+          </div>
         </div>
       </div>
 
+      </div>
     </div>
   );
 }

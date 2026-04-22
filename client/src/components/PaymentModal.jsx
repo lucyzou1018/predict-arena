@@ -27,67 +27,63 @@ export function PaymentModal({
   const isPreparing=mode==="preparing";
   const remainingPlayers=Math.max(0,totalCount-paidCount);
   const progressPct=totalCount?Math.min(100,Math.round((paidCount/totalCount)*100)):0;
+  const amountNote=amountCaption||(
+    isWaiting
+      ?"Your payment is locked in for this round"
+      :isPreparing
+        ?"Payment will unlock as soon as setup finishes"
+        :"Platform fee included"
+  );
   return<div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-xl">
-    <div className={`max-w-sm w-full max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain animate-slideUp rounded-2xl border shadow-2xl p-5 sm:p-6 ${isWaiting?"border-emerald-500/20 bg-gradient-to-br from-[#102016] via-[#131a14] to-[#0f130f] shadow-emerald-950/30":"border-violet-500/20 bg-gradient-to-br from-[#14112a] via-[#100d22] to-[#0c0a1d] shadow-violet-900/20"}`}>
+    <div className="landing-story-card max-w-[28rem] sm:max-w-[30rem] w-full max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain animate-slideUp !p-4 sm:!p-5 shadow-[0_26px_72px_rgba(8,6,24,0.72)]">
       <div className="text-center mb-4">
-        <div className={`w-14 h-14 mx-auto mb-3 rounded-2xl border flex items-center justify-center text-2xl ${isWaiting?"bg-gradient-to-br from-emerald-500/15 to-teal-500/15 border-emerald-500/20":"bg-gradient-to-br from-indigo-500/15 to-violet-500/15 border-violet-500/20 animate-float"}`}>{isWaiting?"✅":isPreparing?"⚔️":"💰"}</div>
-        <h3 className="text-lg font-black">{title}</h3>
-        <p className="text-white/35 text-xs mt-1">{subtitle}</p>
+        <h3 className="text-[1.35rem] sm:text-[1.55rem] font-black tracking-tight text-white leading-[1.08]">{title}</h3>
+        <p className="max-w-[25rem] mx-auto text-white/40 text-[12px] leading-5 mt-2">{subtitle}</p>
       </div>
-      {amount&&<div className={`border rounded-xl p-4 mb-3 text-center ${isWaiting?"bg-gradient-to-br from-emerald-500/[0.08] to-teal-500/[0.05] border-emerald-500/20":"bg-gradient-to-br from-indigo-500/[0.1] to-violet-500/[0.08] border-violet-500/20"}`}>
-        <div className="text-3xl font-black text-gradient">{amount}</div>
-        <p className="text-white/20 text-[10px] mt-1">{amountCaption||(
-          isWaiting
-            ?"Your payment is locked in for this round"
-            :isPreparing
-              ?"Payment will unlock as soon as setup finishes"
-              :"Platform fee included"
-        )}</p>
+      {amount&&<div className="mb-3 rounded-[24px] border border-white/[0.08] bg-white/[0.03] px-4 py-4 text-center">
+        <div className="text-[2rem] sm:text-[2.3rem] font-black tracking-tight text-gradient">{amount}</div>
+        <p className="text-white/24 text-[10px] mt-1.5">{amountNote}</p>
       </div>}
-      {totalCount>0&&!isPreparing&&<div className={`rounded-xl border p-3 mb-3 ${isWaiting?"bg-emerald-500/[0.06] border-emerald-500/15":"bg-white/[0.03] border-white/[0.06]"}`}>
-        <div className="flex items-center justify-between text-[10px] uppercase tracking-[0.2em] text-white/35 mb-2">
+      {totalCount>0&&!isPreparing&&<div className={`rounded-[20px] border px-4 py-3 mb-3 ${isWaiting?"bg-fuchsia-500/[0.06] border-fuchsia-500/15":"bg-white/[0.03] border-white/[0.06]"}`}>
+        <div className="flex items-center justify-between text-[10px] uppercase tracking-[0.18em] text-white/35 mb-2.5">
           <span>Payment Progress</span>
           <span>{paidCount}/{totalCount} paid</span>
         </div>
-        <div className="h-2 rounded-full bg-black/20 overflow-hidden mb-2">
-          <div className={`h-full rounded-full transition-all duration-500 ${isWaiting?"bg-gradient-to-r from-emerald-400 to-teal-400":"bg-gradient-to-r from-indigo-400 via-violet-400 to-blue-400"}`} style={{width:`${progressPct}%`}}/>
+        <div className="h-2 rounded-full bg-black/20 overflow-hidden mb-2.5">
+          <div className="h-full rounded-full transition-all duration-500 bg-gradient-to-r from-purple-400 via-fuchsia-400 to-purple-400" style={{width:`${progressPct}%`}}/>
         </div>
-        {isWaiting&&<p className="text-[11px] text-emerald-200/80">{remainingPlayers>0?`Waiting for ${remainingPlayers} more ${remainingPlayers===1?"player":"players"} to confirm.`:"All players paid. Starting match..."}</p>}
+        {isWaiting&&<p className="text-[11px] leading-5 text-fuchsia-200/80">{remainingPlayers>0?`Waiting for ${remainingPlayers} more ${remainingPlayers===1?"player":"players"} to confirm.`:"All players paid. Starting match..."}</p>}
       </div>}
-      {isPreparing&&<div className="mb-4 rounded-xl border border-violet-500/15 bg-white/[0.03] px-4 py-3">
-        <div className="flex items-center gap-3">
-          <span className="w-2.5 h-2.5 rounded-full bg-violet-400 animate-pulse"/>
+      {isPreparing&&<div className="mb-3 rounded-[20px] border border-fuchsia-500/15 bg-white/[0.03] px-4 py-3">
+        <div className="flex items-start gap-3">
+          <span className="w-2 h-2 mt-1.5 rounded-full bg-fuchsia-400 animate-pulse shrink-0"/>
           <div className="min-w-0">
-            <p className="text-[11px] font-bold text-violet-200/90">{preparingTitle||"Preparing on-chain payment step"}</p>
-            <p className="text-[10px] text-white/30 mt-1">{preparingMessage||"The `Pay 1 USDC` action will appear automatically in this dialog."}</p>
+            <p className="text-[12px] font-bold text-fuchsia-100/90">{preparingTitle||"Preparing on-chain payment step"}</p>
+            <p className="text-[11px] leading-5 text-white/34 mt-1">{preparingMessage||"The `Pay 1 USDC` action will appear automatically in this dialog."}</p>
           </div>
         </div>
       </div>}
-      {countdown!==null&&countdown>0&&<div className="text-center mb-3">
-        <div className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl border ${countdown<=10?"bg-rose-500/10 border-rose-500/20":"bg-violet-500/10 border-violet-500/20"}`}>
-          <span className="text-lg">⏱️</span>
-          <span className={`text-xl font-mono font-black ${countdown<=10?"text-rose-400":"text-violet-300"}`}>{countdown}s</span>
+      {countdown!==null&&countdown>0&&<div className="text-center mb-2.5">
+        <div className={`inline-flex items-center gap-2 px-4 py-2 rounded-full border ${countdown<=10?"bg-rose-500/10 border-rose-500/20":"bg-fuchsia-500/10 border-fuchsia-500/20"}`}>
+          <span className={`text-[0.95rem] font-mono font-black ${countdown<=10?"text-rose-400":"text-fuchsia-300"}`}>{countdown}s</span>
         </div>
-        {countdownLabel&&<p className="text-[10px] text-white/25 mt-2">{countdownLabel}</p>}
+        {countdownLabel&&<p className="text-[10px] text-white/25 mt-1.5 leading-5">{countdownLabel}</p>}
       </div>}
-      {notice&&<div className="mb-3 rounded-xl border border-violet-500/20 bg-violet-500/10 px-3 py-2 text-[11px] text-violet-200">{notice}</div>}
-      {error&&<div className="mb-3 rounded-xl border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-[11px] text-rose-300">{error}</div>}
-      {hint&&<p className="text-white/25 text-[11px] text-center mb-4">{hint}</p>}
+      {notice&&<div className="mb-2.5 rounded-[18px] border border-fuchsia-500/20 bg-fuchsia-500/10 px-3.5 py-2.5 text-[11px] leading-5 text-fuchsia-200">{notice}</div>}
+      {error&&<div className="mb-2.5 rounded-[18px] border border-rose-500/20 bg-rose-500/10 px-3.5 py-2.5 text-[11px] leading-5 text-rose-300">{error}</div>}
+      {hint&&<p className="text-white/26 text-[10px] leading-5 text-center mb-4 max-w-[25rem] mx-auto">{hint}</p>}
       {singleAction?(
         <button onClick={onConfirm} disabled={loading} className="w-full btn-primary !py-2.5 !text-sm">{loading?"Processing...":actionLabel}</button>
       ):isPreparing?(
-        <div className="grid grid-cols-2 gap-2">
-          <button disabled className="py-2.5 rounded-xl bg-violet-500/15 border border-violet-500/20 text-violet-300 text-xs font-bold">{preparingPrimaryLabel}</button>
-          <button disabled className="py-2.5 rounded-xl bg-white/[0.03] border border-white/[0.08] text-white/45 text-xs font-bold">{preparingSecondaryLabel}</button>
+        <div className="space-y-2">
+          <div className="w-full py-2 rounded-xl bg-fuchsia-500/12 border border-fuchsia-500/18 text-fuchsia-300 text-[11px] font-bold text-center">{preparingPrimaryLabel}</div>
+          <button disabled className="w-full py-2.5 rounded-xl bg-white/[0.03] border border-white/[0.08] text-white/45 text-sm font-bold">{preparingSecondaryLabel}</button>
         </div>
       ):isWaiting?(
-        <div className="grid grid-cols-2 gap-2">
-          <button disabled className="py-2.5 rounded-xl bg-emerald-500/15 border border-emerald-500/25 text-emerald-300 text-xs font-bold">Payment Sent</button>
-          <button disabled className="py-2.5 rounded-xl bg-white/[0.03] border border-white/[0.08] text-white/45 text-xs font-bold">Waiting For Others</button>
-        </div>
+        <button disabled className="w-full py-2.5 rounded-xl bg-white/[0.03] border border-white/[0.08] text-white/45 text-sm font-bold">Waiting For Others</button>
       ):(
         <div className="flex gap-2">
-          <button onClick={onCancel} disabled={loading} className="flex-1 py-2.5 rounded-xl bg-white/[0.02] border border-white/[0.06] hover:bg-white/[0.04] transition text-xs text-white/30">Cancel</button>
+          <button onClick={onCancel} disabled={loading} className="flex-1 py-2.5 rounded-xl bg-white/[0.02] border border-white/[0.06] hover:bg-white/[0.04] transition text-sm text-white/30">Cancel</button>
           <button onClick={onConfirm} disabled={loading} className="flex-1 btn-primary !py-2.5 !text-sm">{loading?"Processing...":actionLabel}</button>
         </div>
       )}

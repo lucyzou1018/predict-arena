@@ -1,7 +1,6 @@
 import WebSocket from "ws";
-import fetch from "node-fetch";
 import config from "../config/index.js";
-import { buildFetchOptions, buildWebSocketOptions, proxyUrl } from "../utils/network.js";
+import { buildFetchOptions, buildWebSocketOptions, fetchWithProxyFallback, proxyUrl } from "../utils/network.js";
 
 const BINANCE_WS_URL = config.binance.wsUrl;
 const BINANCE_REST_URL = process.env.BINANCE_REST_URL || "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT";
@@ -69,7 +68,7 @@ class PriceService {
     if (this._restTimer) return;
     const poll = async () => {
       try {
-        const res = await fetch(BINANCE_REST_URL, buildFetchOptions({ timeout: 4000 }));
+        const res = await fetchWithProxyFallback(BINANCE_REST_URL, buildFetchOptions({ timeout: 4000 }));
         const data = await res.json();
         const newPrice = parseFloat(data.price);
         if (newPrice && newPrice !== this.price) {

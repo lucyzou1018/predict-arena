@@ -4,7 +4,6 @@ import { query } from "../config/database.js";
 import matchmakingService from "../services/matchmaking.js";
 import roomService from "../services/room.js";
 import gameService from "../services/game.js";
-import roomPaymentAuthService from "../services/roomPaymentAuth.js";
 import priceService from "../services/price.js";
 
 export function initSocket(httpServer) {
@@ -58,7 +57,7 @@ export function initSocket(httpServer) {
       if (session?.timer) clearTimeout(session.timer);
       if (room && inviteCode) delete roomService.rooms[inviteCode];
       gameService.clearRoomPayment(gameId);
-      setTimeout(async () => {
+      queueMicrotask(async () => {
         try {
           await gameService.startGame(gameId, resolvedChainGameId, players);
         } catch (error) {
@@ -86,8 +85,37 @@ export function initSocket(httpServer) {
             if (p.socketId) io.to(p.socketId).emit("room:error", { message: error?.message || "Game start failed" });
           }
         }
-      }, 500);
+      });
       return true;
+    };
+    const openPreparedRoomPayment = async ({ gameId, inviteCode, chainGameId, fallbackPlayers = [] }) => {
+      const room = inviteCode ? roomService.getRoom(inviteCode) : null;
+      const players = fallbackPlayers.length ? fallbackPlayers : room?.players || [];
+      const session = gameService.startRoomPayment(
+        gameId,
+        inviteCode,
+        players,
+        room?.owner || players[0]?.wallet || null,
+        chainGameId,
+      );
+      roomService.clearRoomExpiry(inviteCode);
+      session.timer = setTimeout(async () => {
+        const current = gameService.getRoomPayment(gameId);
+        if (!current) return;
+        const latestStatus = await gameService.getRoomPaymentStatus(gameId, current.chainGameId || chainGameId);
+        if (latestStatus.allPaid) {
+          await startPaidRoomGame({
+            gameId,
+            inviteCode,
+            chainGameId: latestStatus.chainGameId,
+            fallbackPlayers: players,
+          });
+          return;
+        }
+        await roomService._abortPaymentRoom(inviteCode, "A player timed out before completing payment. This room has been dissolved.");
+      }, config.game.paymentTimeout);
+      roomService.emitRoomPaymentOpened(inviteCode, chainGameId, config.game.paymentTimeout);
+      return session;
     };
     socket.on("auth", d => {
       wallet = d.wallet?.toLowerCase?.() || null;
@@ -162,9 +190,9 @@ export function initSocket(httpServer) {
           const session = gameService.startRoomPayment(r.gameId, null, r.players);
           session.timer = setTimeout(async () => {
             const current = gameService.getRoomPayment(r.gameId);
-            if (!current) return;
-            await query(`UPDATE games SET state = 'cancelled' WHERE id = $1`, [r.gameId]);
-            for (const p of r.players) io.to(p.socketId).emit("match:error", { message: "Payment timeout" });
+      if (!current) return;
+      await query(`UPDATE games SET state = 'cancelled' WHERE id = $1`, [r.gameId]);
+      for (const p of r.players) io.to(p.socketId).emit("match:error", { message: "A player timed out before completing payment. This room has been dissolved." });
             gameService.clearRoomPayment(r.gameId);
           }, config.game.paymentTimeout);
         }
@@ -220,44 +248,28 @@ export function initSocket(httpServer) {
           const players = [...rm.players];
           const gid = rm.gameId;
           const cid = rm.chainGameId || null;
-          const session = gameService.startRoomPayment(gid, d.inviteCode, players, rm.owner, cid);
-          roomService.clearRoomExpiry(d.inviteCode);
-          session.timer = setTimeout(async () => {
-            const current = gameService.getRoomPayment(gid);
-            if (!current) return;
-            const latestStatus = await gameService.getRoomPaymentStatus(gid, current.chainGameId || cid);
-            if (latestStatus.allPaid) {
-              await startPaidRoomGame({
+          if (cid) {
+            await openPreparedRoomPayment({
+              gameId: gid,
+              inviteCode: d.inviteCode,
+              chainGameId: cid,
+              fallbackPlayers: players,
+            });
+          } else {
+            roomService.prepareRoomPayment(d.inviteCode, { timeoutMs: config.game.paymentTimeout })
+              .then((preparedChainGameId) => openPreparedRoomPayment({
                 gameId: gid,
                 inviteCode: d.inviteCode,
-                chainGameId: latestStatus.chainGameId,
+                chainGameId: preparedChainGameId,
                 fallbackPlayers: players,
+              }))
+              .catch((error) => {
+                console.error("[Room] prepare payment failed", {
+                  inviteCode: d.inviteCode,
+                  gameId: gid,
+                  error: error?.message || error,
+                });
               });
-              return;
-            }
-            await roomService._abortPaymentRoom(d.inviteCode, "Payment timeout");
-          }, config.game.paymentTimeout);
-          for (const p of players) {
-            const auth = await roomPaymentAuthService.build({
-              inviteCode: d.inviteCode,
-              maxPlayers: rm.maxPlayers,
-              roomOwner: rm.owner,
-              player: p.wallet,
-              players: players.map((entry) => entry.wallet),
-              paymentStartedAt: session?.startedAt,
-            });
-            if (!p.socketId) continue;
-            io.to(p.socketId).emit("room:full", {
-              gameId: gid,
-              chainGameId: cid,
-              owner: rm.owner,
-              current: players.length,
-              total: rm.maxPlayers,
-              players: players.map(x => x.wallet),
-              inviteCode: d.inviteCode,
-              paymentTimeout: config.game.paymentTimeout,
-              auth,
-            });
           }
         } else {
           socket.emit("room:joined", r);

@@ -6,7 +6,7 @@ import dbPool from "../config/database.js";
 
 const TX_CONFIRM_TIMEOUT_MS = parseInt(process.env.CONTRACT_TX_CONFIRM_TIMEOUT_MS || "90000", 10);
 const TX_RECOVERY_TIMEOUT_MS = parseInt(process.env.CONTRACT_TX_RECOVERY_TIMEOUT_MS || "60000", 10);
-const TX_RECOVERY_POLL_MS = 2000;
+const TX_RECOVERY_POLL_MS = parseInt(process.env.CONTRACT_TX_RECOVERY_POLL_MS || "500", 10);
 const NONCE_LOCK_WAIT_MS = parseInt(process.env.CONTRACT_NONCE_LOCK_WAIT_MS || "30000", 10);
 const NONCE_LOCK_TTL_MS = parseInt(process.env.CONTRACT_NONCE_LOCK_TTL_MS || "15000", 10);
 const NONCE_LOCK_RETRY_MS = parseInt(process.env.CONTRACT_NONCE_LOCK_RETRY_MS || "150", 10);
@@ -15,6 +15,7 @@ const RELAY_NONCE_RETRY_MS = parseInt(process.env.CONTRACT_NONCE_RETRY_MS || "40
 const RELAY_MIN_PRIORITY_FEE = ethers.parseUnits(process.env.CONTRACT_RELAY_MIN_PRIORITY_GWEI || "0.001", "gwei");
 const RELAY_MAX_PRIORITY_FEE = ethers.parseUnits(process.env.CONTRACT_RELAY_MAX_PRIORITY_GWEI || "0.02", "gwei");
 const RELAY_MAX_FEE_MULTIPLIER = BigInt(parseInt(process.env.CONTRACT_RELAY_MAX_FEE_MULTIPLIER || "1", 10));
+const BASE_SEPOLIA_NETWORK = ethers.Network.from({ name: "base-sepolia", chainId: 84532 });
 const DEFAULT_BASE_SEPOLIA_RPC_FALLBACKS = [
   "https://sepolia.base.org",
 ];
@@ -195,7 +196,11 @@ class ContractService {
       return;
     }
     const rpcUrls = buildRpcUrls(config.rpc.url);
-    this.rpcProviders = rpcUrls.map((url) => new ethers.JsonRpcProvider(createRpcFetchRequest(url)));
+    this.rpcProviders = rpcUrls.map((url) => new ethers.JsonRpcProvider(
+      createRpcFetchRequest(url),
+      BASE_SEPOLIA_NETWORK,
+      { staticNetwork: BASE_SEPOLIA_NETWORK },
+    ));
     const txProviderIndex = pickPreferredTxRpcIndex(rpcUrls);
     this.txProvider = this.rpcProviders[txProviderIndex];
     this.provider = this.txProvider;

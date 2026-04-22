@@ -63,14 +63,96 @@ class RoomService {
       const paymentPlayer = payment.players.find((player) => player.wallet === wallet);
       if (paymentPlayer) paymentPlayer.socketId = socketId;
     }
+    const paymentOpen = !!(payment?.chainGameId || located.room.chainGameId);
+    const isPreparing = located.room.players.length >= located.room.maxPlayers && !paymentOpen;
     return {
       inviteCode: located.inviteCode,
       gameId: located.room.gameId,
       chainGameId: located.room.chainGameId,
       phase: payment
-        ? ((payment.chainGameId || located.room.chainGameId || wallet === located.room.owner) ? "payment" : "preparing")
-        : "waiting",
+        ? (paymentOpen ? "payment" : "preparing")
+        : (isPreparing ? "preparing" : "waiting"),
     };
+  }
+
+  _emitToRoomPlayers(code, event, payload) {
+    const room = this.rooms[code];
+    if (!room) return;
+    for (const player of room.players) {
+      if (player?.socketId) this.io?.to(player.socketId).emit(event, payload);
+    }
+  }
+
+  emitRoomPreparing(code, timeoutMs = config.game.paymentTimeout) {
+    const room = this.rooms[code];
+    if (!room) return false;
+    this._emitToRoomPlayers(code, "room:preparing", {
+      gameId: room.gameId,
+      chainGameId: room.chainGameId,
+      inviteCode: code,
+      owner: room.owner,
+      players: room.players.map((player) => player.wallet),
+      total: room.maxPlayers,
+      timeoutMs,
+    });
+    return true;
+  }
+
+  emitRoomPaymentOpened(code, chainGameId, timeoutMs = config.game.paymentTimeout) {
+    const room = this.rooms[code];
+    if (!room || !chainGameId) return false;
+    const payment = gameService.getRoomPayment(room.gameId);
+    this._emitToRoomPlayers(code, "room:payment:opened", {
+      gameId: room.gameId,
+      chainGameId,
+      inviteCode: code,
+      owner: room.owner,
+      players: room.players.map((player) => player.wallet),
+      total: room.maxPlayers,
+      paymentTimeout: timeoutMs,
+      paymentStartedAt: payment?.startedAt || null,
+    });
+    return true;
+  }
+
+  async prepareRoomPayment(code, options = {}) {
+    const room = this.rooms[code];
+    if (!room) throw new Error("Room not found");
+    if (room.chainGameId) return room.chainGameId;
+    if (room._preparePromise) return room._preparePromise;
+
+    room.preparing = true;
+    room.prepareStartedAt = Date.now();
+    this.emitRoomPreparing(code, options.timeoutMs || config.game.paymentTimeout);
+
+    room._preparePromise = (async () => {
+      const chainGameId = await contractService.prepareRoomPayment(
+        code,
+        room.maxPlayers,
+        room.owner,
+        room.players.map((player) => player.wallet),
+        options,
+      );
+      const currentRoom = this.rooms[code];
+      if (!currentRoom) return chainGameId;
+      this.setChainGameId(code, chainGameId);
+      return chainGameId;
+    })().catch(async (error) => {
+      if (this.rooms[code]) {
+        const message = error?.message || "On-chain room setup failed. Please create a new room.";
+        await this._abortPaymentRoom(code, message);
+      }
+      throw error;
+    }).finally(() => {
+      const currentRoom = this.rooms[code];
+      if (currentRoom) {
+        currentRoom.preparing = false;
+        currentRoom.prepareStartedAt = null;
+        currentRoom._preparePromise = null;
+      }
+    });
+
+    return room._preparePromise;
   }
 
   async createRoom(maxPlayers, wallet, socketId) {

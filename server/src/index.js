@@ -15,7 +15,16 @@ async function main() {
   await contractService.init();
   priceService.start();
   const app = express();
-  app.use(cors({ origin: config.client.url }));
+  const allowedOrigins = new Set(config.client.urls);
+  app.use(cors({
+    origin(origin, callback) {
+      if (!origin || allowedOrigins.has(origin)) {
+        callback(null, true);
+        return;
+      }
+      callback(new Error(`Origin ${origin} not allowed by CORS`));
+    },
+  }));
   app.use(express.json());
   app.get("/api/price", (_, res) => res.json({ price: priceService.getPrice() }));
   app.use("/api", gameRoutes);

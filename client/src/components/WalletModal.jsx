@@ -114,12 +114,12 @@ export default function WalletModal() {
               }}
             >
               <div className="flex items-center gap-3">
-                <div className="w-5 h-5 border-2 border-violet-300/70 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                <div className="w-5 h-5 border-2 border-fuchsia-300/70 border-t-transparent rounded-full animate-spin flex-shrink-0" />
                 <div>
-                  <div className="text-xs font-semibold text-violet-200">
+                  <div className="text-xs font-semibold text-fuchsia-200">
                     {connectStep === "connecting" ? "Connecting to wallet..." : "Waiting for signature..."}
                   </div>
-                  <div className="text-[10px] text-violet-200/60 mt-0.5">
+                  <div className="text-[10px] text-fuchsia-200/60 mt-0.5">
                     {connectStep === "connecting"
                       ? "Please approve the connection in your wallet"
                       : "Please sign the message to verify wallet ownership"}

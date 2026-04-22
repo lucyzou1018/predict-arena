@@ -6,12 +6,14 @@ import JoinRoom from"./pages/JoinRoom";import GamePlay from"./pages/GamePlay";im
 import HowToPlay from"./pages/HowToPlay";
 import Login from"./pages/Login";
 import Sparkles from"./components/Sparkles";
+import CreateRoomPreview from "./pages/CreateRoomPreview";
 function AppContent(){const loc=useLocation();const hideHeader=loc.pathname==="/";const showFooter=["/","/arena","/how-to-play","/login"].includes(loc.pathname);return<div className="min-h-screen relative app-bg flex flex-col"><Sparkles/>{!hideHeader&&<Header/>}<div className="flex-1"><Routes>
   <Route path="/" element={<Landing/>}/>
   <Route path="/login" element={<Login/>}/>
   <Route path="/arena" element={<Home/>}/>
   <Route path="/match" element={<RandomMatch/>}/>
   <Route path="/create-room" element={<CreateRoom/>}/>
+  <Route path="/create-room-preview" element={<CreateRoomPreview/>}/>
   <Route path="/join-room" element={<JoinRoom/>}/>
   <Route path="/game" element={<GamePlay/>}/>
   <Route path="/result/:id" element={<Result/>}/>

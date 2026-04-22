@@ -35,6 +35,16 @@ function clearStoredPrediction(gameId, wallet) {
   } catch {}
 }
 
+function isSettlementSyncMessage(message) {
+  const reason = `${message || ""}`.toLowerCase();
+  return (
+    reason.includes("settlement is still syncing") ||
+    reason.includes("syncing on base sepolia") ||
+    reason.includes("timed out while waiting for base sepolia") ||
+    reason.includes("result should appear automatically")
+  );
+}
+
 export default function GamePlay() {
   const nav = useNavigate();
   const t = useT();
@@ -481,6 +491,19 @@ export default function GamePlay() {
           nav("/", { replace: true });
           return;
         }
+        if ((phase === "settling" || phase === "failed") && isSettlementSyncMessage(message)) {
+          setPhase("settling");
+          setFailureMessage(null);
+          updateGame({
+            gameId: gameId || gameState.gameId,
+            chainGameId: currentChainGameId,
+            phase: "settling",
+            failureMessage: null,
+            basePrice,
+          });
+          void syncGameFromServer(gameId || gameState.gameId);
+          return;
+        }
         if ((phase === "settling" || phase === "failed") && message.toLowerCase().includes("settlement")) {
           setPhase("failed");
           setCountdown(0);
@@ -642,7 +665,7 @@ export default function GamePlay() {
 
       {phase === "predicting" && (
         <div className="w-full max-w-3xl animate-slideUp">
-          <div className="card mb-4">
+          <div className="landing-story-card !p-5 sm:!p-6 mb-4">
             <div className="flex items-start justify-between gap-4 mb-4">
               <div>
                 <p className="text-white/20 text-[10px] uppercase tracking-[0.25em] mb-1">Match In Progress</p>
@@ -652,24 +675,24 @@ export default function GamePlay() {
               <CountdownRing total={PREDICT_TIMEOUT} remaining={countdown} label="Time Left" size="lg" />
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
-              <div className="rounded-2xl bg-white/[0.03] border border-white/[0.06] p-4 text-center">
+              <div className="arena-mech-panel p-4 text-center">
                 <p className="text-white/20 text-[10px] uppercase tracking-[0.2em] mb-1">Base Price</p>
                 <p className="text-2xl font-mono font-black text-gradient">${basePrice.toLocaleString("en-US", { minimumFractionDigits: 2 })}</p>
               </div>
-              <div className="rounded-2xl bg-white/[0.03] border border-white/[0.06] p-4 text-center">
+              <div className="arena-mech-panel p-4 text-center">
                 <p className="text-white/20 text-[10px] uppercase tracking-[0.2em] mb-1">Live Price</p>
                 <p className={`text-2xl font-mono font-black ${priceColor}`}>${currentPrice.toLocaleString("en-US", { minimumFractionDigits: 2 })}</p>
                 <p className={`text-[11px] font-mono mt-1 ${priceColor}`}>{diff >= 0 ? "+" : ""}{diff.toFixed(2)} ({percent}%)</p>
               </div>
             </div>
-            <div className="rounded-2xl bg-white/[0.02] border border-white/[0.05] p-4 mb-4">
+            <div className="arena-mech-panel p-4 mb-4">
               <div className="flex items-center justify-between mb-3">
                 <p className="text-white/25 text-xs">Players ready</p>
                 <p className="text-white/40 text-xs font-mono">{predictedCount}/{totalPlayers}</p>
               </div>
               <PredictButtons onPredict={predict} myPrediction={displayedPrediction} disabled={predicting || predictionBufferActive} />
             </div>
-            {predictionBufferActive && <div className="rounded-2xl border border-violet-500/15 bg-violet-500/10 text-violet-200 text-xs px-4 py-3 mb-4">Final {effectivePredictSafeBuffer}s are reserved locally for on-chain confirmation. Predictions are locked for this round.</div>}
+            {predictionBufferActive && <div className="rounded-2xl border border-fuchsia-500/15 bg-fuchsia-500/10 text-fuchsia-200 text-xs px-4 py-3 mb-4">Final {effectivePredictSafeBuffer}s are reserved locally for on-chain confirmation. Predictions are locked for this round.</div>}
             {predictionError && <div className="rounded-2xl border border-rose-500/15 bg-rose-500/10 text-rose-300 text-xs px-4 py-3 mb-4">{predictionError}</div>}
             {predicting && <div className="rounded-2xl border border-cyan-500/15 bg-cyan-500/10 text-cyan-200 text-xs px-4 py-3 mb-4">Confirm the signature in your wallet to lock this prediction for on-chain submission.</div>}
             {displayedPrediction && (
@@ -684,30 +707,34 @@ export default function GamePlay() {
 
       {phase === "settling" && (
         <div className="w-full max-w-2xl animate-slideUp">
-          <div className="rounded-2xl border border-violet-500/20 bg-gradient-to-br from-[#14112a] via-[#100d22] to-[#0c0a1d] shadow-2xl shadow-violet-900/20 p-6 text-center">
-            <div className="text-4xl mb-3 animate-float">⏳</div>
-            <h3 className="text-lg font-black text-white/80 mb-4">Settling...</h3>
-            <div className="flex justify-center mb-4">
-              <CountdownRing total={SETTLE_DELAY} remaining={countdown} label="Reveal" size="lg" />
+          <div className="landing-story-card !p-5 sm:!p-6 text-center">
+            <div className="text-4xl mb-3 animate-float">{countdown > 0 ? "⏳" : "🔗"}</div>
+            <h3 className="text-lg font-black text-white/80 mb-1">{countdown > 0 ? "Settling..." : "Finalizing on-chain..."}</h3>
+            {countdown <= 0 && <p className="text-white/35 text-xs mb-3">Waiting for the settlement transaction to confirm. This usually takes a few seconds.</p>}
+            <div className={`flex justify-center ${countdown>0?"mb-4":"mb-4 opacity-60"}`}>
+              {countdown > 0
+                ? <CountdownRing total={SETTLE_DELAY} remaining={countdown} label="Reveal" size="lg" />
+                : <div className="flex items-center justify-center w-24 h-24 rounded-full border border-fuchsia-500/25 bg-fuchsia-500/[0.06]"><span className="w-6 h-6 rounded-full border-2 border-fuchsia-300/60 border-t-transparent animate-spin"/></div>
+              }
             </div>
             {viewerRole && (
-              <div className="mt-4 rounded-2xl border border-white/[0.06] bg-white/[0.03] p-3">
+              <div className="arena-mech-panel mt-4 p-3">
                 <p className="text-white/25 text-[10px] uppercase tracking-[0.2em] mb-1">Viewing As</p>
                 <p className="text-white/75 font-semibold">{viewerRole}</p>
               </div>
             )}
             {displayedPrediction && (
-              <div className="mt-4 rounded-2xl border border-violet-500/15 bg-violet-500/[0.06] p-3">
+              <div className="arena-mech-panel mt-4 p-3">
                 <p className="text-white/25 text-[10px] uppercase tracking-[0.2em] mb-1">Your Call</p>
                 <p className={displayedPrediction === "up" ? "text-emerald-400 font-black" : "text-rose-400 font-black"}>{displayedPrediction === "up" ? "LONG" : "SHORT"}</p>
               </div>
             )}
             <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="rounded-2xl border border-violet-500/15 bg-violet-500/[0.08] p-4 text-center">
+              <div className="arena-mech-panel p-4 text-center">
                 <p className="text-white/20 text-[10px] uppercase tracking-[0.2em] mb-1">Base Price</p>
                 <p className="text-2xl font-mono font-black text-white/80">${basePrice.toLocaleString("en-US", { minimumFractionDigits: 2 })}</p>
               </div>
-              <div className="rounded-2xl border border-violet-500/15 bg-violet-500/[0.08] p-4 text-center">
+              <div className="arena-mech-panel p-4 text-center">
                 <p className="text-white/20 text-[10px] uppercase tracking-[0.2em] mb-1">Current Price</p>
                 <p className={`text-2xl font-mono font-black ${priceColor}`}>${currentPrice.toLocaleString("en-US", { minimumFractionDigits: 2 })}</p>
                 <p className={`text-[11px] font-mono mt-1 ${priceColor}`}>{diff >= 0 ? "+" : ""}{diff.toFixed(2)} ({percent}%)</p>
@@ -719,7 +746,7 @@ export default function GamePlay() {
 
       {phase === "failed" && (
         <div className="w-full max-w-2xl animate-slideUp">
-          <div className="rounded-2xl border border-violet-500/20 bg-gradient-to-br from-[#14112a] via-[#100d22] to-[#0c0a1d] shadow-2xl shadow-violet-900/20 p-6">
+          <div className="landing-story-card !p-5 sm:!p-6">
             <div className="text-center">
               <div className="text-4xl mb-3">⚠️</div>
               <h3 className="text-lg font-black text-white/85">Settlement Interrupted</h3>
@@ -732,7 +759,7 @@ export default function GamePlay() {
             </div>
 
             {displayedPrediction && (
-              <div className="mt-4 rounded-2xl border border-violet-500/15 bg-violet-500/[0.06] p-4 text-center">
+              <div className="arena-mech-panel mt-4 p-4 text-center">
                 <p className="text-white/25 text-[10px] uppercase tracking-[0.2em] mb-1">Your Call</p>
                 <p className={displayedPrediction === "up" ? "text-emerald-400 font-black text-xl" : "text-rose-400 font-black text-xl"}>
                   {displayedPrediction === "up" ? "LONG" : "SHORT"}
@@ -741,21 +768,21 @@ export default function GamePlay() {
             )}
 
             <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="rounded-2xl border border-violet-500/15 bg-violet-500/[0.08] p-4 text-center">
+              <div className="arena-mech-panel p-4 text-center">
                 <p className="text-white/20 text-[10px] uppercase tracking-[0.2em] mb-1">Base Price</p>
                 <p className="text-2xl font-mono font-black text-white/80">${basePrice.toLocaleString("en-US", { minimumFractionDigits: 2 })}</p>
               </div>
-              <div className="rounded-2xl border border-violet-500/15 bg-violet-500/[0.08] p-4 text-center">
+              <div className="arena-mech-panel p-4 text-center">
                 <p className="text-white/20 text-[10px] uppercase tracking-[0.2em] mb-1">Current Price</p>
                 <p className={`text-2xl font-mono font-black ${priceColor}`}>${currentPrice.toLocaleString("en-US", { minimumFractionDigits: 2 })}</p>
                 <p className={`text-[11px] font-mono mt-1 ${priceColor}`}>{diff >= 0 ? "+" : ""}{diff.toFixed(2)} ({percent}%)</p>
               </div>
             </div>
 
-            <div className="mt-4 rounded-2xl border border-violet-500/15 bg-violet-500/[0.06] p-4">
+            <div className="arena-mech-panel mt-4 p-4">
               <div className="flex items-center justify-between gap-3 mb-3">
                 <div>
-                  <p className="text-violet-300 text-xs font-bold uppercase tracking-[0.2em]">Recovery</p>
+                  <p className="text-fuchsia-300 text-xs font-bold uppercase tracking-[0.2em]">Recovery</p>
                   <p className="text-white/40 text-xs mt-1">We keep checking the contract so you can claim the correct outcome from this page.</p>
                 </div>
                 {claimStatus?.state === 3 && claimStatus?.reward > 0 && (
@@ -806,7 +833,7 @@ export default function GamePlay() {
             </div>
 
             <div className="flex gap-2 mt-4">
-              <button onClick={() => nav("/")} className="flex-1 py-2.5 rounded-xl bg-violet-500/[0.06] border border-violet-500/15 hover:bg-violet-500/[0.1] transition text-xs text-white/60">Home</button>
+              <button onClick={() => nav("/")} className="flex-1 py-2.5 rounded-xl bg-fuchsia-500/[0.06] border border-fuchsia-500/15 hover:bg-fuchsia-500/[0.1] transition text-xs text-white/60">Home</button>
               <button onClick={handleShareToX} className="flex-1 btn-primary !py-2.5 font-black !text-sm">Share to 𝕏</button>
             </div>
           </div>
@@ -815,13 +842,13 @@ export default function GamePlay() {
 
       {phase === "result" && result && (
         <div className="w-full max-w-2xl animate-slideUp">
-          <div className="rounded-2xl border border-violet-500/20 bg-gradient-to-br from-[#14112a] via-[#100d22] to-[#0c0a1d] shadow-2xl shadow-violet-900/20 p-6">
-            <div className="rounded-2xl border border-violet-500/15 bg-violet-500/[0.06] p-4 mb-4">
+          <div className="landing-story-card !p-5 sm:!p-6">
+            <div className="arena-mech-panel p-4 mb-4">
               <SettlementReveal basePrice={result.basePrice} settlementPrice={result.settlementPrice} direction={result.direction} />
             </div>
 
             {result.myResult && (
-              <div className="rounded-2xl border border-violet-500/15 bg-violet-500/[0.08] p-5 text-center">
+              <div className="arena-mech-panel p-5 text-center">
                 <div className="text-4xl mb-2">{result.myResult.isCorrect ? "🏆" : "💀"}</div>
                 <h3 className={`text-xl font-black ${result.myResult.isCorrect ? "text-emerald-400" : "text-rose-400"}`}>{result.myResult.isCorrect ? "Forecast Confirmed" : "Forecast Missed"}</h3>
                 <p className="text-white/20 text-[10px] mt-1 mb-2">You predicted {result.myResult.prediction === "up" ? "LONG" : result.myResult.prediction === "down" ? "SHORT" : "NO POSITION"}</p>
@@ -836,14 +863,14 @@ export default function GamePlay() {
             )}
 
             {resultPredictionLabel && (
-              <div className="mt-4 rounded-2xl border border-violet-500/15 bg-violet-500/[0.06] p-4 text-center">
+              <div className="arena-mech-panel mt-4 p-4 text-center">
                 <p className="text-white/25 text-[10px] uppercase tracking-[0.2em] mb-1">Your Call</p>
                 <p className={resultPrediction === "up" ? "text-emerald-400 font-black text-xl" : "text-rose-400 font-black text-xl"}>{resultPredictionLabel}</p>
               </div>
             )}
 
             {rewardAmount > 0 && (
-              <div className="mt-4 rounded-2xl border border-emerald-500/15 bg-emerald-500/[0.04] p-4">
+              <div className="arena-mech-panel mt-4 p-4">
                 <div className="flex items-center justify-between gap-3 mb-3">
                   <div>
                     <p className="text-emerald-300 text-xs font-bold uppercase tracking-[0.2em]">Reward Claim</p>
@@ -873,7 +900,7 @@ export default function GamePlay() {
             )}
 
             <div className="flex gap-2 mt-4">
-              <button onClick={() => nav("/arena")} className="flex-1 py-2.5 rounded-xl bg-violet-500/[0.06] border border-violet-500/15 hover:bg-violet-500/[0.1] transition text-xs text-white/60">{t("result.confirm")}</button>
+              <button onClick={() => nav("/arena")} className="flex-1 py-2.5 rounded-xl bg-fuchsia-500/[0.06] border border-fuchsia-500/15 hover:bg-fuchsia-500/[0.1] transition text-xs text-white/60">{t("result.confirm")}</button>
               <button onClick={handleShareToX} className="flex-1 btn-primary !py-2.5 font-black !text-sm">Share to 𝕏</button>
             </div>
           </div>

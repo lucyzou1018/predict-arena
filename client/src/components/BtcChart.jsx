@@ -134,7 +134,7 @@ export default function BtcChart() {
       {/* Header */}
       <div className="flex items-center justify-between mb-4 px-1">
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-violet-600 shadow-lg shadow-violet-500/30 flex items-center justify-center">
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-purple-500 to-fuchsia-600 shadow-lg shadow-fuchsia-500/30 flex items-center justify-center">
             <span className="text-base font-bold text-white">₿</span>
           </div>
           <div>

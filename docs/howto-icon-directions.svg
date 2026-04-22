@@ -1,0 +1,107 @@
+<svg width="1200" height="760" viewBox="0 0 1200 760" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1200" y2="760" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#121844"/>
+      <stop offset="1" stop-color="#0A0E2E"/>
+    </linearGradient>
+    <linearGradient id="card" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="rgba(118,92,255,0.22)"/>
+      <stop offset="1" stop-color="rgba(222,74,255,0.12)"/>
+    </linearGradient>
+    <linearGradient id="stroke" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#8B7CFF"/>
+      <stop offset="1" stop-color="#E15CFF"/>
+    </linearGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="8" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <style>
+      .label { font: 700 24px Inter, Arial, sans-serif; fill: #F7F4FF; }
+      .sub { font: 500 15px Inter, Arial, sans-serif; fill: #A8A4D6; }
+      .icon-stroke { stroke: url(#stroke); stroke-width: 2.8; stroke-linecap: round; stroke-linejoin: round; filter: url(#glow); }
+      .tile { fill: rgba(255,255,255,0.03); stroke: rgba(199,189,255,0.2); }
+    </style>
+  </defs>
+
+  <rect width="1200" height="760" rx="28" fill="url(#bg)"/>
+  <text x="60" y="76" class="label" font-size="34">How To Play Icon Direction</text>
+  <text x="60" y="108" class="sub">统一成一套线性图标，全部表达“动作”，不再混用 emoji / 物体隐喻。</text>
+
+  <!-- Row 1 -->
+  <g transform="translate(60 150)">
+    <rect width="340" height="220" rx="26" class="tile"/>
+    <rect x="28" y="26" width="72" height="72" rx="20" fill="rgba(214,80,255,0.12)" stroke="rgba(214,80,255,0.28)"/>
+    <!-- wallet -->
+    <rect x="45" y="47" width="38" height="28" rx="7" class="icon-stroke"/>
+    <path d="M55 47V42C55 38 58 35 62 35H81" class="icon-stroke"/>
+    <circle cx="76" cy="61" r="2.5" fill="#E7D8FF"/>
+    <text x="28" y="136" class="label">Connect Wallet</text>
+    <text x="28" y="166" class="sub">图标建议：Wallet</text>
+  </g>
+
+  <g transform="translate(430 150)">
+    <rect width="340" height="220" rx="26" class="tile"/>
+    <rect x="28" y="26" width="72" height="72" rx="20" fill="rgba(214,80,255,0.12)" stroke="rgba(214,80,255,0.28)"/>
+    <!-- grid -->
+    <rect x="46" y="44" width="14" height="14" rx="3" class="icon-stroke"/>
+    <rect x="68" y="44" width="14" height="14" rx="3" class="icon-stroke"/>
+    <rect x="46" y="66" width="14" height="14" rx="3" class="icon-stroke"/>
+    <rect x="68" y="66" width="14" height="14" rx="3" class="icon-stroke"/>
+    <text x="28" y="136" class="label">Choose Your Format</text>
+    <text x="28" y="166" class="sub">图标建议：Grid / Layout</text>
+  </g>
+
+  <g transform="translate(800 150)">
+    <rect width="340" height="220" rx="26" class="tile"/>
+    <rect x="28" y="26" width="72" height="72" rx="20" fill="rgba(214,80,255,0.12)" stroke="rgba(214,80,255,0.28)"/>
+    <!-- coins -->
+    <ellipse cx="64" cy="46" rx="13" ry="6" class="icon-stroke"/>
+    <path d="M51 46V58C51 61 57 64 64 64C71 64 77 61 77 58V46" class="icon-stroke"/>
+    <ellipse cx="70" cy="60" rx="13" ry="6" class="icon-stroke"/>
+    <path d="M57 60V72C57 75 63 78 70 78C77 78 83 75 83 72V60" class="icon-stroke"/>
+    <text x="28" y="136" class="label">Pay Entry</text>
+    <text x="28" y="166" class="sub">图标建议：Coins</text>
+  </g>
+
+  <!-- Row 2 -->
+  <g transform="translate(60 410)">
+    <rect width="340" height="220" rx="26" class="tile"/>
+    <rect x="28" y="26" width="72" height="72" rx="20" fill="rgba(214,80,255,0.12)" stroke="rgba(214,80,255,0.28)"/>
+    <!-- trend -->
+    <path d="M46 76H82" class="icon-stroke"/>
+    <path d="M46 76V42" class="icon-stroke"/>
+    <path d="M50 68L62 56L70 62L82 44" class="icon-stroke"/>
+    <path d="M74 44H82V52" class="icon-stroke"/>
+    <text x="28" y="136" class="label">Record Direction</text>
+    <text x="28" y="166" class="sub">图标建议：Trend / Chart</text>
+  </g>
+
+  <g transform="translate(430 410)">
+    <rect width="340" height="220" rx="26" class="tile"/>
+    <rect x="28" y="26" width="72" height="72" rx="20" fill="rgba(214,80,255,0.12)" stroke="rgba(214,80,255,0.28)"/>
+    <!-- timer -->
+    <circle cx="64" cy="60" r="18" class="icon-stroke"/>
+    <path d="M64 60L64 49" class="icon-stroke"/>
+    <path d="M64 60L73 64" class="icon-stroke"/>
+    <path d="M58 36H70" class="icon-stroke"/>
+    <path d="M60 32H68" class="icon-stroke"/>
+    <text x="28" y="136" class="label">Await Settlement</text>
+    <text x="28" y="166" class="sub">图标建议：Timer</text>
+  </g>
+
+  <g transform="translate(800 410)">
+    <rect width="340" height="220" rx="26" class="tile"/>
+    <rect x="28" y="26" width="72" height="72" rx="20" fill="rgba(214,80,255,0.12)" stroke="rgba(214,80,255,0.28)"/>
+    <!-- wallet claim -->
+    <rect x="47" y="50" width="34" height="24" rx="7" class="icon-stroke"/>
+    <path d="M54 42H74" class="icon-stroke"/>
+    <path d="M64 35V55" class="icon-stroke"/>
+    <path d="M57 48L64 55L71 48" class="icon-stroke"/>
+    <text x="28" y="136" class="label">Claim Reward</text>
+    <text x="28" y="166" class="sub">图标建议：Claim To Wallet</text>
+  </g>
+</svg>

@@ -2,7 +2,40 @@ import { useCallback, useState } from "react";
 import { ethers } from "ethers";
 import { useWallet } from "../context/WalletContext";
 import { ARENA_ABI, ERC20_ABI, CONTRACT_ADDRESS, USDC_ADDRESS, GAME_STATE } from "../config/contract";
-import { ENTRY_FEE, LOCAL_CHAIN_MOCK, SERVER_URL } from "../config/constants";
+import { BASE_SEPOLIA_FALLBACK_RPC_URLS, CHAIN, ENTRY_FEE, LOCAL_CHAIN_MOCK, SERVER_URL } from "../config/constants";
+
+const BASE_SEPOLIA_NETWORK = ethers.Network.from({
+  name: "base-sepolia",
+  chainId: Number.parseInt(CHAIN.chainId, 16),
+});
+
+const READ_PROVIDERS = BASE_SEPOLIA_FALLBACK_RPC_URLS.map(
+  (url) => new ethers.JsonRpcProvider(url, BASE_SEPOLIA_NETWORK, { staticNetwork: BASE_SEPOLIA_NETWORK }),
+);
+const GAS_BUFFER_BPS = 12000n;
+const BASE_SEPOLIA_CHAIN_ID = BigInt(Number.parseInt(CHAIN.chainId, 16));
+
+function toRpcQuantity(value) {
+  if (value === undefined || value === null || value === "") return null;
+  try {
+    return ethers.toQuantity(value);
+  } catch {
+    return null;
+  }
+}
+
+async function withStableRead(fn) {
+  let lastError = null;
+  for (const provider of READ_PROVIDERS) {
+    try {
+      return await fn(provider);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  if (lastError) throw lastError;
+  throw new Error("Stable read provider unavailable");
+}
 
 function mapContractError(err) {
   const code = err?.code || err?.info?.error?.code;
@@ -74,6 +107,12 @@ function mapContractError(err) {
   if (reason.includes("invite code taken")) {
     return "This room is already opening on-chain. Please try paying again in a moment.";
   }
+  if (reason.includes("still preparing on-chain")) {
+    return "Room payment is still preparing on-chain. Please wait a moment and try again.";
+  }
+  if (reason.includes("still syncing on-chain")) {
+    return "Room payment is still syncing on-chain. Please wait a moment and try again.";
+  }
   if (reason.includes("room not found")) {
     return "Room payment is still syncing on-chain. Please retry in a moment.";
   }
@@ -98,6 +137,11 @@ function mapContractError(err) {
   if (reason.includes("already paid")) {
     return "Payment was already submitted for this game.";
   }
+  // Base Sepolia 对"会 revert"的 tx 在 estimateGas 时统一返回 "intrinsic gas too high"，
+  // 真实 revert 原因被 RPC 吞掉，ethers 最终表达为 "missing revert data"。
+  if (reason.includes("intrinsic gas too high") || reason.includes("missing revert data")) {
+    return "Network is rejecting the transaction. Please refresh and retry, or switch RPC in your wallet.";
+  }
   console.error("[payForGame] unmapped error:", { code, reason, err });
   return err?.reason || err?.shortMessage || err?.message || "Transaction failed. Please try again.";
 }
@@ -111,16 +155,6 @@ async function waitForAllowance(token, wallet, spender, required, retries = 5, d
   return token.allowance(wallet, spender);
 }
 
-async function waitForInviteCodeGameId(arena, inviteCode, retries = 8, delayMs = 500) {
-  for (let i = 0; i < retries; i += 1) {
-    const gameId = await arena.inviteCodeToGame(inviteCode);
-    if (gameId > 0n) return Number(gameId);
-    if (i < retries - 1) await new Promise((resolve) => setTimeout(resolve, delayMs));
-  }
-  const finalGameId = await arena.inviteCodeToGame(inviteCode);
-  return finalGameId > 0n ? Number(finalGameId) : null;
-}
-
 async function fetchClaimStatus(chainGameId, wallet) {
   const response = await fetch(`${SERVER_URL}/api/claims/${chainGameId}/${wallet}`);
   if (!response.ok) return null;
@@ -128,13 +162,14 @@ async function fetchClaimStatus(chainGameId, wallet) {
 }
 
 export function useContract() {
-  const { signer, wallet, mockMode, chainOk, switchChain, setBalance } = useWallet();
+  const { signer, wallet, walletProvider, walletName, mockMode, chainOk, switchChain, setBalance } = useWallet();
   const [loading, setLoading] = useState(false);
   const [claiming, setClaiming] = useState(false);
   const [predicting, setPredicting] = useState(false);
 
   const hasOnchainPayment = ethers.isAddress(CONTRACT_ADDRESS) && ethers.isAddress(USDC_ADDRESS);
   const shouldUseMockPayment = mockMode || LOCAL_CHAIN_MOCK || !hasOnchainPayment;
+  const isOkxWallet = /okx/i.test(walletName || "");
 
   const ensureWalletReady = useCallback(async () => {
     if (!signer || !wallet) throw new Error("Wallet not connected");
@@ -149,6 +184,15 @@ export function useContract() {
     return new ethers.Contract(CONTRACT_ADDRESS, ARENA_ABI, signer);
   }, [signer]);
 
+  const getArenaReader = useCallback(async () => {
+    if (!ethers.isAddress(CONTRACT_ADDRESS)) return null;
+    const provider = await withStableRead(async (stableProvider) => {
+      await stableProvider.getNetwork();
+      return stableProvider;
+    });
+    return new ethers.Contract(CONTRACT_ADDRESS, ARENA_ABI, provider);
+  }, []);
+
   const mockPay = useCallback(async () => {
     setLoading(true);
     await new Promise((resolve) => setTimeout(resolve, 400));
@@ -156,6 +200,110 @@ export function useContract() {
     setLoading(false);
     return true;
   }, [mockMode, setBalance]);
+
+  const prepareTransactionRequest = useCallback(async (txRequest, fallbackGasLimit, preferLegacy = false) => {
+    if (!wallet) throw new Error("Wallet not connected");
+    if (!txRequest?.to) throw new Error("Transaction target unavailable");
+
+    const preparedRequest = {
+      to: txRequest.to,
+      data: txRequest.data || "0x",
+      chainId: BASE_SEPOLIA_CHAIN_ID,
+    };
+    if (txRequest.value !== undefined && txRequest.value !== null) preparedRequest.value = txRequest.value;
+
+    let gasLimit = txRequest.gasLimit || null;
+    if (!gasLimit) {
+      try {
+        const estimatedGas = await withStableRead((provider) => provider.estimateGas({
+          from: wallet,
+          to: preparedRequest.to,
+          data: preparedRequest.data,
+          value: preparedRequest.value ?? 0n,
+        }));
+        gasLimit = (estimatedGas * GAS_BUFFER_BPS + 9999n) / 10000n;
+      } catch (error) {
+        console.warn("[tx] stable gas estimate unavailable", error);
+      }
+    }
+    if (!gasLimit && fallbackGasLimit) gasLimit = fallbackGasLimit;
+    if (!gasLimit) throw new Error("Unable to estimate gas for this payment. Refresh and try again.");
+    preparedRequest.gasLimit = gasLimit;
+
+    let gasPrice = txRequest.gasPrice || null;
+    let maxFeePerGas = txRequest.maxFeePerGas || null;
+    let maxPriorityFeePerGas = txRequest.maxPriorityFeePerGas || null;
+    try {
+      const feeData = await withStableRead((provider) => provider.getFeeData());
+      maxFeePerGas = maxFeePerGas || feeData?.maxFeePerGas || null;
+      maxPriorityFeePerGas = maxPriorityFeePerGas || feeData?.maxPriorityFeePerGas || null;
+      gasPrice = gasPrice || feeData?.gasPrice || null;
+    } catch (error) {
+      console.warn("[tx] stable fee data unavailable", error);
+    }
+    if (!gasPrice || gasPrice <= 0n) {
+      try {
+        const rpcGasPrice = await withStableRead((provider) => provider.send("eth_gasPrice", []));
+        gasPrice = rpcGasPrice ? BigInt(rpcGasPrice) : gasPrice;
+      } catch (error) {
+        console.warn("[tx] rpc gas price unavailable", error);
+      }
+    }
+
+    if (preferLegacy) {
+      const legacyGasPrice = gasPrice || maxFeePerGas || null;
+      if (!legacyGasPrice || legacyGasPrice <= 0n) {
+        throw new Error("Unable to determine network fee for this payment. Refresh and try again.");
+      }
+      preparedRequest.gasPrice = legacyGasPrice;
+      return preparedRequest;
+    }
+
+    if (maxFeePerGas && maxFeePerGas > 0n && maxPriorityFeePerGas && maxPriorityFeePerGas > 0n) {
+      preparedRequest.maxFeePerGas = maxFeePerGas;
+      preparedRequest.maxPriorityFeePerGas = maxPriorityFeePerGas;
+      return preparedRequest;
+    }
+
+    if (gasPrice && gasPrice > 0n) {
+      preparedRequest.gasPrice = gasPrice;
+      return preparedRequest;
+    }
+
+    throw new Error("Unable to determine network fee for this payment. Refresh and try again.");
+  }, [wallet]);
+
+  const sendOkxTransaction = useCallback(async (txRequest) => {
+    if (!walletProvider?.request) throw new Error("Wallet provider unavailable");
+    const rpcTx = {
+      from: wallet,
+      to: txRequest?.to,
+      data: txRequest?.data || "0x",
+    };
+    if (txRequest?.gasLimit) rpcTx.gas = ethers.toQuantity(txRequest.gasLimit);
+    if (txRequest?.gasPrice) rpcTx.gasPrice = ethers.toQuantity(txRequest.gasPrice);
+    if (txRequest?.chainId) rpcTx.chainId = ethers.toQuantity(txRequest.chainId);
+    if (txRequest?.value && txRequest.value > 0n) rpcTx.value = ethers.toQuantity(txRequest.value);
+    try {
+      const pendingNonce = await walletProvider.request({ method: "eth_getTransactionCount", params: [wallet, "pending"] });
+      const nonce = toRpcQuantity(pendingNonce);
+      if (nonce) rpcTx.nonce = nonce;
+    } catch (error) {
+      console.warn("[tx] wallet nonce lookup unavailable", error);
+    }
+    const hash = await walletProvider.request({ method: "eth_sendTransaction", params: [rpcTx] });
+    return {
+      hash,
+      wait: async () => signer?.provider?.waitForTransaction(hash),
+    };
+  }, [signer, wallet, walletProvider]);
+
+  const sendPreparedTransaction = useCallback(async (txRequest, fallbackGasLimit) => {
+    if (!signer) throw new Error("Wallet not connected");
+    const preparedRequest = await prepareTransactionRequest(txRequest, fallbackGasLimit, isOkxWallet);
+    if (isOkxWallet) return sendOkxTransaction(preparedRequest);
+    return signer.sendTransaction(preparedRequest);
+  }, [isOkxWallet, prepareTransactionRequest, sendOkxTransaction, signer]);
 
   const ensureTokenApproval = useCallback(async (amount, preferredUsdc = USDC_ADDRESS) => {
     let resolvedUsdc = preferredUsdc;
@@ -171,8 +319,10 @@ export function useContract() {
     const allowance = await token.allowance(wallet, CONTRACT_ADDRESS);
 
     if (allowance < amount) {
-      // 精确授权本次所需金额，而不是 MaxUint256。这样钱包弹窗会显示具体 USDC 数量，用户能看清楚。
-      await (await token.approve(CONTRACT_ADDRESS, amount)).wait();
+      // Room/match payments happen repeatedly. Grant a reusable allowance once so
+      // later payments usually only need the single payForGame wallet confirmation.
+      const approvalRequest = await token.approve.populateTransaction(CONTRACT_ADDRESS, ethers.MaxUint256);
+      await (await sendPreparedTransaction(approvalRequest, 120000n)).wait();
       const refreshedAllowance = await waitForAllowance(token, wallet, CONTRACT_ADDRESS, amount);
       if (refreshedAllowance < amount) {
         throw new Error("Token approval has not finished syncing yet. Please wait a moment and try again.");
@@ -181,7 +331,7 @@ export function useContract() {
     }
 
     return { resolvedUsdc };
-  }, [getArena, signer, wallet]);
+  }, [getArena, sendPreparedTransaction, signer, wallet]);
 
   const payForGame = useCallback(async (gameId) => {
     if (shouldUseMockPayment) return mockPay();
@@ -211,17 +361,29 @@ export function useContract() {
       } catch {}
 
       await ensureTokenApproval(amount);
+      const reader = await getArenaReader();
+      try {
+        if (reader) {
+          await reader.payForGame.staticCall(gameId, { from: wallet });
+        } else {
+          await arena.payForGame.staticCall(gameId);
+        }
+      } catch (simErr) {
+        console.error("[payForGame] staticCall failed:", simErr);
+        throw simErr;
+      }
 
-      await (await arena.payForGame(gameId)).wait();
+      const paymentRequest = await arena.payForGame.populateTransaction(gameId);
+      await (await sendPreparedTransaction(paymentRequest, 300000n)).wait();
       return { approved: true, paid: true };
     } catch (err) {
       throw new Error(mapContractError(err));
     } finally {
       setLoading(false);
     }
-  }, [ensureTokenApproval, ensureWalletReady, getArena, mockPay, shouldUseMockPayment]);
+  }, [ensureTokenApproval, ensureWalletReady, getArena, getArenaReader, mockPay, sendPreparedTransaction, shouldUseMockPayment, wallet]);
 
-  const payForRoomEntry = useCallback(async ({ inviteCode, maxPlayers = null, isOwner = false, auth = null } = {}) => {
+  const payForRoomEntry = useCallback(async ({ inviteCode, chainGameId = null } = {}) => {
     if (shouldUseMockPayment) return mockPay();
 
     await ensureWalletReady();
@@ -229,50 +391,26 @@ export function useContract() {
     const arena = getArena();
     if (!arena) throw new Error("Wallet not connected");
     if (!inviteCode) throw new Error("Missing invite code");
-    if (!auth?.signature || !Array.isArray(auth?.players) || !auth?.deadline) {
-      throw new Error("Room payment authorization expired. Refresh the room and try again.");
-    }
-
-    setLoading(true);
     try {
-      let amount = ethers.parseUnits(ENTRY_FEE.toString(), 6);
-      let existingGameId = 0;
-      const authMaxPlayers = Number(auth?.maxPlayers || maxPlayers || 0);
-      const authRoomOwner = auth?.roomOwner || wallet;
-
+      let resolvedChainGameId = Number(chainGameId || 0);
       try {
-        existingGameId = Number(await arena.inviteCodeToGame(inviteCode));
-      } catch {
-        existingGameId = 0;
-      }
-
-      try {
-        if (existingGameId > 0) {
-          const snapshotAmount = await arena.gameEntryFee(existingGameId);
-          if (snapshotAmount > 0) amount = snapshotAmount;
-        } else {
-          const liveEntryFee = await arena.entryFee();
-          if (liveEntryFee > 0) amount = liveEntryFee;
+        if (!resolvedChainGameId) {
+          resolvedChainGameId = Number(await arena.inviteCodeToGame(inviteCode));
         }
-      } catch {}
-
-      await ensureTokenApproval(amount);
-
-      if (isOwner) {
-        if (!authMaxPlayers) throw new Error("Missing room size");
-        await (await arena.createRoomAndPay(authMaxPlayers, inviteCode, auth.players, auth.deadline, auth.signature)).wait();
-      } else {
-        await (await arena.joinRoomAndPay(inviteCode, authMaxPlayers, authRoomOwner, auth.players, auth.deadline, auth.signature)).wait();
+      } catch {
+        resolvedChainGameId = Number(chainGameId || 0);
       }
 
-      const chainGameId = existingGameId || await waitForInviteCodeGameId(arena, inviteCode);
-      return { approved: true, paid: true, chainGameId };
+      if (!resolvedChainGameId || resolvedChainGameId <= 0) {
+        throw new Error("Room payment is still syncing on-chain. Please wait a moment and try again.");
+      }
+
+      const result = await payForGame(resolvedChainGameId);
+      return { ...result, chainGameId: resolvedChainGameId };
     } catch (err) {
       throw new Error(mapContractError(err));
-    } finally {
-      setLoading(false);
     }
-  }, [ensureTokenApproval, ensureWalletReady, getArena, mockPay, shouldUseMockPayment, wallet]);
+  }, [ensureWalletReady, getArena, mockPay, payForGame, shouldUseMockPayment, wallet]);
 
   const claimReward = useCallback(async (gameId) => {
     if (!gameId) throw new Error("Missing game id");

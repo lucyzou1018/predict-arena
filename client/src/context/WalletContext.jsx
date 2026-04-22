@@ -20,6 +20,7 @@ const KNOWN_WALLETS=[
 export function WalletProvider({children}){
   const[wallet,setWallet]=useState(null);
   const[provider,setProvider]=useState(null);
+  const[walletProvider,setWalletProvider]=useState(null);
   const[signer,setSigner]=useState(null);
   const[chainOk,setChainOk]=useState(true);
   const[connecting,setConnecting]=useState(false);
@@ -131,6 +132,21 @@ export function WalletProvider({children}){
   // Keep track of which raw EIP-1193 provider is actively connected
   const activeEthRef=useRef(null);
 
+  const resolveWalletAccount=useCallback(async(eth,accountsHint=[])=>{
+    const hinted=Array.isArray(accountsHint)&&accountsHint[0]?accountsHint[0]:null;
+    if(hinted) return ethers.getAddress(hinted);
+    try{
+      const accounts=await eth.request({method:"eth_accounts"});
+      if(accounts?.[0]) return ethers.getAddress(accounts[0]);
+    }catch{}
+    if(eth?.selectedAddress) return ethers.getAddress(eth.selectedAddress);
+    const nestedSelected=Array.isArray(eth?.providers)
+      ?eth.providers.find(p=>p?.selectedAddress)?.selectedAddress
+      :null;
+    if(nestedSelected) return ethers.getAddress(nestedSelected);
+    return null;
+  },[]);
+
   const connectWithProvider=useCallback(async(walletInfo)=>{
     // Demo mode
     if(walletInfo.id==="mock"){
@@ -150,32 +166,35 @@ export function WalletProvider({children}){
 
     try{
       // Step 1: Request accounts via THIS specific provider
-      const accounts=await eth.request({method:"eth_requestAccounts"});
+      const requestedAccounts=await eth.request({method:"eth_requestAccounts"});
       const bp=new ethers.BrowserProvider(eth);
-      const s=await bp.getSigner();
+      const account=await resolveWalletAccount(eth,requestedAccounts);
+      if(!account) throw new Error("Wallet did not expose an active account. Unlock the wallet and try again.");
+      const s=await bp.getSigner(account);
 
       // Step 2: Sign message to verify ownership
       setConnectStep("signing");
       const nonce=Math.floor(Math.random()*1000000);
-      const message=`Welcome to AlphaMatch!\n\nPlease sign this message to verify your wallet ownership.\n\nWallet: ${accounts[0]}\nNonce: ${nonce}`;
+      const message=`Welcome to AlphaMatch!\n\nPlease sign this message to verify your wallet ownership.\n\nWallet: ${account}\nNonce: ${nonce}`;
       await s.signMessage(message);
 
       // Step 3: Success
       activeEthRef.current=eth;
-      setWallet(accounts[0]);setProvider(bp);setSigner(s);
+      setWallet(account);setProvider(bp);setWalletProvider(eth);setSigner(s);
       setMockMode(false);setWalletName(walletInfo.name);
-      try{localStorage.removeItem(DISCONNECT_KEY);localStorage.setItem(STORAGE_KEY,JSON.stringify({mode:"wallet",wallet:accounts[0],walletName:walletInfo.name}))}catch{}
+      try{localStorage.removeItem(DISCONNECT_KEY);localStorage.setItem(STORAGE_KEY,JSON.stringify({mode:"wallet",wallet:account,walletName:walletInfo.name}))}catch{}
       await checkChain(eth);
       setShowWalletModal(false);setConnectStep("");
     }catch(e){
       setConnectStep("error");
       setConnectError(
-        e.code===4001?"User rejected the request"
-        :"Connection failed, please try again"
+        e.code===4001
+          ?"User rejected the request"
+          :(e?.shortMessage||e?.info?.error?.message||e?.message||"Connection failed, please try again")
       );
     }
     setConnecting(false);
-  },[checkChain]);
+  },[checkChain,resolveWalletAccount]);
 
   const connect=useCallback((action=null)=>{
     if(action) setPendingAction(action);
@@ -185,7 +204,7 @@ export function WalletProvider({children}){
   const disconnect=useCallback(()=>{
     activeEthRef.current=null;
     try{localStorage.setItem(DISCONNECT_KEY,"1");localStorage.removeItem(STORAGE_KEY)}catch{}
-    setWallet(null);setProvider(null);setSigner(null);
+    setWallet(null);setProvider(null);setWalletProvider(null);setSigner(null);
     setMockMode(false);setWalletName("");setShowWalletMenu(false);
   },[]);
 
@@ -198,20 +217,30 @@ export function WalletProvider({children}){
     const reconnect=async()=>{
       if(mockMode||provider||signer) return;
       try{if(localStorage.getItem(DISCONNECT_KEY)==="1") return;}catch{}
+      let savedWallet=null;
+      let savedWalletName="";
+      try{
+        const saved=localStorage.getItem(STORAGE_KEY);
+        const parsed=saved?JSON.parse(saved):null;
+        if(parsed?.mode!=="wallet"||!parsed?.wallet) return;
+        savedWallet=parsed.wallet.toLowerCase();
+        savedWalletName=parsed.walletName||"";
+      }catch{return;}
       const providers = getWalletProviders().filter(w=>w.installed && w.provider);
       for(const detected of providers){
         try{
           const accounts = await detected.provider.request({method:"eth_accounts"});
-          if(accounts?.[0]){
+          const account = await resolveWalletAccount(detected.provider,accounts);
+          if(account&&account.toLowerCase()===savedWallet){
             activeEthRef.current=detected.provider;
             const bp=new ethers.BrowserProvider(detected.provider);
-            const s=await bp.getSigner();
-            setProvider(bp);
+            const s=await bp.getSigner(account);
+            setProvider(bp);setWalletProvider(detected.provider);
             setSigner(s);
-            setWallet(accounts[0]);
-            setWalletName(detected.name);
+            setWallet(account);
+            setWalletName(savedWalletName||detected.name);
             setMockMode(false);
-            try{localStorage.setItem(STORAGE_KEY,JSON.stringify({mode:"wallet",wallet:accounts[0],walletName:detected.name}))}catch{}
+            try{localStorage.setItem(STORAGE_KEY,JSON.stringify({mode:"wallet",wallet:account,walletName:savedWalletName||detected.name}))}catch{}
             await checkChain(detected.provider);
             break;
           }
@@ -219,7 +248,7 @@ export function WalletProvider({children}){
       }
     };
     reconnect();
-  },[mockMode,provider,signer,getWalletProviders,checkChain]);
+  },[mockMode,provider,signer,getWalletProviders,checkChain,resolveWalletAccount]);
 
   /* ---- Listen for account / chain changes on active provider ---- */
   useEffect(()=>{
@@ -229,9 +258,10 @@ export function WalletProvider({children}){
       if(!accs.length){disconnect();return;}
       try{
         const bp=new ethers.BrowserProvider(eth);
-        const nextWallet=accs[0];
+        const nextWallet=accs?.[0]||await resolveWalletAccount(eth,accs);
+        if(!nextWallet){disconnect();return;}
         const nextSigner=await bp.getSigner(nextWallet);
-        setProvider(bp);
+        setProvider(bp);setWalletProvider(eth);
         setSigner(nextSigner);
         setWallet(nextWallet);
         try{
@@ -254,11 +284,11 @@ export function WalletProvider({children}){
       eth.removeListener("accountsChanged",onAccounts);
       eth.removeListener("chainChanged",onChain);
     };
-  },[wallet,disconnect,checkChain]);
+  },[wallet,disconnect,checkChain,resolveWalletAccount]);
 
   return(
     <Ctx.Provider value={{
-      wallet,provider,signer,chainOk,connecting,
+      wallet,provider,walletProvider,signer,chainOk,connecting,
       connect,disconnect,switchChain,
       mockMode,balance,setBalance,refund,
       walletName,showWalletModal,setShowWalletModal,

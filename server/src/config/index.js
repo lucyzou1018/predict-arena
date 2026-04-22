@@ -15,6 +15,12 @@ export default {
   },
   usdc: { address: process.env.USDC_ADDRESS },
   binance: { wsUrl: process.env.BINANCE_WS_URL || "wss://stream.binance.com:9443/ws/btcusdt@ticker" },
-  client: { url: process.env.CLIENT_URL || "http://localhost:5173" },
-  game: { matchTimeout: 15000, predictTimeout: 30000, predictSafeBuffer: 5000, settleDelay: 30000, roomExpiry: 300000, paymentTimeout: 60000, entryFee: 1_000_000, feeRate: 0.05 },
+  client: {
+    url: process.env.CLIENT_URL || "http://localhost:5173",
+    urls: `${process.env.CLIENT_URL || "http://localhost:5173"}`
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean),
+  },
+  game: { matchTimeout: 15000, predictTimeout: 30000, predictSafeBuffer: 5000, settleDelay: 30000, roomExpiry: 300000, paymentTimeout: 180000, entryFee: 1_000_000, feeRate: 0.05 },
 };

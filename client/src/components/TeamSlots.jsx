@@ -3,7 +3,7 @@ function Avatar({seed}){
   const h=hash32(seed||"anon");
   const hue=h%360;
   const hue2=(hue+40)%360;
-  return<div className="w-full h-full rounded-full flex items-center justify-center shadow-lg shadow-violet-500/30 ring-1 ring-white/10" style={{background:`linear-gradient(135deg,hsl(${hue} 75% 58%),hsl(${hue2} 70% 45%))`}}>
+  return<div className="w-full h-full rounded-full flex items-center justify-center shadow-lg shadow-fuchsia-500/30 ring-1 ring-white/10" style={{background:`linear-gradient(135deg,hsl(${hue} 75% 58%),hsl(${hue2} 70% 45%))`}}>
     <svg viewBox="0 0 24 24" className="w-6 h-6 sm:w-7 sm:h-7 fill-white/95" aria-hidden="true"><path d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4Zm0 2c-3.3 0-8 1.7-8 5v1h16v-1c0-3.3-4.7-5-8-5Z"/></svg>
   </div>;
 }

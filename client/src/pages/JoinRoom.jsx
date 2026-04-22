@@ -16,6 +16,7 @@ export default function JoinRoom(){
   const paidRef=useRef(false);
   const confirmRetryRef=useRef({tries:0,timer:null});
   const paymentStartedAtRef=useRef(null);
+  const isPaymentClosureReason=useCallback((reason="")=>/timed out|timeout|window closed|did not complete payment|room has been dissolved/i.test(String(reason)),[]);
 
   // Countdown timers
   const[roomExpiresAt,setRoomExpiresAt]=useState(null);
@@ -38,7 +39,7 @@ export default function JoinRoom(){
       paymentTimeout:d?.paymentTimeout||prev?.paymentTimeout||PAYMENT_TIMEOUT*1000,
     }));
     setPaymentProgress(prev=>({paidCount:prev?.paidCount||0,total}));
-    setPaymentStartedAt(prev=>prev||Date.now());
+    setPaymentStartedAt(prev=>prev||d?.paymentStartedAt||Date.now());
     setRoomExpiresAt(null);
     setRoomCountdown(null);
     if(players.length)setRoom({current:total,total:d?.total||total,players});
@@ -80,7 +81,11 @@ export default function JoinRoom(){
     on("room:invalid",d=>{setErr(d.message);setPhase("input");}),
     on("room:joined",d=>{
       if(d.error){setErr(d.error);setPhase("input");return;}
-      if(d.status==="full"){openPayment(d);return;}
+      if(d.status==="full"){
+        if(d.paymentOpen||d.chainGameId)openPayment(d);
+        else setPhase(current=>current==="waiting"||current==="joining"?"preparing":current);
+        return;
+      }
       setRoom({current:d.current,total:d.total,players:d.players});
       if(d.expiresAt)setRoomExpiresAt(d.expiresAt);
       setPhase("waiting");
@@ -88,10 +93,11 @@ export default function JoinRoom(){
     on("room:update",d=>{
       setRoom({current:d.current,total:d.total,players:d.players});
       if(d.expiresAt)setRoomExpiresAt(d.expiresAt);
-      if(d.status==="full"||(d.total&&d.current>=d.total))openPayment(d);
+      if((d.status==="full"||(d.total&&d.current>=d.total))&&(d.paymentOpen||d.chainGameId))openPayment(d);
     }),
-    on("room:full",d=>{openPayment(d);}),
-    on("room:payment:opened",d=>{setRoomFullInfo(prev=>prev?{...prev,chainGameId:d.chainGameId||prev.chainGameId}:prev);}),
+    on("room:preparing",d=>{setRoomFullInfo(prev=>({gameId:d?.gameId||prev?.gameId||null,chainGameId:d?.chainGameId||prev?.chainGameId||null,inviteCode:d?.inviteCode||prev?.inviteCode||code,maxPlayers:d?.total||prev?.maxPlayers||0,owner:d?.owner||prev?.owner||null,auth:null,players:Array.isArray(d?.players)?d.players:(prev?.players||[]),paymentTimeout:d?.timeoutMs||prev?.paymentTimeout||PAYMENT_TIMEOUT*1000}));setPaymentProgress({paidCount:0,total:d?.total||d?.players?.length||0});setPaymentStartedAt(null);setRoomExpiresAt(null);setRoomCountdown(null);setPhase(current=>current==="waiting"||current==="joining"?"preparing":current);}),
+    on("room:full",d=>{if(d.paymentOpen||d.chainGameId)openPayment(d);else setPhase(current=>current==="waiting"||current==="joining"?"preparing":current);}),
+    on("room:payment:opened",d=>{openPayment(d);}),
     on("room:error",d=>{
       const msg=d?.message||"";
       const isRpcLike=/rpc|timed out|syncing|not confirmed/i.test(msg);
@@ -108,13 +114,13 @@ export default function JoinRoom(){
       }
       setErr(msg);if(paid){refund(ENTRY_FEE);setPaid(false);}setPhase("input");
     }),
-    on("room:dissolved",d=>{if(paid){refund(ENTRY_FEE);setPaid(false);}setErr(d.reason);setPhase("input");setRoom({current:0,total:0,players:[]});setRoomExpiresAt(null);setRoomCountdown(null);setPaymentStartedAt(null);setPaymentCountdown(null);setRoomFullInfo(null);setPaymentProgress({paidCount:0,total:0});}),
+    on("room:dissolved",d=>{const reason=d?.reason||null;if(paid){refund(ENTRY_FEE);setPaid(false);}setErr(isPaymentClosureReason(reason)?null:reason);setPhase("input");setRoom({current:0,total:0,players:[]});setRoomExpiresAt(null);setRoomCountdown(null);setPaymentStartedAt(null);setPaymentCountdown(null);setRoomFullInfo(null);setPaymentProgress({paidCount:0,total:0});}),
     on("room:expired",()=>{setRoomExpiresAt(null);setRoomCountdown(null);setErr(t("join.err.expired"));setPhase("input");}),
     on("room:payment:update",d=>{setPaymentProgress({paidCount:d.paidCount,total:d.total});confirmRetryRef.current.tries=0;if(confirmRetryRef.current.timer){clearTimeout(confirmRetryRef.current.timer);confirmRetryRef.current.timer=null;}setErr(null);}),
-    on("room:payment:failed",d=>{handlePaymentFailure(d?.reason||t("create.err.teamDisbanded"));}),
-    on("game:start",d=>{updateGame({gameId:d.gameId,chainGameId:d.chainGameId||d.gameId,mode:"room",teamSize:d.players.length,players:d.players,phase:"predicting",basePrice:d.basePrice,countdown:Math.round((d.predictTimeout||30000)/1000),predictSafeBuffer:Math.round((d.predictSafeBuffer||5000)/1000),predictionDeadline:d.predictionDeadline||null});setPaymentStartedAt(null);setTimeout(()=>nav("/game"),500);}),
-    on("game:resume",d=>{updateGame({gameId:d.gameId,chainGameId:d.chainGameId||d.gameId,mode:"room",teamSize:d.players?.length||d.totalPlayers||0,players:d.players||[],phase:d.phase==="settling"?"settling":"predicting",basePrice:d.basePrice,countdown:d.remaining||Math.round((d.predictTimeout||30000)/1000),predictSafeBuffer:Math.round((d.predictSafeBuffer||5000)/1000),predictionDeadline:d.predictionDeadline||null,currentPrice:d.currentPrice||d.basePrice});setPaymentStartedAt(null);setTimeout(()=>nav("/game"),300);}),
-  ];return()=>u.forEach(f=>f());},[on,code,updateGame,nav,handlePaymentFailure,wallet]);
+    on("room:payment:failed",d=>{const reason=d?.reason||t("create.err.teamDisbanded");if(isPaymentClosureReason(reason)){handlePaymentFailure(reason);return;}setPaymentStartedAt(null);setPaymentCountdown(null);setRoomFullInfo(null);setPaymentProgress({paidCount:0,total:0});setPaymentTimeoutError(null);setErr(reason);setPhase("input");}),
+    on("game:start",d=>{updateGame({gameId:d.gameId,chainGameId:d.chainGameId||d.gameId,mode:"room",teamSize:d.players.length,players:d.players,phase:"predicting",basePrice:d.basePrice,countdown:Math.round((d.predictTimeout||30000)/1000),predictSafeBuffer:Math.round((d.predictSafeBuffer||5000)/1000),predictionDeadline:d.predictionDeadline||null});setPaymentStartedAt(null);setTimeout(()=>nav("/game"),50);}),
+    on("game:resume",d=>{updateGame({gameId:d.gameId,chainGameId:d.chainGameId||d.gameId,mode:"room",teamSize:d.players?.length||d.totalPlayers||0,players:d.players||[],phase:d.phase==="settling"?"settling":"predicting",basePrice:d.basePrice,countdown:d.remaining||Math.round((d.predictTimeout||30000)/1000),predictSafeBuffer:Math.round((d.predictSafeBuffer||5000)/1000),predictionDeadline:d.predictionDeadline||null,currentPrice:d.currentPrice||d.basePrice});setPaymentStartedAt(null);setTimeout(()=>nav("/game"),50);}),
+  ];return()=>u.forEach(f=>f());},[on,code,updateGame,nav,handlePaymentFailure,wallet,isPaymentClosureReason]);
 
   useEffect(()=>{
     if(paymentCountdown!==0)return;
@@ -139,13 +145,13 @@ export default function JoinRoom(){
 
   const join=()=>{if(!wallet){connect();return;}if(code.length<6)return setErr(t("join.err.incompleteCode"));setErr(null);emit("room:validate",{inviteCode:code.toUpperCase()});};
   const confirmJoin=()=>{emit("room:join",{inviteCode:code.toUpperCase()});setPhase("joining");};
-  const closePaymentTimeoutError=useCallback(()=>{setPaymentTimeoutError(null);},[]);
+  const closePaymentTimeoutError=useCallback(()=>{setPaymentTimeoutError(null);setErr(null);},[]);
   const payRoom=useCallback(async()=>{
     const startedAt=paymentStartedAtRef.current;
     const deadline=startedAt?startedAt+PAYMENT_TIMEOUT*1000:null;
     if(deadline&&Date.now()>=deadline){handlePaymentFailure(t("create.err.windowClosed"));return;}
     try{
-      const paymentResult=await payForRoomEntry({inviteCode:roomFullInfo?.inviteCode||code,isOwner:false,auth:roomFullInfo?.auth});
+      const paymentResult=await payForRoomEntry({inviteCode:roomFullInfo?.inviteCode||code,chainGameId:roomFullInfo?.chainGameId||null});
       const nowDeadline=paymentStartedAtRef.current?paymentStartedAtRef.current+PAYMENT_TIMEOUT*1000:deadline;
       if(nowDeadline&&Date.now()>=nowDeadline){
         if(paymentResult?.paid)refund(ENTRY_FEE);
@@ -153,6 +159,7 @@ export default function JoinRoom(){
         return;
       }
       if(roomFullInfo&&paymentResult?.chainGameId){setRoomFullInfo(prev=>prev?{...prev,chainGameId:paymentResult.chainGameId}:prev);}
+      setPaymentProgress(prev=>({paidCount:Math.min(prev.total||roomFullInfo?.maxPlayers||1,Math.max(prev.paidCount||0,1)),total:prev.total||roomFullInfo?.maxPlayers||1}));
       setPaid(true);paidRef.current=true;
       if(roomFullInfo){emit("room:payment:confirm",{gameId:roomFullInfo.gameId,chainGameId:paymentResult?.chainGameId||roomFullInfo.chainGameId||null,inviteCode:roomFullInfo.inviteCode||code,wallet});setPhase("paid_waiting");}
     }catch(e){
@@ -170,9 +177,9 @@ export default function JoinRoom(){
     <h2 className="text-xl font-black mb-4 flex items-center gap-2"><span className="text-2xl">🎯</span>{t("join.heading")}</h2>
     {err&&<div className="bg-rose-500/10 border border-rose-500/15 text-rose-400 px-3 py-2 rounded-xl mb-3 text-[11px]">{err}</div>}
     {phase==="input"&&<div>
-      {!wallet&&<div className="bg-violet-500/[0.06] border border-violet-500/15 rounded-xl px-3 py-1.5 mb-3"><p className="text-violet-300/60 text-[9px]">{t("join.connectWallet")}</p></div>}
+      {!wallet&&<div className="bg-fuchsia-500/[0.06] border border-fuchsia-500/15 rounded-xl px-3 py-1.5 mb-3"><p className="text-fuchsia-300/60 text-[9px]">{t("join.connectWallet")}</p></div>}
       <p className="text-white/20 text-xs mb-2">{t("join.enterCode")}</p>
-      <input type="text" value={code} onChange={e=>setCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g,""))} placeholder={t("join.codePlaceholder")} maxLength={6} className="w-full bg-white/[0.02] border border-white/[0.06] rounded-xl px-4 py-3.5 text-center text-2xl font-mono font-black tracking-[0.5em] text-violet-300 placeholder:text-white/[0.08] placeholder:tracking-normal placeholder:text-sm placeholder:font-normal focus:outline-none focus:border-violet-500/30 transition mb-3"/>
+      <input type="text" value={code} onChange={e=>setCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g,""))} placeholder={t("join.codePlaceholder")} maxLength={6} className="w-full bg-white/[0.02] border border-white/[0.06] rounded-xl px-4 py-3.5 text-center text-2xl font-mono font-black tracking-[0.5em] text-fuchsia-300 placeholder:text-white/[0.08] placeholder:tracking-normal placeholder:text-sm placeholder:font-normal focus:outline-none focus:border-fuchsia-500/30 transition mb-3"/>
       <button onClick={join} disabled={code.length<6} className="btn-primary w-full py-3.5 font-black disabled:!opacity-15">{t("join.ctaJoinMatch")}</button>
     </div>}
     {/* Confirm dialog — no payment, just confirm joining */}
@@ -187,7 +194,7 @@ export default function JoinRoom(){
         <button onClick={confirmJoin} className="flex-1 btn-primary !py-2.5 !text-sm font-bold">{t("join.ctaJoin")}</button>
       </div>
     </div>}
-    {phase==="joining"&&<div className="text-center py-10"><div className="w-8 h-8 mx-auto rounded-full border-2 border-violet-400/30 border-t-violet-300 animate-spin mb-3"/><p className="text-white/40 text-xs">{t("join.joining")}</p></div>}
+    {phase==="joining"&&<div className="text-center py-10"><div className="w-8 h-8 mx-auto rounded-full border-2 border-fuchsia-400/30 border-t-fuchsia-300 animate-spin mb-3"/><p className="text-white/40 text-xs">{t("join.joining")}</p></div>}
     <PaymentModal visible={phase==="payment"||!!paymentTimeoutError} onConfirm={paymentTimeoutError?closePaymentTimeoutError:payRoom} onCancel={paymentTimeoutError?undefined:leave} loading={loading} title={paymentTimeoutError?t("join.payment.timeout.title"):t("join.payment.full.title")} actionLabel={paymentTimeoutError?t("join.payment.timeout.action"):t("join.payment.action")} subtitle={paymentTimeoutError?t("join.payment.timeout.subtitle"):t("join.payment.full.subtitle")} hint={paymentTimeoutError?null:`${paymentProgress.paidCount}/${paymentProgress.total} ${t("join.paid")}`} error={paymentTimeoutError} countdown={paymentTimeoutError?null:paymentCountdown} singleAction={!!paymentTimeoutError}/>
     {(phase==="waiting"||phase==="paid_waiting")&&<div className="card text-center">
       <p className="text-white/20 text-xs mb-1">{t("join.joined")}</p>
@@ -195,13 +202,13 @@ export default function JoinRoom(){
       <TeamSlots total={room.total} players={room.players}/>
       <p className="text-white/20 text-[10px] mt-2">{paid&&paymentProgress.total?`${paymentProgress.paidCount}/${paymentProgress.total} ${t("join.paid")}`:`${t("join.waiting")} (${room.current}/${room.total})`}</p>
       {roomCountdown!==null&&roomCountdown>0&&room.current<room.total&&(
-        <div className={`mt-2 flex items-center justify-center gap-1.5 ${roomCountdown<=30?"text-rose-400":"text-violet-300"}`}>
+        <div className={`mt-2 flex items-center justify-center gap-1.5 ${roomCountdown<=30?"text-rose-400":"text-fuchsia-300"}`}>
           <span className="text-sm">⏱️</span><span className="text-sm font-mono font-bold">{fmtCountdown(roomCountdown)}</span>
           <span className="text-[9px] text-white/25 ml-1">{t("join.remaining")}</span>
         </div>
       )}
       {paymentCountdown!==null&&paymentCountdown>0&&phase==="paid_waiting"&&(
-        <div className={`mt-2 flex items-center justify-center gap-1.5 ${paymentCountdown<=10?"text-rose-400":"text-violet-300"}`}>
+        <div className={`mt-2 flex items-center justify-center gap-1.5 ${paymentCountdown<=10?"text-rose-400":"text-fuchsia-300"}`}>
           <span className="text-sm">💰</span><span className="text-sm font-mono font-bold">{paymentCountdown}s</span>
           <span className="text-[9px] text-white/25 ml-1">{t("join.payment.countdown")}</span>
         </div>

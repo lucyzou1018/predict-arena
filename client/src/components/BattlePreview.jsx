@@ -98,10 +98,10 @@ export default function BattlePreview() {
               className="flex-1 cursor-pointer transition-all duration-300"
             >
               <div className={`h-1 rounded-full mb-2 transition-all duration-500 ${
-                active ? "bg-violet-400" : done ? "bg-violet-400/30" : "bg-white/[0.06]"
+                active ? "bg-fuchsia-400" : done ? "bg-fuchsia-400/30" : "bg-white/[0.06]"
               }`} />
               <p className={`text-[9px] font-bold uppercase tracking-wider transition-colors ${
-                active ? "text-violet-300" : "text-white/20"
+                active ? "text-fuchsia-300" : "text-white/20"
               }`}>
                 {t(STEP_KEYS[id].title)}
               </p>
@@ -113,7 +113,7 @@ export default function BattlePreview() {
       {/* Step description */}
       <div className="flex items-center gap-2 mb-3">
         <div className={`w-5 h-5 rounded-md flex items-center justify-center text-[9px] font-black ${
-          current.id === "result" ? "bg-violet-400/20 text-violet-300" : "bg-violet-400/15 text-violet-300"
+          current.id === "result" ? "bg-fuchsia-400/20 text-fuchsia-300" : "bg-fuchsia-400/15 text-fuchsia-300"
         }`}>
           {step + 1}
         </div>
@@ -128,9 +128,9 @@ export default function BattlePreview() {
             <div className="flex items-center justify-between mb-2.5">
               <div className="flex items-center gap-2">
                 <span className="text-[10px] text-white/30 font-bold uppercase tracking-wider">{t("preview.lobby")}</span>
-                <span className="px-1.5 py-0.5 rounded text-[8px] font-bold bg-violet-500/10 text-violet-300 border border-violet-500/20">#A7F2</span>
+                <span className="px-1.5 py-0.5 rounded text-[8px] font-bold bg-fuchsia-500/10 text-fuchsia-300 border border-fuchsia-500/20">#A7F2</span>
               </div>
-              <span className="text-[10px] font-mono font-bold text-violet-300">{joinedCount}/5</span>
+              <span className="text-[10px] font-mono font-bold text-fuchsia-300">{joinedCount}/5</span>
             </div>
             <div className="flex gap-2">
               {PLAYERS.map((p, i) => {
@@ -138,11 +138,11 @@ export default function BattlePreview() {
                 return (
                   <div key={i} className={`flex-1 h-10 rounded-lg border flex items-center justify-center transition-all duration-500 ${
                     joined
-                      ? "bg-violet-500/10 border-violet-400/25"
+                      ? "bg-fuchsia-500/10 border-fuchsia-400/25"
                       : "bg-white/[0.02] border-white/[0.04] border-dashed"
                   }`}>
                     {joined ? (
-                      <span className="text-[9px] font-mono text-violet-300/80 font-bold">{p.avatar}</span>
+                      <span className="text-[9px] font-mono text-fuchsia-300/80 font-bold">{p.avatar}</span>
                     ) : (
                       <span className="text-white/10 text-lg">+</span>
                     )}
@@ -151,17 +151,17 @@ export default function BattlePreview() {
               })}
             </div>
             <div className="mt-2.5 h-1 rounded-full bg-white/[0.04] overflow-hidden">
-              <div className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-violet-400 transition-all duration-700" style={{ width: `${(joinedCount / 5) * 100}%` }} />
+              <div className="h-full rounded-full bg-gradient-to-r from-purple-500 to-fuchsia-400 transition-all duration-700" style={{ width: `${(joinedCount / 5) * 100}%` }} />
             </div>
           </div>
 
           {/* Entry modes */}
           <div className="grid grid-cols-2 gap-2">
-            <div className="rounded-lg p-2.5 border border-violet-500/15" style={{ background: "linear-gradient(135deg, rgba(124,92,255,0.08), rgba(95,149,255,0.03))" }}>
+            <div className="rounded-lg p-2.5 border border-fuchsia-500/15" style={{ background: "linear-gradient(135deg, rgba(124,92,255,0.08), rgba(95,149,255,0.03))" }}>
               <p className="text-[10px] font-bold text-white/70">{t("preview.quickMatch")}</p>
               <p className="text-[8px] text-white/25 mt-0.5">{t("preview.quickMatch.desc")}</p>
             </div>
-            <div className="rounded-lg p-2.5 border border-violet-500/10" style={{ background: "linear-gradient(135deg, rgba(139,92,246,0.06), rgba(139,92,246,0.02))" }}>
+            <div className="rounded-lg p-2.5 border border-fuchsia-500/10" style={{ background: "linear-gradient(135deg, rgba(139,92,246,0.06), rgba(139,92,246,0.02))" }}>
               <p className="text-[10px] font-bold text-white/70">{t("preview.roomCode")}</p>
               <p className="text-[8px] text-white/25 mt-0.5">{t("preview.roomCode.desc")}</p>
             </div>
@@ -289,11 +289,11 @@ export default function BattlePreview() {
       {current.id === "result" && (
         <div className="mb-3">
           {/* Winner banner */}
-          <div className="rounded-xl p-3 mb-2 border border-violet-400/20" style={{ background: "linear-gradient(135deg, rgba(124,92,255,0.08), rgba(95,149,255,0.03))" }}>
+          <div className="rounded-xl p-3 mb-2 border border-fuchsia-400/20" style={{ background: "linear-gradient(135deg, rgba(124,92,255,0.08), rgba(95,149,255,0.03))" }}>
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-2">
                 <span className="text-base">🏆</span>
-                <span className="text-[10px] font-black text-violet-300 uppercase tracking-wider">{t("preview.winner")}</span>
+                <span className="text-[10px] font-black text-fuchsia-300 uppercase tracking-wider">{t("preview.winner")}</span>
               </div>
               <span className="text-[10px] font-mono font-bold text-emerald-400">+{(endDelta).toFixed(2)}</span>
             </div>
@@ -350,7 +350,7 @@ export default function BattlePreview() {
         current.id === "countdown"
           ? `${isGreen ? "border-emerald-500/10" : "border-rose-500/10"}`
           : current.id === "result"
-          ? "border-violet-500/15"
+          ? "border-fuchsia-500/15"
           : "border-white/[0.06]"
       }`} style={{
         background: current.id === "countdown"

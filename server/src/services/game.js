@@ -10,6 +10,10 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const SETTLEMENT_FAILURE_MESSAGE = "Settlement sync failed. Funds remain safe on-chain. Use this page or history to claim reward or refund when available.";
 const SETTLEMENT_PRICE_FAILURE_MESSAGE = "Settlement price is temporarily unavailable. Funds remain safe on-chain. Use this page or history to claim reward or refund when available.";
 const STARTUP_RECOVERY_MESSAGE = "This battle was interrupted while the server was offline. Funds remain safe on-chain. Use history to claim reward or refund when available.";
+const ROOM_PAYMENT_CONFIRM_RETRY_MS = parseInt(process.env.ROOM_PAYMENT_CONFIRM_RETRY_MS || "300", 10);
+const ROOM_PAYMENT_CONFIRM_MAX_ATTEMPTS = parseInt(process.env.ROOM_PAYMENT_CONFIRM_MAX_ATTEMPTS || "30", 10);
+const SETTLEMENT_RECOVERY_RETRY_MS = parseInt(process.env.SETTLEMENT_RECOVERY_RETRY_MS || "2000", 10);
+const SETTLEMENT_RECOVERY_MAX_ATTEMPTS = parseInt(process.env.SETTLEMENT_RECOVERY_MAX_ATTEMPTS || "30", 10);
 
 class GameService {
   constructor() {
@@ -18,6 +22,7 @@ class GameService {
     this.roomPayments = {};
     this.startingGames = new Set();
     this.settlingGames = new Set();
+    this.settlementRecoveries = new Map();
   }
   setIO(io) { this.io = io; }
 
@@ -145,11 +150,94 @@ class GameService {
     return SETTLEMENT_FAILURE_MESSAGE;
   }
 
+  _isRetryableSettlementIssue(error) {
+    const reason = `${error?.message || error || ""}`.toLowerCase();
+    if (!reason) return false;
+    if (reason.includes("settlement price unavailable")) return false;
+    return (
+      reason.includes("timed out") ||
+      reason.includes("syncing") ||
+      reason.includes("confirmation unavailable") ||
+      reason.includes("base sepolia") ||
+      reason.includes("network error") ||
+      reason.includes("temporarily unavailable") ||
+      reason.includes("socket hang up") ||
+      reason.includes("econnreset")
+    );
+  }
+
+  _clearSettlementRecovery(gameId) {
+    const recovery = this.settlementRecoveries.get(gameId);
+    if (recovery?.timer) clearTimeout(recovery.timer);
+    this.settlementRecoveries.delete(gameId);
+  }
+
   async _markSettlementFailed(gameId, message) {
     await query(
       "UPDATE games SET state='failed',settlement_price=NULL,settled_at=NULL,failed_at=NOW(),error_message=$1 WHERE id=$2 AND state<>'settled'",
       [message, gameId],
     );
+  }
+
+  _scheduleSettlementRecovery(gameId, computedResult = null) {
+    const existing = this.settlementRecoveries.get(gameId);
+    if (existing) return;
+
+    const runAttempt = async (attempt) => {
+      const game = this.activeGames[gameId];
+      if (!game) {
+        this._clearSettlementRecovery(gameId);
+        return;
+      }
+
+      try {
+        const recovered = await contractService.recoverSettledGame(game.chainGameId, SETTLEMENT_RECOVERY_RETRY_MS);
+        if (recovered) {
+          await this._finalizeSettlement(gameId, computedResult);
+          this._cleanupActiveGame(gameId);
+          this._clearSettlementRecovery(gameId);
+          return;
+        }
+      } catch (error) {
+        if (!this._isRetryableSettlementIssue(error)) {
+          const message = this._buildSettlementFailureMessage(error);
+          await this._markSettlementFailed(gameId, message);
+          this._emitToPlayers(game.players, "game:failed", {
+            gameId,
+            chainGameId: game.chainGameId,
+            basePrice: game.basePrice,
+            message,
+          });
+          this._cleanupActiveGame(gameId);
+          this._clearSettlementRecovery(gameId);
+          return;
+        }
+      }
+
+      if (attempt >= SETTLEMENT_RECOVERY_MAX_ATTEMPTS) {
+        const message = SETTLEMENT_FAILURE_MESSAGE;
+        await this._markSettlementFailed(gameId, message);
+        this._emitToPlayers(game.players, "game:failed", {
+          gameId,
+          chainGameId: game.chainGameId,
+          basePrice: game.basePrice,
+          message,
+        });
+        this._cleanupActiveGame(gameId);
+        this._clearSettlementRecovery(gameId);
+        return;
+      }
+
+      const timer = setTimeout(() => {
+        void runAttempt(attempt + 1);
+      }, SETTLEMENT_RECOVERY_RETRY_MS);
+      this.settlementRecoveries.set(gameId, { timer });
+    };
+
+    const timer = setTimeout(() => {
+      void runAttempt(1);
+    }, SETTLEMENT_RECOVERY_RETRY_MS);
+    this.settlementRecoveries.set(gameId, { timer });
   }
 
   async recoverInterruptedGames() {
@@ -294,7 +382,7 @@ class GameService {
     let paidOnChain = contractService.isMockMode();
     let lastRpcError = null;
     if (!paidOnChain) {
-      for (let attempt = 0; attempt < 15; attempt += 1) {
+      for (let attempt = 0; attempt < ROOM_PAYMENT_CONFIRM_MAX_ATTEMPTS; attempt += 1) {
         try {
           paidOnChain = await contractService.isPlayerPaid(targetChainGameId, wallet);
           lastRpcError = null;
@@ -302,7 +390,7 @@ class GameService {
         } catch (rpcError) {
           lastRpcError = rpcError;
         }
-        if (attempt < 14) await sleep(1000);
+        if (attempt < ROOM_PAYMENT_CONFIRM_MAX_ATTEMPTS - 1) await sleep(ROOM_PAYMENT_CONFIRM_RETRY_MS);
       }
     }
     if (!paidOnChain) {
@@ -601,7 +689,13 @@ class GameService {
         basePrice: g.basePrice,
         settlementPrice: sp,
         direction: sp > g.basePrice ? "up" : sp < g.basePrice ? "down" : "flat",
-        myResult,
+        myResult: myResult ? {
+          wallet: myResult.wallet,
+          prediction: myResult.prediction,
+          isCorrect: myResult.isCorrect,
+          reward: Number(myResult.reward || 0),
+          lost: Number(myResult.lost || 0),
+        } : null,
         platformFee: result.platformFee,
       });
     }
@@ -622,6 +716,7 @@ class GameService {
     }, 1000);
     g.settleTimer = setTimeout(() => {
       clearInterval(g.settleInterval);
+      this.io?.to(room).emit("game:countdown", { phase: "settling", remaining: 0, currentPrice: priceService.getPrice() });
       void this._settle(gameId);
     }, config.game.settleDelay);
   }
@@ -630,6 +725,7 @@ class GameService {
     const g = this.activeGames[gameId]; if (!g) return;
     if (this.settlingGames.has(gameId)) return;
     this.settlingGames.add(gameId);
+    let preserveActiveGame = false;
     try {
       const sp = priceService.getPrice();
       if (!sp || sp <= 0) {
@@ -661,14 +757,24 @@ class GameService {
         result.totalPayoutRaw,
       );
       if (!recovered) {
+        preserveActiveGame = true;
+        this._scheduleSettlementRecovery(gameId, result);
         this._emitToPlayers(g.players, "game:error", {
-          message: "Settlement is still syncing. Please wait a moment and the result should appear automatically.",
+          message: "Settlement is still syncing on Base Sepolia. The result should appear automatically.",
         });
         return;
       }
 
       await this._finalizeSettlement(gameId, result);
     } catch (error) {
+      if (this._isRetryableSettlementIssue(error)) {
+        preserveActiveGame = true;
+        this._scheduleSettlementRecovery(gameId, null);
+        this._emitToPlayers(g.players, "game:error", {
+          message: "Settlement is still syncing on Base Sepolia. The result should appear automatically.",
+        });
+        return;
+      }
       const message = this._buildSettlementFailureMessage(error);
       g.phase = "failed";
       console.error(`[Game] #${gameId} settlement failed`, error);
@@ -685,9 +791,7 @@ class GameService {
       });
     } finally {
       this.settlingGames.delete(gameId);
-      if (this.activeGames[gameId]?.phase !== "failed") {
-        this._cleanupActiveGame(gameId);
-      } else {
+      if (!preserveActiveGame) {
         this._cleanupActiveGame(gameId);
       }
     }
