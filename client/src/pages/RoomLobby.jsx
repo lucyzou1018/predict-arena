@@ -486,52 +486,50 @@ export default function RoomLobby(){
     return[indexed];
   },[seats,totalSeats]);
   const isRoomLocallyExpired=phase==="expired"||(phase==="waiting"&&roomCountdown===0);
-  const remainingPaymentPlayers=Math.max(0,(paymentProgress.total||teamSize||0)-(paymentProgress.paidCount||0));
-  const paymentWaitingNoun=remainingPaymentPlayers===1?"player":"players";
   const progressText=isEmbeddedGame
     ? gameState.phase==="predicting"
-      ? "round live"
+      ? t("roomLobby.progress.roundLive")
       : gameState.phase==="settling"
-        ? "settlement"
+        ? t("roomLobby.progress.settlement")
         : gameState.phase==="result"
-          ? "round settled"
-          : "recovery"
+          ? t("roomLobby.progress.roundSettled")
+          : t("roomLobby.progress.recovery")
     : phase==="payment"||phase==="paid_waiting"
-    ? `${paymentProgress.paidCount||0} / ${paymentProgress.total||totalSeats} paid`
-    : `${readyCount} / ${totalSeats} ready`;
+    ? t("roomLobby.progress.paid",{paid:paymentProgress.paidCount||0,total:paymentProgress.total||totalSeats})
+    : t("roomLobby.progress.ready",{ready:readyCount,total:totalSeats});
   const stageCopy=(()=>{
     if(isEmbeddedGame){
-      if(gameState.phase==="predicting")return{title:"Match In Progress",subtitle:"Keep your seat in view while everyone locks their direction."};
-      if(gameState.phase==="settling")return{title:"Settlement Live",subtitle:"The room stays open while the oracle finalizes the round outcome."};
-      if(gameState.phase==="result")return{title:"Round Complete",subtitle:"Everyone's final position is now shown around the room."};
-      if(gameState.phase==="failed")return{title:"Recovery Mode",subtitle:"The room remains here while recovery options sync on-chain."};
+      if(gameState.phase==="predicting")return{title:t("roomLobby.stage.predicting.title"),subtitle:t("roomLobby.stage.predicting.subtitle")};
+      if(gameState.phase==="settling")return{title:t("roomLobby.stage.settling.title"),subtitle:t("roomLobby.stage.settling.subtitle")};
+      if(gameState.phase==="result")return{title:t("roomLobby.stage.result.title"),subtitle:t("roomLobby.stage.result.subtitle")};
+      if(gameState.phase==="failed")return{title:t("roomLobby.stage.failed.title"),subtitle:t("roomLobby.stage.failed.subtitle")};
     }
     if(fromQuickMatch){
-      if(phase==="payment")return{title:"Match Found",subtitle:"Everyone is locked in. Complete entry payment to launch the round."};
-      if(phase==="paid_waiting")return{title:"Payment Confirmed",subtitle:"Your payment is in. Waiting for the remaining players to confirm entry."};
-      return{title:"Preparing Match",subtitle:"The lobby is syncing everyone into the live round."};
+      if(phase==="payment")return{title:t("roomLobby.stage.matchFound.title"),subtitle:t("roomLobby.stage.matchFound.subtitle")};
+      if(phase==="paid_waiting")return{title:t("roomLobby.stage.paymentConfirmed.title"),subtitle:t("roomLobby.stage.paymentConfirmed.subtitle")};
+      return{title:t("roomLobby.stage.preparing.title"),subtitle:t("roomLobby.stage.quickPreparing.subtitle")};
     }
-    if(phase==="payment")return{title:"Room Locked In",subtitle:"All seats are filled. Everyone needs to pay before the arena opens."};
-    if(phase==="paid_waiting")return{title:"Payment Confirmed",subtitle:"Your entry is locked. Waiting for the remaining players to finish payment."};
-    if(phase==="preparing")return{title:"Preparing Match",subtitle:"All seats are filled. Opening the payment step for everyone now."};
-    if(phase==="dissolving")return{title:"Closing Room",subtitle:"Cancelling this room and returning everyone to the arena."};
-    if(isRoomLocallyExpired)return{title:"Room Expired",subtitle:"This room expired before all seats were filled."};
-    if(phase==="dissolved")return{title:"Room Closed",subtitle:"This room is no longer active. Head back to the arena to create a new one."};
+    if(phase==="payment")return{title:t("roomLobby.stage.roomLocked.title"),subtitle:t("roomLobby.stage.roomLocked.subtitle")};
+    if(phase==="paid_waiting")return{title:t("roomLobby.stage.paymentConfirmed.title"),subtitle:t("roomLobby.stage.paymentConfirmed.roomSubtitle")};
+    if(phase==="preparing")return{title:t("roomLobby.stage.preparing.title"),subtitle:t("roomLobby.stage.preparing.subtitle")};
+    if(phase==="dissolving")return{title:t("roomLobby.stage.closing.title"),subtitle:t("roomLobby.stage.closing.subtitle")};
+    if(isRoomLocallyExpired)return{title:t("roomLobby.stage.expired.title"),subtitle:t("roomLobby.stage.expired.subtitle")};
+    if(phase==="dissolved")return{title:t("roomLobby.stage.closed.title"),subtitle:t("roomLobby.stage.closed.subtitle")};
     return{
-      title:"Waiting for Players",
+      title:t("roomLobby.stage.waiting.title"),
       subtitle:remainingSeats>0
-        ? `Share the room code to fill ${remainingSeats===1?"the remaining seat":`the remaining ${remainingSeats} seats`}.`
-        :"All seats are filled. Waiting for the room to advance."
+        ? t(remainingSeats===1?"roomLobby.stage.waiting.subtitle.one":"roomLobby.stage.waiting.subtitle.many",{n:remainingSeats})
+        :t("roomLobby.stage.waiting.subtitle.full")
     };
   })();
   const footerHint=phase==="waiting"
-    ? "Share the room code with your opponent to bring them into this arena."
+    ? t("roomLobby.footer.waiting")
     : phase==="preparing"
-      ? "Everyone is here. The room is preparing the payment step."
+      ? t("roomLobby.footer.preparing")
       : phase==="payment"||phase==="paid_waiting"
-        ? "This room will continue automatically once all players complete entry payment."
-        : "You can leave this room at any time before the round starts.";
-  const topActionLabel=isEmbeddedGame?"Match Live":fromQuickMatch?"Leave Lobby":isOwner?"Cancel Room":"Leave Room";
+        ? t("roomLobby.footer.payment")
+        : t("roomLobby.footer.default");
+  const topActionLabel=isEmbeddedGame?t("roomLobby.action.matchLive"):fromQuickMatch?t("roomLobby.action.leaveLobby"):isOwner?t("roomLobby.action.cancelRoom"):t("roomLobby.action.leaveRoom");
   const handleTopAction=isEmbeddedGame?undefined:fromQuickMatch?()=>nav("/"):isOwner?dissolve:leaveLobby;
   const scrollSeats=useCallback((direction)=>{
     const el=seatScrollerRef.current;
@@ -567,7 +565,7 @@ export default function RoomLobby(){
     <>
       <div className="room-lobby-hero-copy" style={{textAlign:'center',width:'100%',maxWidth:760,padding:'0 20px',boxSizing:'border-box',marginTop:0,marginBottom:12}}>
         <div style={{fontSize:10,letterSpacing:'0.32em',color:'rgba(255,255,255,0.24)',fontFamily:'monospace',marginBottom:10,textTransform:'uppercase'}}>
-          {fromQuickMatch?"Live Match Lobby":"Private Arena Lobby"}
+          {fromQuickMatch?t("roomLobby.kicker.live"):t("roomLobby.kicker.private")}
         </div>
         <h1 style={{display:'block',width:'100%',maxWidth:'100%',fontSize:'clamp(26px,3.2vw,42px)',fontWeight:900,background:'linear-gradient(135deg,#e0f9ff 0%,#67e8f9 35%,#c084fc 75%,#f0abfc 100%)',WebkitBackgroundClip:'text',WebkitTextFillColor:'transparent',backgroundClip:'text',letterSpacing:'-0.04em',lineHeight:1.24,margin:0,paddingBottom:'0.14em',whiteSpace:'normal',overflow:'visible',overflowWrap:'anywhere',wordBreak:'normal',textWrap:'balance'}}>
           {stageCopy.title}
@@ -581,7 +579,7 @@ export default function RoomLobby(){
         {seatRows.map((row,rowIndex)=>(
           <div key={rowIndex} className="room-lobby-seat-row" style={{position:'relative',width:'100%',maxWidth:scrollSeatLayout?'576px':'100%',display:'flex',alignItems:'center',justifyContent:'center'}}>
             {scrollSeatLayout&&seatScrollState.canLeft&&(
-              <button type="button" aria-label="Previous players" onClick={()=>scrollSeats(-1)} style={{position:'absolute',left:-44,top:'50%',transform:'translateY(-50%)',width:34,height:34,borderRadius:999,border:'1px solid rgba(244,114,182,0.22)',background:'rgba(12,10,24,0.72)',color:'rgba(255,255,255,0.82)',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',backdropFilter:'blur(10px)',boxShadow:'0 12px 24px rgba(4,6,20,0.28)',zIndex:2}}>
+              <button type="button" aria-label={t("roomLobby.seats.prev")} onClick={()=>scrollSeats(-1)} style={{position:'absolute',left:-44,top:'50%',transform:'translateY(-50%)',width:34,height:34,borderRadius:999,border:'1px solid rgba(244,114,182,0.22)',background:'rgba(12,10,24,0.72)',color:'rgba(255,255,255,0.82)',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',backdropFilter:'blur(10px)',boxShadow:'0 12px 24px rgba(4,6,20,0.28)',zIndex:2}}>
                 <ChevronLeft size={18} strokeWidth={2.4}/>
               </button>
             )}
@@ -589,13 +587,13 @@ export default function RoomLobby(){
               {row.map(({seat,index})=>renderPod(seat,index,scrollSeatLayout))}
             </div>
             {scrollSeatLayout&&seatScrollState.canRight&&(
-              <button type="button" aria-label="Next players" onClick={()=>scrollSeats(1)} style={{position:'absolute',right:-44,top:'50%',transform:'translateY(-50%)',width:34,height:34,borderRadius:999,border:'1px solid rgba(244,114,182,0.22)',background:'rgba(12,10,24,0.72)',color:'rgba(255,255,255,0.82)',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',backdropFilter:'blur(10px)',boxShadow:'0 12px 24px rgba(4,6,20,0.28)',zIndex:2}}>
+              <button type="button" aria-label={t("roomLobby.seats.next")} onClick={()=>scrollSeats(1)} style={{position:'absolute',right:-44,top:'50%',transform:'translateY(-50%)',width:34,height:34,borderRadius:999,border:'1px solid rgba(244,114,182,0.22)',background:'rgba(12,10,24,0.72)',color:'rgba(255,255,255,0.82)',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',backdropFilter:'blur(10px)',boxShadow:'0 12px 24px rgba(4,6,20,0.28)',zIndex:2}}>
                 <ChevronRight size={18} strokeWidth={2.4}/>
               </button>
             )}
           </div>
         ))}
-        {scrollSeatLayout&&<div style={{fontSize:9,fontFamily:'monospace',letterSpacing:'0.18em',textTransform:'uppercase',color:'rgba(255,255,255,0.34)',marginTop:-4}}>Swipe or use arrows to view all players</div>}
+        {scrollSeatLayout&&<div style={{fontSize:9,fontFamily:'monospace',letterSpacing:'0.18em',textTransform:'uppercase',color:'rgba(255,255,255,0.34)',marginTop:-4}}>{t("roomLobby.seats.scrollHint")}</div>}
       </div>
     </>
   );
@@ -605,7 +603,7 @@ export default function RoomLobby(){
       <div style={{minHeight:'100vh',background:'#06060f',display:'flex',alignItems:'center',justifyContent:'center',position:'relative',overflow:'hidden'}}>
         <div style={roomLobbyBgLayer}/>
         <div className="room-lobby-beam"/>
-        <div style={{color:'rgba(255,255,255,0.3)',fontSize:13,letterSpacing:'0.26em',textTransform:'uppercase',animation:'ellipsisPulse 1.4s ease-in-out infinite'}}>Loading Arena</div>
+        <div style={{color:'rgba(255,255,255,0.3)',fontSize:13,letterSpacing:'0.26em',textTransform:'uppercase',animation:'ellipsisPulse 1.4s ease-in-out infinite'}}>{t("roomLobby.loading")}</div>
       </div>
     );
   }
@@ -648,7 +646,7 @@ export default function RoomLobby(){
               <div style={{position:'relative',width:88,height:88,borderRadius:'50%',border:`2px solid ${accent}`,boxShadow:`0 0 0 5px ${self?'rgba(236,72,153,0.08)':'rgba(34,211,238,0.07)'},0 0 24px ${self?'rgba(236,72,153,0.24)':'rgba(34,211,238,0.2)'}`,display:'flex',alignItems:'center',justifyContent:'center',background:'#090b1b'}}>
                 <SeatAvatar seed={seat.addr} size={60}/>
               </div>
-              {self&&<div style={{position:'absolute',top:-8,left:'50%',transform:'translateX(-50%)',background:'linear-gradient(135deg,#a855f7,#ec4899)',padding:'3px 10px',borderRadius:20,fontSize:8,fontWeight:900,color:'#fff',letterSpacing:'0.16em',whiteSpace:'nowrap',boxShadow:'0 0 12px rgba(168,85,247,0.45)'}}>YOU</div>}
+              {self&&<div style={{position:'absolute',top:-8,left:'50%',transform:'translateX(-50%)',background:'linear-gradient(135deg,#a855f7,#ec4899)',padding:'3px 10px',borderRadius:20,fontSize:8,fontWeight:900,color:'#fff',letterSpacing:'0.16em',whiteSpace:'nowrap',boxShadow:'0 0 12px rgba(168,85,247,0.45)'}}>{t("roomLobby.seat.you")}</div>}
             </>
           ):(
             <div style={{width:88,height:88,borderRadius:'50%',border:'1.5px dashed rgba(255,255,255,0.12)',display:'flex',alignItems:'center',justifyContent:'center',background:'rgba(255,255,255,0.015)',animation:emptyExpired?'none':'avatarPulseGlow 3s ease-in-out infinite'}}>
@@ -657,12 +655,12 @@ export default function RoomLobby(){
           )}
         </div>
         <div style={{fontSize:10,fontFamily:'monospace',letterSpacing:'0.04em',color:filled?(self?'rgba(244,114,182,0.92)':'rgba(255,255,255,0.62)'):'rgba(255,255,255,0.2)',marginBottom:8}}>
-          {filled?shortAddr(seat.addr):emptyExpired?'Room expired':'Waiting for player'}
+          {filled?shortAddr(seat.addr):emptyExpired?t("roomLobby.seat.roomExpired"):t("roomLobby.seat.waiting")}
         </div>
         <div style={{height:1,width:'78%',background:filled?`linear-gradient(90deg,transparent,${self?'rgba(236,72,153,0.26)':'rgba(34,211,238,0.22)'},transparent)`:'rgba(255,255,255,0.05)',marginBottom:9}}/>
         <div style={{display:'flex',alignItems:'center',gap:6,fontSize:7.5,fontFamily:'monospace',letterSpacing:'0.22em',textTransform:'uppercase',color:filled?(self?'rgba(244,114,182,0.84)':'rgba(103,232,249,0.78)'):'rgba(255,255,255,0.22)'}}>
           <div style={{width:5,height:5,borderRadius:'50%',background:filled?accent:'rgba(255,255,255,0.14)',boxShadow:filled?`0 0 8px ${accent}`:'none',animation:filled?'avatarPulseGlow 1.6s ease-in-out infinite':'none'}}/>
-          {self?'YOU READY':filled?(seat.isHost?'HOST READY':'PLAYER READY'):emptyExpired?'EXPIRED':'OPEN SLOT'}
+          {self?t("roomLobby.seat.youReady"):filled?(seat.isHost?t("roomLobby.seat.hostReady"):t("roomLobby.seat.playerReady")):emptyExpired?t("roomLobby.seat.expired"):t("roomLobby.seat.open")}
         </div>
       </div>
     );
@@ -710,13 +708,13 @@ export default function RoomLobby(){
                   onBlur={hideCodeHintSoon}
                   tabIndex={0}
                 >
-                  <span style={{color:'rgba(255,255,255,0.56)',fontSize:8,fontFamily:'monospace',letterSpacing:'0.18em',textTransform:'uppercase',lineHeight:1.1}}>Arena Code</span>
+                  <span style={{color:'rgba(255,255,255,0.56)',fontSize:8,fontFamily:'monospace',letterSpacing:'0.18em',textTransform:'uppercase',lineHeight:1.1}}>{t("roomLobby.arenaCode")}</span>
                   <span style={{color:'rgba(255,255,255,0.92)',fontSize:12,fontFamily:'monospace',letterSpacing:'0.24em',fontWeight:700,lineHeight:1.1}}>{code||"······"}</span>
                 </div>
                 <div className="room-lobby-code-actions" style={{marginLeft:6,display:'flex',alignItems:'center',gap:6,flexShrink:0}}>
                   <button
                     type="button"
-                    aria-label="Share room code to X"
+                    aria-label={t("roomLobby.shareXAria")}
                     onClick={shareToX}
                     onMouseEnter={()=>setCodeHovered(false)}
                     onFocus={()=>setCodeHovered(false)}
@@ -726,7 +724,7 @@ export default function RoomLobby(){
                   </button>
                   <button
                     type="button"
-                    aria-label={copied?"Copied":"Copy arena code"}
+                    aria-label={copied?t("roomLobby.copy.copied"):t("roomLobby.copy.aria")}
                     onClick={copyCode}
                     onMouseEnter={()=>setCodeHovered(false)}
                     onFocus={()=>setCodeHovered(false)}
@@ -743,7 +741,7 @@ export default function RoomLobby(){
               )}
             </div>
           ):(
-            <div className="room-lobby-auto-label" style={{color:'rgba(255,255,255,0.24)',fontSize:10,fontFamily:'monospace',letterSpacing:'0.24em',textTransform:'uppercase'}}>Auto-matched lobby</div>
+            <div className="room-lobby-auto-label" style={{color:'rgba(255,255,255,0.24)',fontSize:10,fontFamily:'monospace',letterSpacing:'0.24em',textTransform:'uppercase'}}>{t("roomLobby.autoMatched")}</div>
           )}
           {(showRoomCountdown||showPaymentCountdown||showExpiredRoomCountdown)&&(
             <div className="room-lobby-countdown-wrap" style={{display:'flex',flexWrap:'wrap',alignItems:'center',justifyContent:'flex-end',gap:10}}>
@@ -752,7 +750,7 @@ export default function RoomLobby(){
                   <Clock3 style={{...topPillIconStyle,color:showExpiredRoomCountdown||roomCountdown<=30?'#fca5a5':'rgba(255,245,249,0.95)'}} strokeWidth={2.1}/>
                   {showExpiredRoomCountdown?(
                     <span style={{fontSize:13,fontFamily:'monospace',fontWeight:700,color:'#fca5a5',letterSpacing:'0.08em',textTransform:'uppercase'}}>
-                      Room Expired
+                      {t("roomLobby.roomExpired")}
                     </span>
                   ):(
                     <>
@@ -760,7 +758,7 @@ export default function RoomLobby(){
                         {fmtCountdown(roomCountdown)}
                       </span>
                       <span style={{fontSize:9,color:'rgba(255,255,255,0.82)',letterSpacing:'0.18em',textTransform:'uppercase'}}>
-                        Room expires
+                        {t("roomLobby.roomExpires")}
                       </span>
                     </>
                   )}
@@ -812,18 +810,18 @@ export default function RoomLobby(){
         loading={paymentTimeoutError?false:loading}
         mode={phase==="paid_waiting"?"waiting":"confirm"}
         variant="lobby"
-        eyebrow={paymentTimeoutError?"Lobby Update":"Room Lobby Payment"}
+        eyebrow={paymentTimeoutError?t("roomLobby.payment.lobbyUpdate"):t("roomLobby.payment.eyebrow")}
         title={paymentTimeoutError?t("create.payment.timeout.title"):t("create.payment.full.title")}
         actionLabel={paymentTimeoutError?t("create.payment.timeout.action"):t("create.payment.action")}
         subtitle={paymentTimeoutError?t("create.payment.timeout.subtitle"):t("create.payment.full.subtitle").replace("{n}",String(paymentProgress.total))}
         error={paymentTimeoutError||((phase==="payment"||phase==="paid_waiting")?err:null)}
-        hint={paymentTimeoutError?null:(phase==="paid_waiting"?`Your payment is confirmed. Stay here while the remaining ${paymentWaitingNoun} finish paying.`:shouldUseMockPayment?"Mock payment is enabled for this room.":`Confirm the payment in your wallet, then stay in this lobby while the other ${paymentWaitingNoun} finish paying.`)}
+        hint={paymentTimeoutError?null:(phase==="paid_waiting"?t("roomLobby.payment.hint.waiting"):shouldUseMockPayment?t("roomLobby.payment.hint.mock"):t("roomLobby.payment.hint.confirm"))}
         countdown={paymentTimeoutError?null:paymentCountdown}
-        countdownLabel={paymentTimeoutError?null:"Time Left"}
+        countdownLabel={paymentTimeoutError?null:t("roomLobby.payment.timeLeft")}
         paidCount={paymentProgress.paidCount}
         totalCount={paymentProgress.total||teamSize}
-        amountCaption="One-time arena entry for this seat"
-        cancelLabel={fromQuickMatch?"Leave Lobby":isOwner?"Cancel Room":"Leave Room"}
+        amountCaption={t("roomLobby.payment.amountCaption")}
+        cancelLabel={fromQuickMatch?t("roomLobby.action.leaveLobby"):isOwner?t("roomLobby.action.cancelRoom"):t("roomLobby.action.leaveRoom")}
         singleAction={!!paymentTimeoutError}
       />
       <PaymentModal
@@ -832,7 +830,7 @@ export default function RoomLobby(){
         loading={false}
         mode="confirm"
         variant="lobby"
-        eyebrow="Lobby Update"
+        eyebrow={t("roomLobby.payment.lobbyUpdate")}
         title={roomExitDialog?.title||t("roomLobby.exit.closedTitle")}
         actionLabel={t("roomLobby.exit.confirm")}
         subtitle={roomExitDialog?.subtitle||t("roomLobby.exit.closedSubtitle")}

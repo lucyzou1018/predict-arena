@@ -108,7 +108,7 @@ export default function ProfileModal() {
                   <button
                     type="button"
                     onClick={copyAddress}
-                    aria-label={copied ? "Copied" : "Copy address"}
+	                    aria-label={copied ? t("wallet.menu.copied") : t("wallet.menu.copy")}
                     className={`shrink-0 mt-0.5 w-6 h-6 flex items-center justify-center rounded-md transition ${copied ? "text-emerald-300 bg-emerald-500/[0.12]" : "text-white/40 hover:text-white/90 hover:bg-white/[0.08]"}`}
                   >
                     {copied ? (

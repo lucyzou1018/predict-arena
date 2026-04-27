@@ -246,6 +246,8 @@ function MatchGlyph({ className = "w-5 h-5" }) {
 }
 
 function TeamSizeGrid({ selectedSize, onSelect, disabled }) {
+  const t = useT();
+
   return (
     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3 mb-5">
       {TEAM_SIZES.map((size) => (
@@ -260,7 +262,7 @@ function TeamSizeGrid({ selectedSize, onSelect, disabled }) {
               : "border-white/[0.08] bg-white/[0.03] text-white/55 hover:bg-white/[0.05] hover:border-white/[0.12]"
             } ${disabled ? "!opacity-30 cursor-not-allowed" : ""}`}
         >
-          <div className="text-[7px] uppercase tracking-[0.16em] text-white/34 mb-1">Team</div>
+          <div className="text-[7px] uppercase tracking-[0.16em] text-white/34 mb-1">{t("home.teamLabel")}</div>
           <div className="text-[1.25rem] sm:text-[1.4rem] font-black leading-none text-white">{size}P</div>
         </button>
       ))}
@@ -274,13 +276,13 @@ function CreateRoomSelectorCard({ selectedSize, onSelect, onAction, disabled, bl
   return (
     <>
       <div className="text-[9px] font-medium uppercase tracking-[0.18em] text-white/28 mb-2">
-        Setup
+        {t("home.card.create.kicker")}
       </div>
       <div className="text-white text-[1.3rem] sm:text-[1.55rem] font-black leading-[1.08] mb-2">
-        Create Room
+        {t("home.card.create.title")}
       </div>
       <p className="max-w-2xl text-[12px] sm:text-[13px] text-white/48 leading-6 mb-5">
-        Choose the number of seats. The room starts as soon as every participant joins and pays the entry.
+        {t("home.card.create.selectorDesc")}
       </p>
       {blockedMsg && <p className="text-[10px] text-white/25 -mt-2 mb-4">{blockedMsg}</p>}
 
@@ -297,7 +299,7 @@ function CreateRoomSelectorCard({ selectedSize, onSelect, onAction, disabled, bl
         disabled={disabled}
         className={`dashboard-primary-btn w-full !py-3.5 !text-[15px] ${disabled ? "!opacity-30 cursor-not-allowed" : ""}`}
       >
-        Create
+        {t("home.card.create.cta")}
       </button>
     </>
   );
@@ -309,13 +311,13 @@ function JoinRoomSelectorCard({ value, onChange, onSubmit, disabled, blockedMsg 
   return (
     <>
       <div className="text-[9px] font-medium uppercase tracking-[0.18em] text-white/28 mb-2">
-        Access
+        {t("home.card.join.kicker")}
       </div>
       <div className="text-white text-[1.3rem] sm:text-[1.55rem] font-black leading-[1.08] mb-2">
-        Join Room
+        {t("home.card.join.title")}
       </div>
       <p className="max-w-2xl text-[12px] sm:text-[13px] text-white/48 leading-6 mb-5">
-        Enter the code shared by your host to take the open seat in the same arena.
+        {t("home.card.join.selectorDesc")}
       </p>
 
       <div className="text-white/32 text-[10px] font-medium uppercase tracking-[0.18em] mb-3.5">
@@ -339,7 +341,7 @@ function JoinRoomSelectorCard({ value, onChange, onSubmit, disabled, blockedMsg 
         disabled={value.length < 6 || disabled}
         className="dashboard-primary-btn w-full !py-3.5 !text-[15px] disabled:!opacity-30"
       >
-        Join
+        {t("home.card.join.cta")}
       </button>
     </>
   );
@@ -347,17 +349,18 @@ function JoinRoomSelectorCard({ value, onChange, onSubmit, disabled, blockedMsg 
 
 function QuickMatchSelectorCard({ selectedSize, onSelect, onAction, disabled, blockedMsg }) {
   const t = useT();
+  const matchComingSoon = true;
 
   return (
     <>
       <div className="text-[9px] font-medium uppercase tracking-[0.18em] text-white/28 mb-2">
-        Matchmaking
+        {t("home.card.match.kicker")}
       </div>
       <div className="text-white text-[1.3rem] sm:text-[1.55rem] font-black leading-[1.08] mb-2">
-        Fast Match
+        {t("home.card.match.title")}
       </div>
       <p className="max-w-2xl text-[12px] sm:text-[13px] text-white/48 leading-6 mb-5">
-        Pick a room size and get matched instantly. The game starts as soon as every seat is filled.
+        {t("home.card.match.selectorDesc")}
       </p>
       {blockedMsg && <p className="text-[10px] text-white/25 -mt-2 mb-4">{blockedMsg}</p>}
 
@@ -370,11 +373,11 @@ function QuickMatchSelectorCard({ selectedSize, onSelect, onAction, disabled, bl
 
       <button
         type="button"
-        onClick={onAction}
-        disabled={disabled}
-        className={`dashboard-primary-btn w-full !py-3.5 !text-[15px] ${disabled ? "!opacity-30 cursor-not-allowed" : ""}`}
+        onClick={matchComingSoon ? undefined : onAction}
+        disabled={matchComingSoon || disabled}
+        className="dashboard-primary-btn w-full !py-3.5 !text-[15px] !opacity-30 cursor-not-allowed"
       >
-        Match
+        Coming Soon
       </button>
     </>
   );
@@ -1719,7 +1722,7 @@ export default function Home(){
       {/* Top section */}
       <div className="grid grid-cols-1 mb-8">
         <div>
-          <span className="dashboard-kicker mb-3 block">ARENA DASHBOARD</span>
+          <span className="dashboard-kicker mb-3 block">{t("home.dashboard.kicker")}</span>
           <h1 className="dashboard-title text-2xl sm:text-3xl mb-2 uppercase">
             {typedTitlePre}
             {showTitleGap?" ":""}

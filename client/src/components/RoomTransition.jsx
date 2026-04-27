@@ -1,4 +1,5 @@
 import{useEffect,useState}from"react";
+import{useT}from"../context/LangContext";
 
 const DURATION=2400;
 const PARTICLES=Array.from({length:28});
@@ -30,6 +31,7 @@ function TriangleMark({className="w-full h-full"}){
 
 export function RoomTransition({visible,onComplete,duration=DURATION}){
   const[progress,setProgress]=useState(0);
+  const t=useT();
 
   useEffect(()=>{
     if(!visible){setProgress(0);return;}
@@ -50,7 +52,7 @@ export function RoomTransition({visible,onComplete,duration=DURATION}){
   const pct=Math.round(progress*100);
 
   return(
-    <div className="room-transition-root" role="dialog" aria-modal="true" aria-label="Entering Arena">
+    <div className="room-transition-root" role="dialog" aria-modal="true" aria-label={t("roomTransition.aria")}>
       <div className="room-transition-bg"/>
       <div className="room-transition-grid"/>
       <div className="room-transition-particles">
@@ -67,12 +69,12 @@ export function RoomTransition({visible,onComplete,duration=DURATION}){
         <div className="room-transition-logo">
           <TriangleMark/>
         </div>
-        <div className="room-transition-label">ENTERING ARENA</div>
-        <div className="room-transition-subtitle">Syncing room state and preparing your seat</div>
+        <div className="room-transition-label">{t("roomTransition.label")}</div>
+        <div className="room-transition-subtitle">{t("roomTransition.subtitle")}</div>
       </div>
       <div className="room-transition-footer">
         <div className="room-transition-meta">
-          <span className="room-transition-tag"><span className="dot"/>LINK ESTABLISHED</span>
+          <span className="room-transition-tag"><span className="dot"/>{t("roomTransition.link")}</span>
           <span className="room-transition-pct">{String(pct).padStart(3,"0")}%</span>
         </div>
         <div className="room-transition-bar">

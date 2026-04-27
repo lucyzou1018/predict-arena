@@ -168,7 +168,7 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
       }
 
       if (game.state === "failed") {
-        const message = game.error_message || "Settlement was interrupted. Funds remain safe on-chain.";
+        const message = game.error_message || t("game.err.settlementInterrupted");
         setGameId(nextGameId);
         setChainGameId(nextChainGameId);
         setBasePrice(nextBasePrice);
@@ -214,7 +214,7 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
     } catch {
       return null;
     }
-  }, [chainGameId, currentGameId, gameState.chainGameId, gameState.phase, getPlayerState, phase, updateGame, wallet]);
+  }, [chainGameId, currentGameId, gameState.chainGameId, gameState.phase, getPlayerState, phase, t, updateGame, wallet]);
 
   const refreshClaimStatus = useCallback(async (targetChainGameId = currentChainGameId, silent = false) => {
     if (!wallet || !targetChainGameId) {
@@ -274,9 +274,9 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
       setPhase("failed");
       setCountdown(0);
       setPendingPrediction(null);
-      setFailureMessage(gameState.failureMessage || "Settlement was interrupted. Funds remain safe on-chain.");
+      setFailureMessage(gameState.failureMessage || t("game.err.settlementInterrupted"));
     }
-  }, [gameState, totalPlayers]);
+  }, [gameState, totalPlayers, t]);
 
   useEffect(() => {
     setPendingPrediction(null);
@@ -494,7 +494,7 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
         });
       }),
       on("game:failed", (data) => {
-        const message = data.message || "Settlement was interrupted. Funds remain safe on-chain.";
+        const message = data.message || t("game.err.settlementInterrupted");
         const nextGameId = data.gameId || gameState.gameId;
         const nextChainGameId = data.chainGameId || gameState.chainGameId || data.gameId;
         setPhase("failed");
@@ -517,8 +517,8 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
       }),
       on("game:error", (data) => {
         setPendingPrediction(null);
-        const message = data.message || "Game error";
-        if (message === "Not in this game") {
+        const message = data.message || t("game.err.gameError");
+        if (message === "Not in this game" || message === t("game.err.notInGame")) {
           resetGame();
           nav("/", { replace: true });
           return;
@@ -563,7 +563,7 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
     ];
 
     return () => unsubscribers.forEach((unsubscribe) => unsubscribe());
-  }, [on, nav, gameState, phase, updateGame, resetGame, gameId, currentChainGameId, chainGameId, basePrice, wallet, myPrediction]);
+  }, [on, nav, gameState, phase, updateGame, resetGame, gameId, currentChainGameId, chainGameId, basePrice, wallet, myPrediction, t]);
 
   useEffect(() => {
     if (!wallet || !currentGameId) return;
@@ -613,8 +613,8 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
         claimed: true,
         error: null,
         success: isRefundLikeClaim
-          ? `Refund claimed to wallet${claimedAmount ? `: ${claimedAmount.toFixed(4)} USDC` : "."}`
-          : `Reward claimed to wallet${claimedAmount ? `: +${claimedAmount.toFixed(4)} USDC` : "."}`,
+          ? `${t("game.claimRefundWallet")}${claimedAmount ? `: ${claimedAmount.toFixed(4)} USDC` : "."}`
+          : `${t("game.claimRewardWallet")}${claimedAmount ? `: +${claimedAmount.toFixed(4)} USDC` : "."}`,
       });
       if (payout?.type !== "refund") {
         setResult((previous) => previous ? ({
@@ -628,7 +628,7 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
         nav("/arena", { replace: true });
       }
     } catch (error) {
-      setClaimState({ claimed: false, error: error?.message || "Claim failed. Please try again.", success: null });
+      setClaimState({ claimed: false, error: error?.message || t("game.err.claimFailed"), success: null });
     }
   };
 
@@ -654,8 +654,8 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
   const percent = basePrice ? ((diff / basePrice) * 100).toFixed(3) : "0";
   const priceColor = diff > 0 ? "text-emerald-400" : diff < 0 ? "text-rose-400" : "text-white/30";
   const formatPredictionLabel = (prediction) => {
-    if (prediction === "up") return "LONG";
-    if (prediction === "down") return "SHORT";
+    if (prediction === "up") return t("game.long");
+    if (prediction === "down") return t("game.short");
     return null;
   };
   const displayedPrediction = myPrediction || pendingPrediction;
@@ -669,15 +669,15 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
   const viewerRole = !currentWallet || normalizedPlayers.length === 0
     ? null
     : currentWallet === hostWallet
-      ? "Host"
+      ? t("game.role.host")
       : normalizedPlayers.includes(currentWallet)
-        ? "Participant"
-        : "Viewer";
+        ? t("game.role.participant")
+        : t("game.role.viewer");
   const predictionBufferNoticeActive = phase === "predicting" && !displayedPrediction && secondsUntilLocalLock <= predictionBufferNoticeThreshold;
   const predictionBufferLocked = phase === "predicting" && !displayedPrediction && secondsUntilLocalLock <= effectivePredictSafeBuffer;
   const predictionBufferMessage = predictionBufferLocked
-    ? `Final ${effectivePredictSafeBuffer}s are reserved locally for on-chain confirmation. Predictions are now locked for this round.`
-    : `Final ${effectivePredictSafeBuffer}s are reserved locally for on-chain confirmation. You can still choose a side before they begin.`;
+    ? t("game.bufferLocked",{n:effectivePredictSafeBuffer})
+    : t("game.bufferSoon",{n:effectivePredictSafeBuffer});
   const predictionNeedsAttention = phase === "predicting" && !displayedPrediction && !predictionBufferLocked;
   const predictionPromptTitle = t("game.turnPromptTitle");
   const predictionPromptHint = t("game.turnPromptHint");
@@ -687,14 +687,14 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
   const resultPredictionLabel = formatPredictionLabel(resultPrediction);
   const refundWaitSeconds = claimStatus?.refundUnlockAt ? Math.max(0, claimStatus.refundUnlockAt - Math.floor(Date.now() / 1000)) : null;
   const canClaimFailedFunds = !!(claimStatus?.canClaimReward || claimStatus?.canClaimRefund || claimStatus?.canForceRefund);
-  const failedClaimLabel = claimStatus?.canClaimReward ? "Claim Reward" : "Claim Refund";
+  const failedClaimLabel = claimStatus?.canClaimReward ? t("game.claim.reward") : t("game.claim.refund");
   const formatUsd = (value) => `$${Number(value || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   const modalPriceClass = "min-w-0 whitespace-nowrap text-[clamp(0.95rem,3.4vw,1.35rem)] leading-none font-mono font-black tabular-nums";
   const resultBasePrice = Number(result?.basePrice || 0);
   const resultSettlementPrice = Number(result?.settlementPrice || 0);
   const resultDiff = resultBasePrice ? resultSettlementPrice - resultBasePrice : 0;
   const resultPercent = resultBasePrice ? ((resultDiff / resultBasePrice) * 100).toFixed(3) : "0.000";
-  const resultOutcomeLabel = result?.direction === "up" ? "LONG" : result?.direction === "down" ? "SHORT" : result?.direction === "flat" ? "FLAT" : "PENDING";
+  const resultOutcomeLabel = result?.direction === "up" ? t("game.long") : result?.direction === "down" ? t("game.short") : result?.direction === "flat" ? t("game.flat") : t("game.pending");
   const resultOutcomeTone = result?.direction === "up" ? "text-emerald-300" : result?.direction === "down" ? "text-rose-300" : "text-white/72";
   const resultOutcomeChipClass = result?.direction === "up"
     ? "!border-emerald-500/20 !bg-emerald-500/[0.08] !text-emerald-300"
@@ -702,18 +702,18 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
       ? "!border-rose-500/20 !bg-rose-500/[0.08] !text-rose-300"
       : "!border-white/10 !bg-white/[0.05] !text-white/72";
   const resultOutcomeCopy = result?.direction === "up"
-    ? "BTC closed above the base price."
+    ? t("game.result.up")
     : result?.direction === "down"
-      ? "BTC closed below the base price."
-      : "BTC closed exactly at the base price.";
+      ? t("game.result.down")
+      : t("game.result.flat");
   const resultEntryAmount = Number(result?.myResult?.entryFee || claimStatus?.entryFee || ENTRY_FEE);
   const hasPlayerResult = !!result?.myResult;
   const resultNetAmount = hasPlayerResult ? rewardAmount - resultEntryAmount : 0;
   const hasRefundLikePayout = hasPlayerResult && rewardAmount > 0 && resultNetAmount <= 0;
   const didWinRound = !!(result?.myResult?.isCorrect && resultNetAmount > 0);
   const resultHeadline = result?.myResult
-    ? didWinRound ? "Forecast Confirmed" : hasRefundLikePayout ? "Round Refunded" : "Forecast Missed"
-    : "Round Complete";
+    ? didWinRound ? t("game.result.forecastConfirmed") : hasRefundLikePayout ? t("game.result.roundRefunded") : t("game.result.forecastMissed")
+    : t("game.result.roundComplete");
   const resultHeadlineTone = didWinRound ? "text-emerald-300" : hasRefundLikePayout ? "text-amber-200" : result?.myResult ? "text-rose-300" : "text-white/82";
   const formatSignedAmount = (value) => `${value > 0 ? "+" : ""}${value.toFixed(4)}`;
   const resultAmountText = hasPlayerResult
@@ -749,37 +749,37 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
       .filter((address) => address !== currentWallet)
       .map((address, index) => {
         const state = playerStates[address] || null;
-        const predictionLabel = state?.prediction === 1 ? "LONG" : state?.prediction === 2 ? "SHORT" : null;
+        const predictionLabel = state?.prediction === 1 ? t("game.long") : state?.prediction === 2 ? t("game.short") : null;
         const predictionTone = state?.prediction === 1 ? "text-emerald-300" : state?.prediction === 2 ? "text-rose-300" : "text-white/42";
-        let statusLabel = "Waiting";
+        let statusLabel = t("game.player.waiting");
         let statusTone = "text-white/38";
         if (phase === "predicting") {
-          statusLabel = predictionLabel ? "Locked in" : "Waiting";
+          statusLabel = predictionLabel ? t("game.player.lockedIn") : t("game.player.waiting");
           statusTone = predictionLabel ? "text-cyan-200" : "text-white/38";
         } else if (phase === "settling") {
-          statusLabel = predictionLabel ? "Submitted" : "No position";
+          statusLabel = predictionLabel ? t("game.player.submitted") : t("game.player.noPosition");
           statusTone = predictionLabel ? "text-fuchsia-200" : "text-white/38";
         } else if (phase === "result") {
           if (!predictionLabel) {
-            statusLabel = "No position";
+            statusLabel = t("game.player.noPosition");
             statusTone = "text-white/38";
           } else if (result?.direction === "flat") {
-            statusLabel = "Settled flat";
+            statusLabel = t("game.player.settledFlat");
             statusTone = "text-white/62";
           } else if ((state?.prediction === 1 && result?.direction === "up") || (state?.prediction === 2 && result?.direction === "down")) {
-            statusLabel = "Correct";
+            statusLabel = t("game.player.correct");
             statusTone = "text-emerald-300";
           } else {
-            statusLabel = "Missed";
+            statusLabel = t("game.player.missed");
             statusTone = "text-rose-300";
           }
         } else if (phase === "failed") {
-          statusLabel = predictionLabel ? "Recovery pending" : "No position";
+          statusLabel = predictionLabel ? t("game.player.recoveryPending") : t("game.player.noPosition");
           statusTone = predictionLabel ? "text-amber-200" : "text-white/38";
         }
         return {
           address,
-          label: address === hostWallet ? "Host" : `Player ${index + 2}`,
+          label: address === hostWallet ? t("game.role.host") : t("game.player.label",{n:index+2}),
           short: shortWallet(address),
           predictionLabel,
           predictionTone,
@@ -789,7 +789,7 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
           claimed: !!state?.claimed,
         };
       }),
-    [normalizedPlayers, currentWallet, playerStates, phase, result?.direction, hostWallet, shortWallet],
+    [normalizedPlayers, currentWallet, playerStates, phase, result?.direction, hostWallet, shortWallet, t],
   );
 
   useEffect(() => {
@@ -899,7 +899,7 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
           <div className="mt-4 grid gap-3">
             <div className={`game-end-metric flex items-center justify-between gap-3 px-4 py-4 sm:px-4.5 sm:py-4.5 ${didWinRound ? "!border-emerald-500/18 !bg-emerald-500/[0.06]" : ""}`}>
               <p className="min-w-0 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/34">
-                Claimable
+                {t("game.claimable")}
               </p>
               <p className={`shrink-0 text-[1.05rem] sm:text-[1.14rem] leading-none font-mono font-black ${resultClaimableTone}`}>
                 {resultClaimableText}
@@ -937,7 +937,7 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
                 disabled={!canClaimReward || claiming}
                 className="dashboard-primary-btn py-3 text-[0.94rem] font-bold disabled:opacity-45 disabled:cursor-not-allowed"
               >
-                {claimState.claimed || result?.myResult?.claimed ? "Claimed" : claiming ? "Claiming..." : "Claim Reward"}
+                {claimState.claimed || result?.myResult?.claimed ? t("result.claimed") : claiming ? t("result.claiming") : t("game.claim.reward")}
               </button>
             </div>
           ) : (
@@ -963,12 +963,12 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
 
   if (layout === "room" && inBattlePhase) {
     const myStatusLabel = phase === "predicting"
-      ? displayedPrediction ? "Prediction locked" : predictionPromptTitle
+      ? displayedPrediction ? t("game.predictionLocked") : predictionPromptTitle
       : phase === "settling"
-        ? "Settlement in progress"
+        ? t("game.settlementInProgress")
         : phase === "result"
           ? resultHeadline
-          : "Recovery";
+          : t("game.recovery");
 
     return (
       <>
@@ -979,10 +979,10 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
               <div className="flex items-start justify-between gap-2.5 mb-3">
                 <div className="min-w-0">
                   <span className="dashboard-room-chip inline-flex items-center gap-2 px-3 py-1.5 text-[9px] font-semibold uppercase tracking-[0.2em] text-fuchsia-100/82">
-                    {phase === "result" ? "Team Result" : phase === "settling" ? "Team Calls" : "Team Board"}
+                    {phase === "result" ? t("game.team.result") : phase === "settling" ? t("game.team.calls") : t("game.team.board")}
                   </span>
-                  <h3 className="mt-2.5 text-[1rem] font-black tracking-[-0.04em] text-white leading-[1.08]">Room Players</h3>
-                  <p className="mt-1 text-[10px] text-white/44 leading-5">Watch how the rest of the room is positioning.</p>
+                  <h3 className="mt-2.5 text-[1rem] font-black tracking-[-0.04em] text-white leading-[1.08]">{t("game.roomPlayers")}</h3>
+                  <p className="mt-1 text-[10px] text-white/44 leading-5">{t("game.roomPlayers.desc")}</p>
                 </div>
                 <div className="dashboard-room-chip px-3 py-1.5 text-[10px] font-mono text-white/70">{teammateStates.length}</div>
               </div>
@@ -990,7 +990,7 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
               <div className="space-y-2.5">
                 {teammateStates.length === 0 ? (
                   <div className="dashboard-modal-row px-3 py-3 text-center">
-                    <p className="text-white/42 text-[11px]">No teammates are attached to this room.</p>
+                    <p className="text-white/42 text-[11px]">{t("game.team.empty")}</p>
                   </div>
                 ) : teammateStates.map((player) => (
                   <div key={player.address} className="dashboard-modal-row px-3 py-3">
@@ -1006,7 +1006,7 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
                     </div>
                     {phase === "result" && player.reward > 0 ? (
                       <div className="mt-2 pt-2 border-t border-white/[0.06] flex items-center justify-between gap-2">
-                        <span className="text-white/26 text-[9px] uppercase tracking-[0.18em]">Reward</span>
+                        <span className="text-white/26 text-[9px] uppercase tracking-[0.18em]">{t("game.recovery.reward")}</span>
                         <span className="text-emerald-300 text-[10px] font-mono font-black">{player.reward.toFixed(4)} USDC</span>
                       </div>
                     ) : null}
@@ -1025,26 +1025,26 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
               <div className="flex items-start justify-between gap-2.5 mb-3">
                 <div className="min-w-0">
                   <span className="dashboard-room-chip inline-flex items-center gap-2 px-3 py-1.5 text-[9px] font-semibold uppercase tracking-[0.2em] text-fuchsia-100/82">
-                    {phase === "predicting" ? "Your Console" : phase === "settling" ? "Your Position" : phase === "result" ? "Your Result" : "Recovery"}
+                    {phase === "predicting" ? t("game.panel.console") : phase === "settling" ? t("game.panel.position") : phase === "result" ? t("game.panel.result") : t("game.recovery")}
                   </span>
                   <h3 className="mt-2.5 text-[1rem] font-black tracking-[-0.04em] text-white leading-[1.08]">{phase === "predicting" && !displayedPrediction ? chooseSideTitle : myStatusLabel}</h3>
                   <p className="mt-1 text-[10px] text-white/44 leading-5">
                     {phase === "predicting"
-                      ? displayedPrediction ? "Your call is locked in for this round." : t("game.descLongShort")
+                      ? displayedPrediction ? t("game.callLocked") : t("game.descLongShort")
                       : phase === "settling"
-                        ? "Your call is locked while the oracle finalizes the round."
+                        ? t("game.callLockedSettling")
                         : phase === "result"
-                          ? "Your room stays visible while the final payout and share action remain here."
-                          : "If settlement is interrupted, recovery stays attached to this room."}
+                          ? t("game.roomResultHint")
+                          : t("game.recovery.roomHint")}
                   </p>
                 </div>
                 {phase === "predicting" || phase === "settling" ? (
                   <div className="dashboard-room-subcard shrink-0 px-2.5 py-2.5">
-                    <CountdownRing total={phase === "predicting" ? PREDICT_TIMEOUT : SETTLE_DELAY} remaining={countdown} label={phase === "predicting" ? "Time Left" : "Reveal"} size="sm" />
+                    <CountdownRing total={phase === "predicting" ? PREDICT_TIMEOUT : SETTLE_DELAY} remaining={countdown} label={phase === "predicting" ? t("game.timeLeft") : t("game.reveal")} size="sm" />
                   </div>
                 ) : (
                   <div className={`dashboard-room-chip px-3 py-1.5 text-[10px] ${phase === "result" ? resultOutcomeChipClass : "!border-amber-500/20 !bg-amber-500/[0.08] !text-amber-200"}`}>
-                    {phase === "result" ? resultOutcomeLabel : "Pending"}
+                    {phase === "result" ? resultOutcomeLabel : t("game.pending")}
                   </div>
                 )}
               </div>
@@ -1054,11 +1054,11 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
                   <>
                     <div className="grid grid-cols-1 gap-2.5">
                       <div className="dashboard-modal-row min-w-0 px-3 py-2.5 text-center">
-                        <p className="text-white/24 text-[9px] uppercase tracking-[0.2em] mb-1.5">Base Price</p>
+                        <p className="text-white/24 text-[9px] uppercase tracking-[0.2em] mb-1.5">{t("game.basePriceLabel")}</p>
                         <p className={`${modalPriceClass} text-gradient`}>{formatUsd(basePrice)}</p>
                       </div>
                       <div className="dashboard-modal-row min-w-0 px-3 py-2.5 text-center">
-                        <p className="text-white/24 text-[9px] uppercase tracking-[0.2em] mb-1.5">{phase === "predicting" ? "Live Price" : "Current Price"}</p>
+                        <p className="text-white/24 text-[9px] uppercase tracking-[0.2em] mb-1.5">{phase === "predicting" ? t("game.livePriceLabel") : t("game.currentPrice")}</p>
                         <p className={`${modalPriceClass} ${priceColor}`}>{formatUsd(currentPrice)}</p>
                         <p className={`text-[9px] font-mono mt-1 ${priceColor}`}>{diff >= 0 ? "+" : ""}{diff.toFixed(2)} ({percent}%)</p>
                       </div>
@@ -1068,26 +1068,26 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
                       <div className={`dashboard-modal-row px-3 py-3${predictionZoneClass}`}>
                         <div className="flex items-center justify-between mb-2.5">
                           <div>
-                            <p className="text-white/24 text-[9px] uppercase tracking-[0.2em]">Your Call</p>
-                            {displayedPrediction ? <p className="text-white/46 text-[10px] mt-1">Position selected.</p> : null}
+                            <p className="text-white/24 text-[9px] uppercase tracking-[0.2em]">{t("game.yourCall")}</p>
+                            {displayedPrediction ? <p className="text-white/46 text-[10px] mt-1">{t("game.positionSelected")}</p> : null}
 	                          </div>
 	                          <div className="dashboard-room-chip px-3 py-1.5 text-[10px] font-mono text-white/70">{predictedCount}/{totalPlayers}</div>
 	                        </div>
-	                        {!displayedPrediction ? <div className="prediction-action-banner mb-2.5">Select LONG or SHORT to lock your prediction</div> : null}
+		                        {!displayedPrediction ? <div className="prediction-action-banner mb-2.5">{t("game.selectPredictionBanner")}</div> : null}
 	                        <PredictButtons onPredict={predict} myPrediction={displayedPrediction} disabled={predicting || predictionBufferLocked} attention={predictionNeedsAttention} />
 	                      </div>
                     ) : (
                       <div className="dashboard-modal-row px-3 py-3 text-center">
-                        <p className="text-white/24 text-[9px] uppercase tracking-[0.2em] mb-1.5">Locked Position</p>
+                        <p className="text-white/24 text-[9px] uppercase tracking-[0.2em] mb-1.5">{t("game.lockedPosition")}</p>
                         <p className={`text-[1.05rem] font-black ${displayedPrediction === "up" ? "text-emerald-300" : displayedPrediction === "down" ? "text-rose-300" : "text-white/42"}`}>
-                          {displayedPrediction === "up" ? "LONG" : displayedPrediction === "down" ? "SHORT" : "NO POSITION"}
+                          {displayedPrediction === "up" ? t("game.long") : displayedPrediction === "down" ? t("game.short") : t("game.noPos")}
                         </p>
                       </div>
                     )}
 
                     {predictionBufferNoticeActive ? <div className="rounded-[18px] border border-fuchsia-500/15 bg-fuchsia-500/10 text-fuchsia-200 text-[11px] px-4 py-3">{predictionBufferMessage}</div> : null}
                     {predictionError ? <div className="rounded-[18px] border border-rose-500/15 bg-rose-500/10 text-rose-300 text-[11px] px-4 py-3">{predictionError}</div> : null}
-                    {predicting ? <div className="rounded-[18px] border border-cyan-500/15 bg-cyan-500/10 text-cyan-200 text-[11px] px-4 py-3">Confirm the signature in your wallet to lock this prediction.</div> : null}
+                    {predicting ? <div className="rounded-[18px] border border-cyan-500/15 bg-cyan-500/10 text-cyan-200 text-[11px] px-4 py-3">{t("game.signingNote")}</div> : null}
                   </>
                 )}
 
@@ -1095,9 +1095,9 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
                   <>
                     <div className="grid grid-cols-1 gap-2.5">
                       <div className="dashboard-modal-row px-3 py-2.5 text-center">
-                        <p className="text-white/24 text-[9px] uppercase tracking-[0.2em] mb-1.5">Your Call</p>
+                        <p className="text-white/24 text-[9px] uppercase tracking-[0.2em] mb-1.5">{t("game.yourCall")}</p>
                         <p className={`${resultPrediction === "up" ? "text-emerald-300" : resultPrediction === "down" ? "text-rose-300" : "text-white/72"} text-[1rem] font-black`}>
-                          {resultPredictionLabel || "NO POSITION"}
+                          {resultPredictionLabel || t("game.noPos")}
                         </p>
                       </div>
                       <div className="dashboard-modal-row px-3 py-3">
@@ -1107,7 +1107,7 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
                             <p className="text-white/40 text-[10px] mt-1">{resultOutcomeCopy}</p>
                           </div>
                           <div className="text-right shrink-0">
-                            <p className="text-white/24 text-[9px] uppercase tracking-[0.2em] mb-1">Net</p>
+                            <p className="text-white/24 text-[9px] uppercase tracking-[0.2em] mb-1">{t("game.result.net")}</p>
                             <p className={`text-[1.4rem] font-black font-mono ${resultAmountTone}`}>{resultAmountText}</p>
                           </div>
                         </div>
@@ -1128,41 +1128,41 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
                         }`}
                       >
                         {claimState.claimed || result?.myResult?.claimed
-                          ? hasRefundLikePayout ? "Refund Claimed" : "Reward Claimed"
-                          : claiming ? hasRefundLikePayout ? "Claiming Refund..." : "Claiming Reward..."
-                            : hasRefundLikePayout ? "Claim Refund" : "Claim Reward"}
+                          ? hasRefundLikePayout ? t("game.claimedRefund") : t("game.claimedReward")
+                          : claiming ? hasRefundLikePayout ? t("game.claimingRefund") : t("game.claimingReward")
+                            : hasRefundLikePayout ? t("game.claim.refund") : t("game.claim.reward")}
                       </button>
                     ) : null}
-                    <button onClick={handleShareToX} className="w-full dashboard-action-primary !py-2.5 font-black !text-sm">Share to 𝕏</button>
+                    <button onClick={handleShareToX} className="w-full dashboard-action-primary !py-2.5 font-black !text-sm">{t("game.shareX")}</button>
                   </>
                 )}
 
                 {phase === "failed" && (
                   <>
                     <div className="dashboard-modal-row px-3 py-3">
-                      <p className="text-white/24 text-[9px] uppercase tracking-[0.2em] mb-1.5">Recovery Status</p>
-                      <p className="text-white/72 text-[11px] leading-5">{failureMessage || "Settlement was interrupted. Funds remain safe on-chain while recovery options load."}</p>
+                      <p className="text-white/24 text-[9px] uppercase tracking-[0.2em] mb-1.5">{t("game.recovery.status")}</p>
+                      <p className="text-white/72 text-[11px] leading-5">{failureMessage || t("game.interrupted.desc")}</p>
                     </div>
                     {claimState.error ? <div className="rounded-[16px] border border-rose-500/15 bg-rose-500/10 text-rose-300 px-3 py-2 text-[11px]">{claimState.error}</div> : null}
                     {claimState.success ? <div className="rounded-[16px] border border-emerald-500/15 bg-emerald-500/10 text-emerald-300 px-3 py-2 text-[11px]">{claimState.success}</div> : null}
                     {claimStatusLoading ? (
-                      <div className="dashboard-modal-row px-3 py-3 text-[11px] text-white/44">Checking on-chain recovery status...</div>
+                      <div className="dashboard-modal-row px-3 py-3 text-[11px] text-white/44">{t("game.recovery.loading")}</div>
                     ) : canClaimFailedFunds ? (
                       <button
                         onClick={handleClaimFunds}
                         disabled={!canClaimFailedFunds || claiming}
                         className="w-full py-2.5 rounded-[18px] font-black text-sm bg-gradient-to-r from-emerald-500 to-teal-500 text-white shadow-lg shadow-emerald-500/20 hover:shadow-emerald-500/30 disabled:opacity-40"
                       >
-                        {claiming ? "Claiming..." : failedClaimLabel}
+                        {claiming ? t("game.claiming") : failedClaimLabel}
                       </button>
                     ) : (
                       <div className="dashboard-modal-row px-3 py-3 text-[11px] text-white/44">
                         {claimStatus?.state === 2 && refundWaitSeconds !== null
-                          ? `Settlement is still syncing. Refund path may unlock in about ${refundWaitSeconds}s.`
-                          : "Recovery is still syncing. Stay in the room or check back shortly."}
+                          ? t("game.recovery.refundUnlock",{s:refundWaitSeconds})
+                          : t("game.recovery.syncing")}
                       </div>
                     )}
-                    <button onClick={handleShareToX} className="w-full dashboard-action-primary !py-2.5 font-black !text-sm">Share to 𝕏</button>
+                    <button onClick={handleShareToX} className="w-full dashboard-action-primary !py-2.5 font-black !text-sm">{t("game.shareX")}</button>
                   </>
                 )}
               </div>
@@ -1181,8 +1181,8 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
       {phase === "waiting" && (
         <div className="text-center pt-12 animate-slideUp">
           <div className="text-5xl mb-3 animate-float">⚔️</div>
-          <h3 className="text-xl font-black text-gradient mb-1">Preparing Match</h3>
-          <p className="text-white/15 text-xs">Starting when all players are ready</p>
+	          <h3 className="text-xl font-black text-gradient mb-1">{t("game.preparing.title")}</h3>
+	          <p className="text-white/15 text-xs">{t("game.preparing.desc")}</p>
         </div>
       )}
 
@@ -1191,22 +1191,22 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
           <div className="dashboard-modal-card overflow-hidden p-3 sm:p-3.5">
             <div className="flex items-start justify-between gap-2.5 mb-3">
               <div className="min-w-0 max-w-[26rem]">
-                <span className="dashboard-room-chip inline-flex items-center gap-2 px-3 py-1.5 text-[9px] font-semibold uppercase tracking-[0.2em] text-fuchsia-100/82">Match In Progress</span>
+	                <span className="dashboard-room-chip inline-flex items-center gap-2 px-3 py-1.5 text-[9px] font-semibold uppercase tracking-[0.2em] text-fuchsia-100/82">{t("game.matchInProgress")}</span>
                 <h3 className="mt-2.5 text-[1.12rem] sm:text-[1.32rem] font-black tracking-[-0.04em] text-white leading-[1.06]">{displayedPrediction ? t("game.makePrediction") : chooseSideTitle}</h3>
-                <p className="mt-1.5 text-[10px] sm:text-[11px] leading-5 text-white/46">{displayedPrediction ? "Your call is locked in for this round." : t("game.descLongShort")}</p>
+	                <p className="mt-1.5 text-[10px] sm:text-[11px] leading-5 text-white/46">{displayedPrediction ? t("game.callLocked") : t("game.descLongShort")}</p>
               </div>
               <div className="dashboard-room-subcard shrink-0 px-2.5 py-2.5">
-                <CountdownRing total={PREDICT_TIMEOUT} remaining={countdown} label="Time Left" size="sm" />
+	                <CountdownRing total={PREDICT_TIMEOUT} remaining={countdown} label={t("game.timeLeft")} size="sm" />
               </div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 mb-3">
               <div className="dashboard-modal-row min-w-0 px-3 py-2.5 text-center">
-                <p className="text-white/24 text-[9px] uppercase tracking-[0.2em] mb-1.5">Base Price</p>
+	                <p className="text-white/24 text-[9px] uppercase tracking-[0.2em] mb-1.5">{t("game.basePriceLabel")}</p>
                 <p className={`${modalPriceClass} text-gradient`}>{formatUsd(basePrice)}</p>
               </div>
               <div className="dashboard-modal-row min-w-0 px-3 py-2.5 text-center">
-                <p className="text-white/24 text-[9px] uppercase tracking-[0.2em] mb-1.5">Live Price</p>
+	                <p className="text-white/24 text-[9px] uppercase tracking-[0.2em] mb-1.5">{t("game.livePriceLabel")}</p>
                 <p className={`${modalPriceClass} ${priceColor}`}>{formatUsd(currentPrice)}</p>
                 <p className={`text-[9px] font-mono mt-1 ${priceColor}`}>{diff >= 0 ? "+" : ""}{diff.toFixed(2)} ({percent}%)</p>
               </div>
@@ -1215,22 +1215,22 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
             <div className={`dashboard-modal-row px-3 py-2.5 mb-3${predictionZoneClass}`}>
               <div className="flex items-center justify-between mb-2.5">
                 <div>
-                  <p className="text-white/24 text-[9px] uppercase tracking-[0.2em]">Players Ready</p>
-                  <p className="text-white/46 text-[10px] mt-1">{displayedPrediction ? "Predictions confirmed on-chain" : "Choose one direction below."}</p>
+	                  <p className="text-white/24 text-[9px] uppercase tracking-[0.2em]">{t("game.playersReady")}</p>
+	                  <p className="text-white/46 text-[10px] mt-1">{displayedPrediction ? t("game.predictionsConfirmed") : t("game.chooseDirection")}</p>
 	                </div>
 	                <div className="dashboard-room-chip px-3 py-1.5 text-[10px] font-mono text-white/70">{predictedCount}/{totalPlayers}</div>
 	              </div>
-	              {!displayedPrediction ? <div className="prediction-action-banner mb-2.5">Select LONG or SHORT to lock your prediction</div> : null}
+		              {!displayedPrediction ? <div className="prediction-action-banner mb-2.5">{t("game.selectPredictionBanner")}</div> : null}
 	              <PredictButtons onPredict={predict} myPrediction={displayedPrediction} disabled={predicting || predictionBufferLocked} attention={predictionNeedsAttention} />
 	            </div>
 
             {predictionBufferNoticeActive && <div className="rounded-[18px] border border-fuchsia-500/15 bg-fuchsia-500/10 text-fuchsia-200 text-[11px] px-4 py-3 mb-3">{predictionBufferMessage}</div>}
             {predictionError && <div className="rounded-[18px] border border-rose-500/15 bg-rose-500/10 text-rose-300 text-[11px] px-4 py-3 mb-3">{predictionError}</div>}
-            {predicting && <div className="rounded-[18px] border border-cyan-500/15 bg-cyan-500/10 text-cyan-200 text-[11px] px-4 py-3 mb-3">Confirm the signature in your wallet to lock this prediction for on-chain submission.</div>}
+	            {predicting && <div className="rounded-[18px] border border-cyan-500/15 bg-cyan-500/10 text-cyan-200 text-[11px] px-4 py-3 mb-3">{t("game.signingNote")}</div>}
             {displayedPrediction && (
               <div className={`dashboard-room-subcard px-3 py-2 text-center ${displayedPrediction === "up" ? "!border-emerald-500/20 !bg-emerald-500/[0.06]" : "!border-rose-500/20 !bg-rose-500/[0.06]"}`}>
-                <p className="text-white/24 text-[9px] uppercase tracking-[0.2em] mb-1.5">Your Position</p>
-                <p className={`text-[1rem] font-black tracking-[-0.03em] ${displayedPrediction === "up" ? "text-emerald-400" : "text-rose-400"}`}>{displayedPrediction === "up" ? "LONG" : "SHORT"}</p>
+	                <p className="text-white/24 text-[9px] uppercase tracking-[0.2em] mb-1.5">{t("game.yourPosition")}</p>
+	                <p className={`text-[1rem] font-black tracking-[-0.03em] ${displayedPrediction === "up" ? "text-emerald-400" : "text-rose-400"}`}>{displayedPrediction === "up" ? t("game.long") : t("game.short")}</p>
               </div>
             )}
           </div>
@@ -1242,32 +1242,32 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
           <div className="dashboard-modal-card overflow-hidden p-3 sm:p-3.5">
             <div className="flex items-start justify-between gap-2.5 mb-3">
               <div className="min-w-0 max-w-[26rem]">
-                <span className="dashboard-room-chip inline-flex items-center gap-2 px-3 py-1.5 text-[9px] font-semibold uppercase tracking-[0.2em] text-fuchsia-100/82">Settlement</span>
-                <h3 className="mt-2.5 text-[1.08rem] sm:text-[1.26rem] font-black tracking-[-0.04em] text-white leading-[1.06]">{countdown > 0 ? t("game.settling") : "Finalizing on-chain..."}</h3>
-                <p className="mt-1.5 text-[10px] sm:text-[11px] leading-5 text-white/46">{countdown > 0 ? "The oracle is preparing the settlement reveal for this round." : "Waiting for the settlement transaction to confirm. This usually takes a few seconds."}</p>
+	                <span className="dashboard-room-chip inline-flex items-center gap-2 px-3 py-1.5 text-[9px] font-semibold uppercase tracking-[0.2em] text-fuchsia-100/82">{t("game.settlement")}</span>
+	                <h3 className="mt-2.5 text-[1.08rem] sm:text-[1.26rem] font-black tracking-[-0.04em] text-white leading-[1.06]">{countdown > 0 ? t("game.settling") : t("game.finalizingOnchain")}</h3>
+	                <p className="mt-1.5 text-[10px] sm:text-[11px] leading-5 text-white/46">{countdown > 0 ? t("game.oraclePreparing") : t("game.waitingSettlementTx")}</p>
               </div>
               <div className="dashboard-room-subcard shrink-0 px-2.5 py-2.5">
                 {countdown > 0
-                  ? <CountdownRing total={SETTLE_DELAY} remaining={countdown} label="Reveal" size="sm" />
-                  : <div className="flex flex-col items-center justify-center w-24 h-24 rounded-full border border-fuchsia-500/20 bg-fuchsia-500/[0.06]"><span className="w-6 h-6 rounded-full border-2 border-fuchsia-300/60 border-t-transparent animate-spin"/><span className="mt-2 text-[9px] uppercase tracking-[0.2em] text-white/35">Syncing</span></div>
+	                  ? <CountdownRing total={SETTLE_DELAY} remaining={countdown} label={t("game.reveal")} size="sm" />
+	                  : <div className="flex flex-col items-center justify-center w-24 h-24 rounded-full border border-fuchsia-500/20 bg-fuchsia-500/[0.06]"><span className="w-6 h-6 rounded-full border-2 border-fuchsia-300/60 border-t-transparent animate-spin"/><span className="mt-2 text-[9px] uppercase tracking-[0.2em] text-white/35">{t("game.syncing")}</span></div>
                 }
               </div>
             </div>
 
             {(viewerRole || displayedPrediction) && (
               <div className="flex flex-wrap gap-2 mb-2.5">
-                {viewerRole && <div className="dashboard-room-chip px-3 py-1.5 text-[10px] text-white/72">Viewing As: {viewerRole}</div>}
-                {displayedPrediction && <div className={`dashboard-room-chip px-3 py-1.5 text-[10px] ${displayedPrediction === "up" ? "!border-emerald-500/20 !bg-emerald-500/[0.08] !text-emerald-300" : "!border-rose-500/20 !bg-rose-500/[0.08] !text-rose-300"}`}>Your Call: {displayedPrediction === "up" ? "LONG" : "SHORT"}</div>}
+	                {viewerRole && <div className="dashboard-room-chip px-3 py-1.5 text-[10px] text-white/72">{t("game.viewingAs")}: {viewerRole}</div>}
+	                {displayedPrediction && <div className={`dashboard-room-chip px-3 py-1.5 text-[10px] ${displayedPrediction === "up" ? "!border-emerald-500/20 !bg-emerald-500/[0.08] !text-emerald-300" : "!border-rose-500/20 !bg-rose-500/[0.08] !text-rose-300"}`}>{t("game.yourCall")}: {displayedPrediction === "up" ? t("game.long") : t("game.short")}</div>}
               </div>
             )}
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
               <div className="dashboard-modal-row min-w-0 px-3 py-2.5 text-center">
-                <p className="text-white/24 text-[9px] uppercase tracking-[0.2em] mb-1.5">Base Price</p>
+	                <p className="text-white/24 text-[9px] uppercase tracking-[0.2em] mb-1.5">{t("game.basePriceLabel")}</p>
                 <p className={`${modalPriceClass} text-white/84`}>{formatUsd(basePrice)}</p>
               </div>
               <div className="dashboard-modal-row min-w-0 px-3 py-2.5 text-center">
-                <p className="text-white/24 text-[9px] uppercase tracking-[0.2em] mb-1.5">Current Price</p>
+	                <p className="text-white/24 text-[9px] uppercase tracking-[0.2em] mb-1.5">{t("game.currentPrice")}</p>
                 <p className={`${modalPriceClass} ${priceColor}`}>{formatUsd(currentPrice)}</p>
                 <p className={`text-[9px] font-mono mt-1 ${priceColor}`}>{diff >= 0 ? "+" : ""}{diff.toFixed(2)} ({percent}%)</p>
               </div>
@@ -1281,30 +1281,30 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
           <div className="dashboard-modal-card overflow-hidden p-3 sm:p-3.5">
             <div className="flex items-start justify-between gap-2.5 mb-3">
               <div className="min-w-0 max-w-[26rem]">
-                <span className="dashboard-room-chip inline-flex items-center gap-2 px-3 py-1.5 text-[9px] font-semibold uppercase tracking-[0.2em] text-fuchsia-100/82">Recovery</span>
-                <h3 className="mt-2.5 text-[1.08rem] sm:text-[1.26rem] font-black tracking-[-0.04em] text-white leading-[1.06]">Settlement Interrupted</h3>
+                <span className="dashboard-room-chip inline-flex items-center gap-2 px-3 py-1.5 text-[9px] font-semibold uppercase tracking-[0.2em] text-fuchsia-100/82">{t("game.recovery")}</span>
+                <h3 className="mt-2.5 text-[1.08rem] sm:text-[1.26rem] font-black tracking-[-0.04em] text-white leading-[1.06]">{t("game.interrupted.title")}</h3>
                 <p className="mt-1.5 text-[10px] sm:text-[11px] leading-5 text-white/46">
-                  {failureMessage || "Settlement was interrupted. Funds remain safe on-chain while recovery options load."}
+                  {failureMessage || t("game.interrupted.desc")}
                 </p>
               </div>
               <div className="dashboard-room-subcard shrink-0 px-3 py-2.5 text-center min-w-[5.75rem]">
                 <p className="text-white/24 text-[9px] uppercase tracking-[0.2em] mb-1">Status</p>
-                <p className="text-[1rem] font-black text-amber-300">Syncing</p>
+                <p className="text-[1rem] font-black text-amber-300">{t("game.syncing")}</p>
               </div>
             </div>
 
             <div className="flex flex-wrap gap-2 mb-2.5">
               {currentChainGameId ? <div className="dashboard-room-chip px-3 py-1.5 text-[10px] font-mono text-white/72">Chain Game #{currentChainGameId}</div> : null}
-              {displayedPrediction ? <div className={`dashboard-room-chip px-3 py-1.5 text-[10px] ${displayedPrediction === "up" ? "!border-emerald-500/20 !bg-emerald-500/[0.08] !text-emerald-300" : "!border-rose-500/20 !bg-rose-500/[0.08] !text-rose-300"}`}>Your Call: {displayedPrediction === "up" ? "LONG" : "SHORT"}</div> : null}
+              {displayedPrediction ? <div className={`dashboard-room-chip px-3 py-1.5 text-[10px] ${displayedPrediction === "up" ? "!border-emerald-500/20 !bg-emerald-500/[0.08] !text-emerald-300" : "!border-rose-500/20 !bg-rose-500/[0.08] !text-rose-300"}`}>{t("game.yourCall")}: {displayedPrediction === "up" ? t("game.long") : t("game.short")}</div> : null}
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 mb-3">
               <div className="dashboard-modal-row min-w-0 px-3 py-2.5 text-center">
-                <p className="text-white/24 text-[9px] uppercase tracking-[0.2em] mb-1.5">Base Price</p>
+                <p className="text-white/24 text-[9px] uppercase tracking-[0.2em] mb-1.5">{t("game.basePriceLabel")}</p>
                 <p className={`${modalPriceClass} text-white/84`}>{formatUsd(basePrice)}</p>
               </div>
               <div className="dashboard-modal-row min-w-0 px-3 py-2.5 text-center">
-                <p className="text-white/24 text-[9px] uppercase tracking-[0.2em] mb-1.5">Current Price</p>
+                <p className="text-white/24 text-[9px] uppercase tracking-[0.2em] mb-1.5">{t("game.currentPrice")}</p>
                 <p className={`${modalPriceClass} ${priceColor}`}>{formatUsd(currentPrice)}</p>
                 <p className={`text-[9px] font-mono mt-1 ${priceColor}`}>{diff >= 0 ? "+" : ""}{diff.toFixed(2)} ({percent}%)</p>
               </div>
@@ -1313,12 +1313,12 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
             <div className="dashboard-modal-row px-3 py-3 mb-3">
               <div className="flex items-start justify-between gap-3 mb-2.5">
                 <div>
-                  <p className="text-fuchsia-200 text-[10px] font-bold uppercase tracking-[0.2em]">Recovery</p>
-                  <p className="text-white/40 text-[10px] mt-1">We keep checking the contract so you can claim the correct outcome from this page.</p>
+                  <p className="text-fuchsia-200 text-[10px] font-bold uppercase tracking-[0.2em]">{t("game.recovery")}</p>
+                  <p className="text-white/40 text-[10px] mt-1">{t("game.recovery.desc")}</p>
                 </div>
                 {claimStatus?.state === 3 && claimStatus?.reward > 0 ? (
                   <div className="text-right shrink-0">
-                    <p className="text-white/20 text-[9px] uppercase tracking-[0.2em]">On-Chain Reward</p>
+                    <p className="text-white/20 text-[9px] uppercase tracking-[0.2em]">{t("game.recovery.reward")}</p>
                     <p className="text-emerald-400 font-mono font-black text-[1rem]">{claimStatus.reward.toFixed(4)} USDC</p>
                   </div>
                 ) : null}
@@ -1328,44 +1328,44 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
               {claimState.success ? <div className="rounded-[16px] border border-emerald-500/15 bg-emerald-500/10 text-emerald-300 px-3 py-2 text-[11px] mb-2.5">{claimState.success}</div> : null}
 
               {claimStatusLoading ? (
-                <p className="text-white/40 text-[11px]">Checking on-chain recovery status...</p>
+                <p className="text-white/40 text-[11px]">{t("game.recovery.loading")}</p>
               ) : !wallet ? (
-                <p className="text-white/40 text-[11px]">Reconnect your wallet to see recovery options.</p>
+                <p className="text-white/40 text-[11px]">{t("game.recovery.reconnect")}</p>
               ) : !claimStatus ? (
-                <p className="text-white/40 text-[11px]">Recovery status is temporarily unavailable. Refresh in a moment.</p>
+                <p className="text-white/40 text-[11px]">{t("game.recovery.unavailable")}</p>
               ) : claimStatus.claimed || claimState.claimed ? (
-                <p className="text-emerald-300 text-[11px]">Funds for this round have already been claimed to your wallet.</p>
+                <p className="text-emerald-300 text-[11px]">{t("game.recovery.alreadyClaimed")}</p>
               ) : canClaimFailedFunds ? (
                 <div className="space-y-2">
                   <p className="text-white/50 text-[11px]">
                     {claimStatus.canClaimReward
-                      ? "The round has already settled on-chain. You can claim your reward now."
+                      ? t("game.recovery.rewardReady")
                       : claimStatus.canForceRefund
-                        ? "The grace period has expired. We can unlock the emergency refund and claim it in one flow."
-                        : "Refund is ready on-chain. Confirm one transaction to return your entry fee."}
+                        ? t("game.recovery.forceRefund")
+                        : t("game.recovery.refundReady")}
                   </p>
                   <button
                     onClick={handleClaimFunds}
                     disabled={!canClaimFailedFunds || claiming}
                     className="w-full py-2.5 rounded-[18px] font-black text-sm bg-gradient-to-r from-emerald-500 to-teal-500 text-white shadow-lg shadow-emerald-500/20 hover:shadow-emerald-500/30 disabled:opacity-40"
                   >
-                    {claiming ? "Claiming..." : failedClaimLabel}
+                    {claiming ? t("game.claiming") : failedClaimLabel}
                   </button>
                 </div>
               ) : claimStatus.state === 3 ? (
-                <p className="text-white/45 text-[11px]">The round is settled on-chain, but this wallet has no claimable reward for this outcome.</p>
+                <p className="text-white/45 text-[11px]">{t("game.recovery.noClaim")}</p>
               ) : claimStatus.state === 2 && refundWaitSeconds !== null ? (
                 <p className="text-white/45 text-[11px]">
-                  Settlement is still syncing. If the oracle does not finish first, the refund path unlocks in about {refundWaitSeconds}s.
+                  {t("game.recovery.refundUnlock",{s:refundWaitSeconds})}
                 </p>
               ) : (
-                <p className="text-white/45 text-[11px]">Recovery is still syncing. You can also return to the home page and check history later.</p>
+                <p className="text-white/45 text-[11px]">{t("game.recovery.syncing")}</p>
               )}
             </div>
 
             <div className="flex gap-2">
-              <button onClick={() => nav("/")} className="flex-1 py-2.5 rounded-[18px] bg-fuchsia-500/[0.06] border border-fuchsia-500/15 hover:bg-fuchsia-500/[0.1] transition text-xs text-white/60">Home</button>
-              <button onClick={handleShareToX} className="flex-1 dashboard-action-primary !py-2.5 font-black !text-sm">Share to 𝕏</button>
+              <button onClick={() => nav("/")} className="flex-1 py-2.5 rounded-[18px] bg-fuchsia-500/[0.06] border border-fuchsia-500/15 hover:bg-fuchsia-500/[0.1] transition text-xs text-white/60">{t("game.home")}</button>
+              <button onClick={handleShareToX} className="flex-1 dashboard-action-primary !py-2.5 font-black !text-sm">{t("game.shareX")}</button>
             </div>
           </div>
         </div>
@@ -1376,29 +1376,29 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
           <div className="dashboard-modal-card overflow-hidden p-3 sm:p-3.5">
             <div className="flex items-start justify-between gap-2.5 mb-3">
               <div className="min-w-0 max-w-[26rem]">
-                <span className="dashboard-room-chip inline-flex items-center gap-2 px-3 py-1.5 text-[9px] font-semibold uppercase tracking-[0.2em] text-fuchsia-100/82">Round Result</span>
+                <span className="dashboard-room-chip inline-flex items-center gap-2 px-3 py-1.5 text-[9px] font-semibold uppercase tracking-[0.2em] text-fuchsia-100/82">{t("game.result.roundResult")}</span>
                 <h3 className={`mt-2.5 text-[1.08rem] sm:text-[1.26rem] font-black tracking-[-0.04em] leading-[1.06] ${resultHeadlineTone}`}>{resultHeadline}</h3>
                 <p className="mt-1.5 text-[10px] sm:text-[11px] leading-5 text-white/46">{resultOutcomeCopy}</p>
               </div>
               <div className="dashboard-room-subcard shrink-0 px-3 py-2.5 text-center min-w-[6.25rem]">
-                <p className="text-white/24 text-[9px] uppercase tracking-[0.2em] mb-1">Outcome</p>
+                <p className="text-white/24 text-[9px] uppercase tracking-[0.2em] mb-1">{t("game.result.outcome")}</p>
                 <p className={`text-[1rem] font-black ${resultOutcomeTone}`}>{resultOutcomeLabel}</p>
               </div>
             </div>
 
             <div className="flex flex-wrap gap-2 mb-2.5">
               {currentChainGameId ? <div className="dashboard-room-chip px-3 py-1.5 text-[10px] font-mono text-white/72">Chain Game #{currentChainGameId}</div> : null}
-              {resultPredictionLabel ? <div className={`dashboard-room-chip px-3 py-1.5 text-[10px] ${resultPrediction === "up" ? "!border-emerald-500/20 !bg-emerald-500/[0.08] !text-emerald-300" : "!border-rose-500/20 !bg-rose-500/[0.08] !text-rose-300"}`}>Your Call: {resultPredictionLabel}</div> : null}
-              <div className={`dashboard-room-chip px-3 py-1.5 text-[10px] ${resultOutcomeChipClass}`}>Settled: {resultOutcomeLabel}</div>
+              {resultPredictionLabel ? <div className={`dashboard-room-chip px-3 py-1.5 text-[10px] ${resultPrediction === "up" ? "!border-emerald-500/20 !bg-emerald-500/[0.08] !text-emerald-300" : "!border-rose-500/20 !bg-rose-500/[0.08] !text-rose-300"}`}>{t("game.yourCall")}: {resultPredictionLabel}</div> : null}
+              <div className={`dashboard-room-chip px-3 py-1.5 text-[10px] ${resultOutcomeChipClass}`}>{t("game.result.settledWith",{outcome:resultOutcomeLabel})}</div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 mb-3">
               <div className="dashboard-modal-row min-w-0 px-3 py-2.5 text-center">
-                <p className="text-white/24 text-[9px] uppercase tracking-[0.2em] mb-1.5">Base Price</p>
+                <p className="text-white/24 text-[9px] uppercase tracking-[0.2em] mb-1.5">{t("game.basePriceLabel")}</p>
                 <p className={`${modalPriceClass} text-white/84`}>{formatUsd(resultBasePrice)}</p>
               </div>
               <div className="dashboard-modal-row min-w-0 px-3 py-2.5 text-center">
-                <p className="text-white/24 text-[9px] uppercase tracking-[0.2em] mb-1.5">Settlement Price</p>
+                <p className="text-white/24 text-[9px] uppercase tracking-[0.2em] mb-1.5">{t("game.result.settlementPrice")}</p>
                 <p className={`${modalPriceClass} ${resultOutcomeTone}`}>{formatUsd(resultSettlementPrice)}</p>
               </div>
               <div className="dashboard-modal-row min-w-0 px-3 py-2.5 text-center">
@@ -1416,13 +1416,13 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
                     <p className="text-white/40 text-[10px] mt-1">
                       {rewardAmount > 0
                         ? hasRefundLikePayout
-                          ? "No winning side this round. The refundable balance is ready on-chain."
-                          : "Your reward is ready on-chain. Claim it to return funds to your wallet."
-                        : "This round has no claimable reward for this wallet."}
+                          ? t("game.result.refundReady")
+                          : t("game.result.rewardReady")
+                        : t("game.result.noReward")}
                     </p>
                   </div>
                   <div className="text-left sm:text-right shrink-0">
-                    <p className="text-white/24 text-[9px] uppercase tracking-[0.2em] mb-1">Net Result</p>
+                    <p className="text-white/24 text-[9px] uppercase tracking-[0.2em] mb-1">{t("game.result.netResult")}</p>
                     <p className={`text-[1.6rem] font-black font-mono ${resultAmountTone}`}>{resultAmountText} <span className="text-[0.8rem] text-white/30">USDC</span></p>
                   </div>
                 </div>
@@ -1436,15 +1436,15 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
               <div className="dashboard-modal-row px-3 py-3 mb-3">
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                   <div className="min-w-0">
-                    <p className="text-emerald-300 text-[10px] font-bold uppercase tracking-[0.2em]">{hasRefundLikePayout ? "Refund Claim" : "Reward Claim"}</p>
+                    <p className="text-emerald-300 text-[10px] font-bold uppercase tracking-[0.2em]">{hasRefundLikePayout ? t("game.result.refundClaim") : t("game.result.rewardClaim")}</p>
                     <p className="text-white/40 text-[10px] mt-1">
                       {hasRefundLikePayout
-                        ? "No winner took the pool, so you can claim the returned balance from this round."
-                        : "Winning funds are finalized on-chain after you confirm the claim transaction."}
+                        ? t("game.result.refundClaimDesc")
+                        : t("game.rewardClaimDesc")}
                     </p>
                   </div>
                   <div className="text-left sm:text-right shrink-0">
-                    <p className="text-white/20 text-[9px] uppercase tracking-[0.2em] mb-1">{hasRefundLikePayout ? "Refundable" : "Claimable"}</p>
+                    <p className="text-white/20 text-[9px] uppercase tracking-[0.2em] mb-1">{hasRefundLikePayout ? t("game.result.refundable") : t("game.claimable")}</p>
                     <p className="text-emerald-400 font-mono font-black text-[1rem]">{rewardAmount.toFixed(4)} USDC</p>
                   </div>
                 </div>
@@ -1459,9 +1459,9 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
                   }`}
                 >
                   {claimState.claimed || result?.myResult?.claimed
-                    ? hasRefundLikePayout ? "Refund Claimed" : "Reward Claimed"
-                    : claiming ? hasRefundLikePayout ? "Claiming Refund..." : "Claiming Reward..."
-                      : hasRefundLikePayout ? "Claim Refund" : "Claim Reward"}
+                    ? hasRefundLikePayout ? t("game.claimedRefund") : t("game.claimedReward")
+                    : claiming ? hasRefundLikePayout ? t("game.claimingRefund") : t("game.claimingReward")
+                      : hasRefundLikePayout ? t("game.claim.refund") : t("game.claim.reward")}
                 </button>
               </div>
             ) : null}

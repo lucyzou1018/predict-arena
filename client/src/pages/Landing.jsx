@@ -98,25 +98,25 @@ export default function Landing() {
             </button>
             <button
               onClick={() => nav("/how-to-play")}
-              className={`${navBtnBase} ${loc.pathname === "/how-to-play" ? "text-white" : navBtnIdle} shrink-0`}
+              className={`hidden md:inline-flex ${navBtnBase} ${loc.pathname === "/how-to-play" ? "text-white" : navBtnIdle} shrink-0`}
             >
               <span className={loc.pathname === "/how-to-play" ? "dashboard-title-highlight" : ""}>{t("nav.howToPlay")}</span>
             </button>
             <button
               onClick={goFaq}
-              className={`${navBtnBase} ${faqActive ? "text-white" : navBtnIdle} shrink-0`}
+              className={`hidden md:inline-flex ${navBtnBase} ${faqActive ? "text-white" : navBtnIdle} shrink-0`}
             >
               <span className={faqActive ? "dashboard-title-highlight" : ""}>{t("nav.faq")}</span>
             </button>
             <button
               onClick={goDashboard}
-              className={`${navBtnBase} ${loc.pathname === "/arena" ? "text-white" : navBtnIdle} shrink-0`}
+              className={`hidden md:inline-flex ${navBtnBase} ${loc.pathname === "/arena" ? "text-white" : navBtnIdle} shrink-0`}
             >
               <span className={loc.pathname === "/arena" ? "dashboard-title-highlight" : ""}>{t("nav.dashboard")}</span>
             </button>
             <button
               onClick={goLeaderboard}
-              className={`${navBtnBase} ${loc.pathname === "/leaderboard" ? "text-white" : navBtnIdle} shrink-0`}
+              className={`hidden md:inline-flex ${navBtnBase} ${loc.pathname === "/leaderboard" ? "text-white" : navBtnIdle} shrink-0`}
             >
               <span className={loc.pathname === "/leaderboard" ? "dashboard-title-highlight" : ""}>{t("nav.leaderboard")}</span>
             </button>
