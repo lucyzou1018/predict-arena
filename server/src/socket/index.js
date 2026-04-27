@@ -121,6 +121,7 @@ export function initSocket(httpServer) {
       wallet = d.wallet?.toLowerCase?.() || null;
       socket.data.wallet = wallet;
       console.log("[Socket] Auth:", wallet);
+      gameService.rebindRoomPaymentSocket(wallet, socket.id);
       roomService.rebindPlayerSocket(wallet, socket.id);
       const resumedGame = gameService.rebindPlayerSocket(wallet, socket);
       if (resumedGame) {
@@ -187,7 +188,7 @@ export function initSocket(httpServer) {
         const r = await matchmakingService.addPlayer(d.teamSize, wallet, socket.id);
         if (r.error) return socket.emit("match:error", { message: r.error });
         if (r.status === "matched") {
-          const session = gameService.startRoomPayment(r.gameId, null, r.players);
+          const session = gameService.startRoomPayment(r.gameId, r.inviteCode, r.players, null, r.chainGameId, "quick");
           session.timer = setTimeout(async () => {
             const current = gameService.getRoomPayment(r.gameId);
       if (!current) return;
@@ -201,7 +202,46 @@ export function initSocket(httpServer) {
         socket.emit("match:error", { message: e.message || "Matchmaking failed" });
       }
     });
-    socket.on("match:cancel", () => { if (wallet) matchmakingService.removePlayer(wallet); });
+    socket.on("match:resume", () => {
+      if (!wallet) return;
+      const active = gameService.getRoomPaymentEntryByWallet(wallet);
+      if (active?.session?.kind === "quick") {
+        active.player.socketId = socket.id;
+        const players = (active.session.players || []).map((player) => player.wallet).filter(Boolean);
+        socket.emit("match:active", {
+          gameId: active.gameId,
+          chainGameId: active.session.chainGameId || null,
+          inviteCode: active.session.inviteCode,
+          players,
+          current: players.length,
+          total: players.length,
+          teamSize: players.length,
+          paidCount: active.session.paid?.size || 0,
+        });
+        return;
+      }
+      const queued = matchmakingService.getQueueStatusByWallet(wallet);
+      if (queued) socket.emit("match:queued", queued);
+    });
+    socket.on("match:cancel", async () => {
+      if (!wallet) return;
+      if (matchmakingService.removePlayer(wallet)) return;
+      const active = gameService.getRoomPaymentEntryByWallet(wallet);
+      if (active?.session?.kind !== "quick") return;
+      const reason = "A player cancelled the quick match. This room has been dissolved.";
+      try {
+        await query(`UPDATE games SET state = 'cancelled' WHERE id = $1`, [active.gameId]);
+      } catch (error) {
+        console.error("[Match] cancel cleanup failed", { gameId: active.gameId, error: error?.message || error });
+      }
+      for (const player of active.session.players || []) {
+        if (player.socketId) {
+          const event = player.wallet?.toLowerCase?.() === wallet ? "match:cancelled" : "match:error";
+          io.to(player.socketId).emit(event, { message: reason });
+        }
+      }
+      gameService.clearRoomPayment(active.gameId);
+    });
 
     // Room
     socket.on("room:create", async d => {

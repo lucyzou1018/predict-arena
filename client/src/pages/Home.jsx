@@ -11,6 +11,7 @@ import{BtcTicker,TeamSlots,MatchAnimation,PaymentModal,RoomTransition}from"../co
 import{ENTRY_FEE,TEAM_SIZES,PAYMENT_TIMEOUT}from"../config/constants";
 import{useT}from"../context/LangContext";
 import{Trophy,XCircle,TrendingUp}from"lucide-react";
+import{clearQuickMatchSession,readQuickMatchSession,writeQuickMatchSession}from"../utils/quickMatchSession";
 
 const EMPTY_STATS={wins:0,losses:0,total_earned:0,total_lost:0};
 
@@ -349,7 +350,6 @@ function JoinRoomSelectorCard({ value, onChange, onSubmit, disabled, blockedMsg 
 
 function QuickMatchSelectorCard({ selectedSize, onSelect, onAction, disabled, blockedMsg }) {
   const t = useT();
-  const matchComingSoon = true;
 
   return (
     <>
@@ -373,8 +373,7 @@ function QuickMatchSelectorCard({ selectedSize, onSelect, onAction, disabled, bl
 
       <button
         type="button"
-        onClick={matchComingSoon ? undefined : onAction}
-        disabled={matchComingSoon || disabled}
+        disabled
         className="dashboard-primary-btn w-full !py-3.5 !text-[15px] !opacity-30 cursor-not-allowed"
       >
         Coming Soon
@@ -532,6 +531,8 @@ export default function Home(){
   const walletRef=useRef(wallet); walletRef.current=wallet;
   const roomRef=useRef(room); roomRef.current=room;
   const joinRoomRef=useRef(joinRoom); joinRoomRef.current=joinRoom;
+  const matchInfoRef=useRef(matchInfo); matchInfoRef.current=matchInfo;
+  const pendingRef=useRef(pending); pendingRef.current=pending;
   const createTeamSizeRef=useRef(createTeamSize); createTeamSizeRef.current=createTeamSize;
   const matchTeamSizeRef=useRef(matchTeamSize); matchTeamSizeRef.current=matchTeamSize;
   const roomCodeRef=useRef(roomCode); roomCodeRef.current=roomCode;
@@ -642,12 +643,33 @@ export default function Home(){
 
   const resetMatchState=useCallback((message=null,{cancelQueue=false}={})=>{
     if(cancelQueue)emit("match:cancel");
+    clearQuickMatchSession(walletRef.current);
     setPending(null);
     setMatchInfo({current:0});
     setPaymentStartedAt(null);
     setMatchPhase("select");
     setMatchErr(message);
   },[emit]);
+
+  const rememberQuickMatchRoom=useCallback((payload={})=>{
+    const inviteCode=(payload.inviteCode||"").trim();
+    const players=Array.isArray(payload.players)?payload.players:[];
+    const total=Number(payload.teamSize||payload.total||players.length||matchTeamSizeRef.current||2);
+    const current=Number(payload.current||players.length||total||1);
+    const normalized={
+      ...payload,
+      wallet:walletRef.current||"",
+      inviteCode,
+      teamSize:total,
+      total,
+      current,
+      players,
+      phase:payload.phase||"preparing",
+      readyForPayment:!!(payload.readyForPayment||payload.gameId||payload.chainGameId),
+    };
+    if(inviteCode)writeQuickMatchSession(normalized);
+    return normalized;
+  },[]);
 
   const enterRoomPayment=useCallback((d={})=>{
     const total=Number(d?.total||d?.players?.length||0);
@@ -1318,11 +1340,30 @@ export default function Home(){
   useEffect(()=>{if(matchPhase!=="matching")return;setCd(15);const t=setInterval(()=>setCd(c=>{if(c<=1){clearInterval(t);return 0;}return c-1;}),1000);return()=>clearInterval(t);},[matchPhase]);
 
   useEffect(()=>{
+    if(!wallet)return;
+    const stored=readQuickMatchSession(wallet);
+    const isFresh=!stored?.updatedAt||Date.now()-Number(stored.updatedAt)<10*60*1000;
+    if(stored?.inviteCode&&isFresh&&matchPhaseRef.current==="select"){
+      const restored=rememberQuickMatchRoom(stored);
+      setMatchTeamSize(restored.teamSize||matchTeamSizeRef.current);
+      setMatchInfo(restored);
+      setMatchErr(null);
+      setMatchPhase("preparing");
+    }else if(stored?.inviteCode&&!isFresh){
+      clearQuickMatchSession(wallet);
+    }
+    emit("match:resume");
+  },[wallet,emit,rememberQuickMatchRoom]);
+
+  useEffect(()=>{
     const u=[
-      on("match:update",d=>{setMatchInfo({current:d.current});if(typeof d.remaining==="number")setCd(d.remaining);}),
-      on("match:full",d=>{setMatchErr(null);setMatchInfo({current:d.current||d.total||matchTeamSizeRef.current});setMatchPhase("preparing");}),
-      on("match:found",d=>{setPending(d);setPaymentProgress({paidCount:0,total:d.players?.length||0});setPaymentErr(null);setPaymentStartedAt(Date.now());if(mockMode){mockPay().then(()=>{updateGame({gameId:d.gameId,chainGameId:d.chainGameId,mode:"random",teamSize:d.teamSize||matchTeamSizeRef.current,players:d.players,phase:"predicting"});nav("/game");});}else setMatchPhase("payment");}),
+      on("match:update",d=>{setMatchInfo(prev=>({...prev,current:d.current,total:d.total||prev.total||matchTeamSizeRef.current,teamSize:d.teamSize||d.total||prev.teamSize||matchTeamSizeRef.current,players:Array.isArray(d.players)?d.players:(prev.players||[])}));if(typeof d.remaining==="number")setCd(d.remaining);}),
+      on("match:queued",d=>{const total=d.teamSize||d.total||matchTeamSizeRef.current;setMatchTeamSize(total);setMatchInfo({current:d.current||1,total,teamSize:total,players:Array.isArray(d.players)?d.players:[]});setMatchErr(null);setMatchPhase("matching");if(typeof d.remaining==="number")setCd(d.remaining);}),
+      on("match:active",d=>{if(!d.inviteCode)return;const total=d.teamSize||d.total||d.players?.length||matchTeamSizeRef.current;const players=Array.isArray(d.players)?d.players:[];const payload=rememberQuickMatchRoom({inviteCode:d.inviteCode,teamSize:total,total,current:d.current||players.length||total,players,gameId:d.gameId||null,chainGameId:d.chainGameId||null,phase:"preparing",readyForPayment:!!(d.gameId||d.chainGameId)});setMatchTeamSize(total);setMatchInfo(payload);setPending(d.gameId?payload:null);setMatchErr(null);setMatchPhase("preparing");}),
+      on("match:full",d=>{const total=d.teamSize||d.total||matchTeamSizeRef.current;const players=Array.isArray(d.players)?d.players:[];const payload=rememberQuickMatchRoom({inviteCode:d.inviteCode||"",teamSize:total,total,current:d.current||total,players,phase:"preparing"});setMatchErr(null);setMatchInfo(payload);setMatchPhase("preparing");if(d.inviteCode){nav(`/room/${d.inviteCode}`,{state:{fromQuickMatch:true,inviteCode:d.inviteCode,teamSize:total,current:d.current||total,players,phase:"preparing"}});}}),
+      on("match:found",d=>{if(d.inviteCode){const total=d.teamSize||matchTeamSizeRef.current;const players=Array.isArray(d.players)?d.players:[];const payload=rememberQuickMatchRoom({inviteCode:d.inviteCode,teamSize:total,total,current:d.current||players.length||total,players,gameId:d.gameId,chainGameId:d.chainGameId,phase:"preparing",readyForPayment:true});setMatchInfo(payload);setPending(payload);setMatchErr(null);setMatchPhase("preparing");nav(`/room/${d.inviteCode}`,{state:{fromQuickMatch:true,inviteCode:d.inviteCode,teamSize:total,current:payload.current,players,gameId:d.gameId,chainGameId:d.chainGameId,phase:"preparing",readyForPayment:true}});return;}setPending(d);setPaymentProgress({paidCount:0,total:d.players?.length||0});setPaymentErr(null);setPaymentStartedAt(Date.now());if(mockMode){mockPay().then(()=>{updateGame({gameId:d.gameId,chainGameId:d.chainGameId,mode:"random",teamSize:d.teamSize||matchTeamSizeRef.current,players:d.players,phase:"predicting"});nav("/game");});}else setMatchPhase("payment");}),
       on("match:failed",()=>resetMatchState(t("home.err.noOpponents"))),
+      on("match:cancelled",()=>resetMatchState(null)),
       on("match:error",d=>resetMatchState(d.message)),
       on("disconnect",()=>{
         if(matchPhaseRef.current==="matching"||matchPhaseRef.current==="preparing"){
@@ -1331,7 +1372,7 @@ export default function Home(){
       }),
     ];
     return()=>u.forEach(f=>f());
-  },[on,mockMode,mockPay,updateGame,nav,resetMatchState]);
+  },[on,mockMode,mockPay,updateGame,nav,resetMatchState,rememberQuickMatchRoom]);
 
   useEffect(()=>{
     if(matchPhase!=="matching"||cd!==0)return;
@@ -1343,8 +1384,37 @@ export default function Home(){
     return()=>clearTimeout(timer);
   },[matchPhase,cd,resetMatchState]);
 
-  const startMatch=()=>{if(isCreateBusy||isJoinBusy){setMatchErr(t("home.err.finishFirst"));return;}if(isMatchBusy){setMatchErr(t("home.err.alreadyMatching"));return;}if(!mockMode && (!wallet || !provider || !signer)){connect({type:"random-match"});return;}setPending(null);setMatchErr(null);setMatchPhase("matching");setMatchInfo({current:1});emit("match:join",{teamSize:matchTeamSize});};
+  const startMatch=()=>{if(isCreateBusy||isJoinBusy){setMatchErr(t("home.err.finishFirst"));return;}if(isMatchBusy){setMatchErr(t("home.err.alreadyMatching"));return;}if(!mockMode && (!wallet || !provider || !signer)){connect({type:"random-match"});return;}clearQuickMatchSession(walletRef.current);setPending(null);setMatchErr(null);setMatchPhase("matching");setMatchInfo({current:1,total:matchTeamSize,teamSize:matchTeamSize,players:walletRef.current?[walletRef.current]:[]});emit("match:join",{teamSize:matchTeamSize});};
   const cancelMatch=()=>resetMatchState(null,{cancelQueue:true});
+  const enterMatchedRoom=useCallback(()=>{
+    const cached=readQuickMatchSession(walletRef.current)||{};
+    const currentInfo=matchInfoRef.current||{};
+    const pendingInfo=pendingRef.current||{};
+    const inviteCode=(currentInfo.inviteCode||pendingInfo.inviteCode||cached.inviteCode||"").trim();
+    if(!inviteCode)return;
+    const players=Array.isArray(currentInfo.players)&&currentInfo.players.length
+      ?currentInfo.players
+      :Array.isArray(pendingInfo.players)&&pendingInfo.players.length
+        ?pendingInfo.players
+        :Array.isArray(cached.players)?cached.players:[];
+    const total=Number(currentInfo.teamSize||currentInfo.total||pendingInfo.teamSize||cached.teamSize||players.length||matchTeamSizeRef.current||2);
+    const gameId=currentInfo.gameId||pendingInfo.gameId||cached.gameId||null;
+    const chainGameId=currentInfo.chainGameId||pendingInfo.chainGameId||cached.chainGameId||null;
+    const payload=rememberQuickMatchRoom({inviteCode,teamSize:total,total,current:currentInfo.current||pendingInfo.current||cached.current||players.length||total,players,gameId,chainGameId,phase:"preparing",readyForPayment:!!(currentInfo.readyForPayment||pendingInfo.readyForPayment||cached.readyForPayment||gameId||chainGameId)});
+    nav(`/room/${inviteCode}`,{
+      state:{
+        fromQuickMatch:true,
+        inviteCode,
+        teamSize:total,
+        current:payload.current,
+        players,
+        gameId,
+        chainGameId,
+        phase:"preparing",
+        readyForPayment:payload.readyForPayment,
+      }
+    });
+  },[nav,rememberQuickMatchRoom]);
   const payMatch=useCallback(async()=>{if(!pending)return;try{setPaymentErr(null);setPaymentNotice(null);if(!pending.gameId||!pending.chainGameId||!wallet)throw new Error("Missing game id");const startedAt=paymentStartedAtRef.current;const deadline=startedAt?startedAt+PAYMENT_TIMEOUT*1000:null;if((deadline&&Date.now()>=deadline)||paymentFailureDialogRef.current){handleRoomPaymentFailure(t("home.err.windowClosed"));return;}await payForGame(pending.chainGameId);const nowDeadline=paymentStartedAtRef.current?paymentStartedAtRef.current+PAYMENT_TIMEOUT*1000:deadline;if((nowDeadline&&Date.now()>=nowDeadline)||paymentFailureDialogRef.current){refund(ENTRY_FEE);handleRoomPaymentFailure(t("home.err.windowClosed"));return;}emit("room:payment:confirm",{gameId:pending.gameId,chainGameId:pending.chainGameId,wallet});setMatchPhase("paid_waiting");}catch(e){const startedAtCatch=paymentStartedAtRef.current;const deadlineCatch=startedAtCatch?startedAtCatch+PAYMENT_TIMEOUT*1000:null;const timedOut=(deadlineCatch&&Date.now()>=deadlineCatch)||!!paymentFailureDialogRef.current;if(timedOut){setMatchPhase("select");return;}const msg=formatPaymentUiError(e?.message||"Payment failed");setMatchErr(msg);setPaymentErr(msg);setMatchPhase("select");}},[pending,payForGame,emit,wallet,refund,handleRoomPaymentFailure]);
   const claimHistoryReward=useCallback(async(game)=>{
     if(!game?.claimable||!game?.chain_game_id)return;
@@ -1373,9 +1443,12 @@ export default function Home(){
   const isMatchPreparing=matchPhase==="preparing";
   const isMatchPaymentPhase=matchPhase==="payment";
   const isMatchPaidWaiting=matchPhase==="paid_waiting";
+  const storedQuickMatch=readQuickMatchSession(wallet);
+  const activeQuickMatchInvite=(matchInfo.inviteCode||pending?.inviteCode||storedQuickMatch?.inviteCode||"").trim();
+  const canEnterMatchedRoom=!!activeQuickMatchInvite&&matchPhase!=="select";
   const isWaitingPaymentPhase=isRoomPaidWaiting||isMatchPaidWaiting;
   const showRoomPayment=(isRoomPreparing||isRoomPaymentPhase||isRoomPaidWaiting)&&!suppressRestoredPaymentModal;
-  const showPayment=showRoomPayment||isMatchPreparing||isMatchPaymentPhase||isMatchPaidWaiting||!!paymentFailureDialog;
+  const showPayment=showRoomPayment||(isMatchPreparing&&!canEnterMatchedRoom)||isMatchPaymentPhase||isMatchPaidWaiting||!!paymentFailureDialog;
   const paymentModalMode=isWaitingPaymentPhase?"waiting":(isRoomPreparing||isMatchPreparing)?"preparing":"confirm";
   const preparingMatchTotal=matchInfo.current||matchTeamSize;
   const onPayConfirm=createPhase==="payment"?payCreate:joinPhase==="payment"?payJoin:payMatch;
@@ -1699,13 +1772,28 @@ export default function Home(){
         {matchPhase==="matching"&&(
           <div>
             <MatchAnimation teamSize={matchTeamSize} current={matchInfo.current} countdown={cd} status="matching"/>
-            <button onClick={cancelMatch} className="dashboard-secondary-btn danger w-full mt-3 py-2 text-[10px]">{t("home.cancel")}</button>
+            <div className="mt-3 flex gap-2">
+              <button onClick={cancelMatch} className={`dashboard-secondary-btn danger ${canEnterMatchedRoom?"flex-1":"w-full"} py-2 text-[10px]`}>{t("home.cancel")}</button>
+              {canEnterMatchedRoom&&(
+                <button onClick={enterMatchedRoom} className="dashboard-secondary-btn flex-1 py-2 text-[10px] !text-fuchsia-100 hover:!text-white">
+                  {t("home.enterRoom")}
+                </button>
+              )}
+            </div>
           </div>
         )}
         {matchPhase==="preparing"&&(
           <div>
             <MatchAnimation teamSize={matchTeamSize} current={matchTeamSize} status="preparing"/>
             <p className="mt-3 text-center text-[10px] text-white/25">{t("home.preparingNote")}</p>
+            <div className="mt-3 flex gap-2">
+              <button onClick={cancelMatch} className={`dashboard-secondary-btn danger ${canEnterMatchedRoom?"flex-1":"w-full"} py-2 text-[10px]`}>{t("home.cancel")}</button>
+              {canEnterMatchedRoom&&(
+                <button onClick={enterMatchedRoom} className="dashboard-secondary-btn flex-1 py-2 text-[10px] !text-fuchsia-100 hover:!text-white">
+                  {t("home.enterRoom")}
+                </button>
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -1803,6 +1891,7 @@ export default function Home(){
         onCancel={paymentFailureDialog?undefined:onPayCancel}
         loading={loading}
         mode={paymentModalMode}
+        variant={isMatchPreparing&&!paymentFailureDialog?"quickPreparing":"default"}
         title={paymentFailureDialog
           ?t(isFailureCancelled?"home.payment.cancelledTitle":"home.payment.timedOutTitle")
           :isWaitingPaymentPhase

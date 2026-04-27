@@ -35,6 +35,23 @@ class MatchmakingService {
     return null;
   }
 
+  getQueueStatusByWallet(wallet) {
+    for (const [teamSize, queue] of Object.entries(this.queues)) {
+      const entry = queue.find((player) => player.wallet === wallet);
+      if (entry) {
+        const total = Number(teamSize);
+        return {
+          current: queue.length,
+          total,
+          teamSize: total,
+          players: queue.map((player) => player.wallet),
+          remaining: this._getRemaining(total),
+        };
+      }
+    }
+    return null;
+  }
+
   isQueued(wallet) {
     return !!this.getQueueEntry(wallet);
   }
@@ -111,7 +128,7 @@ class MatchmakingService {
       for (const p of players.slice(1)) await contractService.ownerJoinGame(chainGameId, p.wallet);
       await query(`UPDATE games SET chain_game_id = $1 WHERE id = $2`, [chainGameId, gameId]);
       for (const p of players) { this.io?.to(p.socketId).emit("match:found", { gameId, chainGameId, players: list.map(pl => pl.wallet), teamSize, inviteCode }); }
-      return { status: "matched", gameId, chainGameId, players: list };
+      return { status: "matched", gameId, chainGameId, players: list, inviteCode };
     } catch (error) {
       if (gameId) {
         await query(`DELETE FROM game_players WHERE game_id = $1`, [gameId]);

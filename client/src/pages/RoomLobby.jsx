@@ -10,6 +10,7 @@ import{ENTRY_FEE,PAYMENT_TIMEOUT,SERVER_URL}from"../config/constants";
 import{useT}from"../context/LangContext";
 import GamePlay from"./GamePlay";
 import roomLobbyBg from"../assets/room-created-bg-clean.jpg";
+import{clearQuickMatchSession,writeQuickMatchSession}from"../utils/quickMatchSession";
 
 function hash32(s){let h=2166136261>>>0;for(let i=0;i<(s||"").length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619);}return h>>>0;}
 function SeatAvatar({seed,size=56}){
@@ -200,6 +201,7 @@ export default function RoomLobby(){
   const handlePaymentFailure=useCallback((reason)=>{
     const r=reason||t("create.err.teamDisbanded");
     if(paid){refund(ENTRY_FEE);setPaid(false);}
+    if(fromQuickMatch)clearQuickMatchSession(wallet);
     setPaymentStartedAt(null);
     setPaymentCountdown(null);
     setRoomFullInfo(null);
@@ -207,7 +209,7 @@ export default function RoomLobby(){
     setPaymentTimeoutError(r);
     setErr(null);
     setPhase("dissolved");
-  },[paid,refund,t]);
+  },[paid,refund,t,fromQuickMatch,wallet]);
   const leaveLobby=useCallback(()=>{
     emit("room:leave");
     if(paidRef.current){
@@ -238,6 +240,22 @@ export default function RoomLobby(){
   },[paymentStartedAt]);
 
   useEffect(()=>{paidRef.current=paid;},[paid]);
+
+  useEffect(()=>{
+    if(!fromQuickMatch||!code)return;
+    writeQuickMatchSession({
+      wallet:wallet||"",
+      inviteCode:code,
+      teamSize,
+      total:teamSize,
+      current:room.current||room.players?.length||teamSize,
+      players:Array.isArray(room.players)?room.players:[],
+      gameId:roomFullInfo?.gameId||initial.gameId||null,
+      chainGameId:roomFullInfo?.chainGameId||initial.chainGameId||null,
+      phase:"preparing",
+      readyForPayment:!!(initial.readyForPayment||roomFullInfo?.gameId||roomFullInfo?.chainGameId||phase==="payment"||phase==="paid_waiting"),
+    });
+  },[fromQuickMatch,code,wallet,teamSize,room.current,room.players,roomFullInfo,initial.gameId,initial.chainGameId,initial.readyForPayment,phase]);
 
   useEffect(()=>{
     const previousWallet=previousWalletRef.current;
@@ -365,8 +383,8 @@ export default function RoomLobby(){
       on("room:expired",()=>{setRoomExpiresAt(null);setRoomCountdown(null);setPhase("expired");showExpiredDialog();}),
       on("room:payment:update",d=>{setPaymentProgress({paidCount:d.paidCount,total:d.total});confirmRetryRef.current.tries=0;if(confirmRetryRef.current.timer){clearTimeout(confirmRetryRef.current.timer);confirmRetryRef.current.timer=null;}setHint(null);setErr(null);}),
       on("room:payment:failed",d=>{const reason=d?.reason||t("create.err.teamDisbanded");if(isPaymentClosureReason(reason)){handlePaymentFailure(reason);return;}setPaymentStartedAt(null);setPaymentCountdown(null);setRoomFullInfo(null);setPaymentProgress({paidCount:0,total:0});setPaymentTimeoutError(null);setHint(null);setErr(null);setPhase("dissolved");showClosedDialog(reason||t("roomLobby.exit.closedSubtitle"));}),
-      on("game:start",d=>{if(inactiveRedirectTimerRef.current){clearTimeout(inactiveRedirectTimerRef.current);inactiveRedirectTimerRef.current=null;}const nextPlayers=Array.isArray(d.players)?d.players:[];const nextTotal=d.players.length;updateGame({gameId:d.gameId,chainGameId:d.chainGameId||d.gameId,mode:"room",teamSize:nextTotal,players:nextPlayers,phase:"predicting",basePrice:d.basePrice,countdown:Math.round((d.predictTimeout||30000)/1000),predictSafeBuffer:Math.round((d.predictSafeBuffer||5000)/1000),predictionDeadline:d.predictionDeadline||null});setRoom({current:nextPlayers.length,players:nextPlayers});setTeamSize(nextTotal||teamSize);setRoomOwner(nextPlayers[0]||null);if(d.inviteCode)setCode(d.inviteCode);setRoomExpiresAt(null);setRoomCountdown(null);setPaymentStartedAt(null);setPaymentCountdown(null);setPaymentTimeoutError(null);setErr(null);setHint(null);setBootstrapped(true);if(fromQuickMatch){setTimeout(()=>nav("/game"),50);return;}setPhase("in_game");}),
-      on("game:resume",d=>{if(inactiveRedirectTimerRef.current){clearTimeout(inactiveRedirectTimerRef.current);inactiveRedirectTimerRef.current=null;}const nextPlayers=Array.isArray(d.players)?d.players:[];const nextTotal=d.players?.length||d.totalPlayers||0;updateGame({gameId:d.gameId,chainGameId:d.chainGameId||d.gameId,mode:"room",teamSize:nextTotal,players:nextPlayers,phase:d.phase==="settling"?"settling":"predicting",basePrice:d.basePrice,countdown:d.remaining||Math.round((d.predictTimeout||30000)/1000),predictSafeBuffer:Math.round((d.predictSafeBuffer||5000)/1000),predictionDeadline:d.predictionDeadline||null,currentPrice:d.currentPrice||d.basePrice});setRoom({current:nextPlayers.length||nextTotal,players:nextPlayers});setTeamSize(nextTotal||teamSize);setRoomOwner(nextPlayers[0]||null);if(d.inviteCode)setCode(d.inviteCode);setRoomExpiresAt(null);setRoomCountdown(null);setPaymentStartedAt(null);setPaymentCountdown(null);setPaymentTimeoutError(null);setErr(null);setHint(null);setBootstrapped(true);if(fromQuickMatch){setTimeout(()=>nav("/game"),50);return;}setPhase("in_game");}),
+      on("game:start",d=>{if(inactiveRedirectTimerRef.current){clearTimeout(inactiveRedirectTimerRef.current);inactiveRedirectTimerRef.current=null;}const nextPlayers=Array.isArray(d.players)?d.players:[];const nextTotal=d.players.length;updateGame({gameId:d.gameId,chainGameId:d.chainGameId||d.gameId,mode:"room",teamSize:nextTotal,players:nextPlayers,phase:"predicting",basePrice:d.basePrice,countdown:Math.round((d.predictTimeout||30000)/1000),predictSafeBuffer:Math.round((d.predictSafeBuffer||5000)/1000),predictionDeadline:d.predictionDeadline||null});setRoom({current:nextPlayers.length,players:nextPlayers});setTeamSize(nextTotal||teamSize);setRoomOwner(nextPlayers[0]||null);if(d.inviteCode)setCode(d.inviteCode);setRoomExpiresAt(null);setRoomCountdown(null);setPaymentStartedAt(null);setPaymentCountdown(null);setPaymentTimeoutError(null);setErr(null);setHint(null);setBootstrapped(true);if(fromQuickMatch){clearQuickMatchSession(wallet);setTimeout(()=>nav("/game"),50);return;}setPhase("in_game");}),
+      on("game:resume",d=>{if(inactiveRedirectTimerRef.current){clearTimeout(inactiveRedirectTimerRef.current);inactiveRedirectTimerRef.current=null;}const nextPlayers=Array.isArray(d.players)?d.players:[];const nextTotal=d.players?.length||d.totalPlayers||0;updateGame({gameId:d.gameId,chainGameId:d.chainGameId||d.gameId,mode:"room",teamSize:nextTotal,players:nextPlayers,phase:d.phase==="settling"?"settling":"predicting",basePrice:d.basePrice,countdown:d.remaining||Math.round((d.predictTimeout||30000)/1000),predictSafeBuffer:Math.round((d.predictSafeBuffer||5000)/1000),predictionDeadline:d.predictionDeadline||null,currentPrice:d.currentPrice||d.basePrice});setRoom({current:nextPlayers.length||nextTotal,players:nextPlayers});setTeamSize(nextTotal||teamSize);setRoomOwner(nextPlayers[0]||null);if(d.inviteCode)setCode(d.inviteCode);setRoomExpiresAt(null);setRoomCountdown(null);setPaymentStartedAt(null);setPaymentCountdown(null);setPaymentTimeoutError(null);setErr(null);setHint(null);setBootstrapped(true);if(fromQuickMatch){clearQuickMatchSession(wallet);setTimeout(()=>nav("/game"),50);return;}setPhase("in_game");}),
       on("match:found",d=>{if(!fromQuickMatch||quickMatchPaymentOpened.current)return;quickMatchPaymentOpened.current=true;openPayment({gameId:d.gameId||null,chainGameId:d.chainGameId||null,players:d.players||[],total:d.teamSize||0,inviteCode:d.inviteCode||code,paymentTimeout:PAYMENT_TIMEOUT*1000});}),
     ];
     return()=>u.forEach(f=>f());
@@ -419,8 +437,7 @@ export default function RoomLobby(){
       setPaymentProgress(prev=>({paidCount:Math.min(prev.total||roomFullInfo?.maxPlayers||1,Math.max(prev.paidCount||0,1)),total:prev.total||roomFullInfo?.maxPlayers||1}));
       setPaid(true);paidRef.current=true;
       if(fromQuickMatch){
-        updateGame({gameId:roomFullInfo?.gameId,chainGameId:paymentResult?.chainGameId||roomFullInfo?.chainGameId,mode:"random",teamSize:roomFullInfo?.maxPlayers,players:roomFullInfo?.players||[],phase:"predicting"});
-        nav("/game");
+        if(roomFullInfo){emit("room:payment:confirm",{gameId:roomFullInfo.gameId,chainGameId:paymentResult?.chainGameId||roomFullInfo.chainGameId||null,inviteCode:code,wallet});setPhase("paid_waiting");}
         return;
       }
       if(roomFullInfo){emit("room:payment:confirm",{gameId:roomFullInfo.gameId,chainGameId:paymentResult?.chainGameId||roomFullInfo.chainGameId||null,inviteCode:code,wallet});setPhase("paid_waiting");}
@@ -803,6 +820,15 @@ export default function RoomLobby(){
         </footer>
       )}
 
+      <PaymentModal
+        visible={fromQuickMatch&&phase==="preparing"}
+        onConfirm={()=>{}}
+        loading={false}
+        mode="preparing"
+        variant="quickPreparing"
+        amount={null}
+        hint={null}
+      />
       <PaymentModal
         visible={phase==="payment"||phase==="paid_waiting"||!!paymentTimeoutError}
         onConfirm={paymentTimeoutError?confirmPaymentTimeoutError:payRoom}

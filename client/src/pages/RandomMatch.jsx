@@ -63,6 +63,7 @@ export default function RandomMatch(){
       onCancel={()=>{setPhase("select");setPending(null)}}
       loading={loading}
       mode={phase==="preparing"?"preparing":"confirm"}
+      variant={phase==="preparing"?"quickPreparing":"default"}
       title={phase==="preparing"?t("random.payment.title.preparing"):t("random.payment.title.confirm")}
       subtitle={phase==="preparing"?t("random.payment.subtitle.preparing").replace("{n}",String(preparingCount)):t("random.payment.subtitle.confirm")}
       actionLabel={t("random.payment.action")}

@@ -60,12 +60,24 @@ class GameService {
     });
   }
 
-  getRoomPaymentByWallet(wallet) {
-    for (const session of Object.values(this.roomPayments)) {
-      const player = session?.players?.find((entry) => entry.wallet === wallet);
-      if (player) return session;
+  getRoomPaymentEntryByWallet(wallet) {
+    const target = wallet?.toLowerCase?.();
+    if (!target) return null;
+    for (const [gameId, session] of Object.entries(this.roomPayments)) {
+      const player = session?.players?.find((entry) => entry.wallet?.toLowerCase?.() === target);
+      if (player) return { gameId: Number(gameId), session, player };
     }
     return null;
+  }
+
+  getRoomPaymentByWallet(wallet) {
+    return this.getRoomPaymentEntryByWallet(wallet)?.session || null;
+  }
+
+  rebindRoomPaymentSocket(wallet, socketId) {
+    const entry = this.getRoomPaymentEntryByWallet(wallet);
+    if (entry?.player) entry.player.socketId = socketId;
+    return entry?.session || null;
   }
 
   isInRoomPayment(wallet) {
@@ -293,7 +305,7 @@ class GameService {
     return recovered.rowCount;
   }
 
-  startRoomPayment(gameId, inviteCode, players, owner = null, chainGameId = null) {
+  startRoomPayment(gameId, inviteCode, players, owner = null, chainGameId = null, kind = "room") {
     this.roomPayments[gameId] = {
       inviteCode,
       owner,
@@ -303,6 +315,7 @@ class GameService {
       startedAt: Date.now(),
       paid: new Set(),
       timer: null,
+      kind,
     };
     return this.roomPayments[gameId];
   }

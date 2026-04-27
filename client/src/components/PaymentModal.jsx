@@ -46,6 +46,7 @@ export function PaymentModal({
   const isWaiting=mode==="waiting";
   const isPreparing=mode==="preparing";
   const isLobby=variant==="lobby";
+  const isQuickPreparing=variant==="quickPreparing"&&isPreparing;
   const remainingPlayers=Math.max(0,totalCount-paidCount);
   const everyonePaid=isWaiting&&totalCount>0&&remainingPlayers===0;
   const progressPct=totalCount?Math.min(100,Math.round((paidCount/totalCount)*100)):0;
@@ -68,6 +69,21 @@ export function PaymentModal({
     :isWaiting
       ?(remainingPlayers>0?t("payment.waitingMore",{n:remainingPlayers}):t("payment.waitingAllPaid"))
       :(totalCount>0?(paidCount>0?t("payment.everyoneHerePaid",{paid:paidCount,total:totalCount}):t("payment.confirmEntry")):t("payment.confirmWalletContinue"));
+  if(isQuickPreparing){
+    return<div className="payment-modal-backdrop payment-modal-backdrop-lobby fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4">
+      <div className="payment-modal-card payment-modal-card-lobby dashboard-modal-card w-full max-w-[23rem] overflow-hidden overscroll-contain animate-slideUp">
+        <div className="p-6 sm:p-7">
+        <div className="text-center">
+          <h3 className="text-[1.45rem] sm:text-[1.7rem] font-black tracking-tight text-white leading-[1.08]">{t("payment.quickPreparing.title")}</h3>
+          <p className="mt-3 text-white/48 text-[13px] leading-6">{t("payment.quickPreparing.subtitle")}</p>
+        </div>
+        <button disabled className="mt-7 w-full py-3 rounded-xl bg-white/[0.03] border border-white/[0.08] text-white/45 text-sm font-bold cursor-not-allowed">
+          <LoadingLabel label={t("payment.quickPreparing.action")} />
+        </button>
+        </div>
+      </div>
+    </div>;
+  }
   if(isLobby){
     return<div className="payment-modal-backdrop payment-modal-backdrop-lobby fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4">
       <div className="payment-modal-card payment-modal-card-lobby dashboard-modal-card w-full max-w-[25.5rem] overflow-hidden overscroll-contain animate-slideUp">
