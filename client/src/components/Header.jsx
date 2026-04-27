@@ -9,14 +9,14 @@ export function Header(){
   const t=useT();
   const nav=useNavigate();const loc=useLocation();
   const short=wallet?`${wallet.slice(0,6)}...${wallet.slice(-4)}`:"";
-  const goDashboard=()=>{if(wallet)nav("/arena");else nav("/login?next=/arena")};
+  const goDashboard=()=>{if(wallet)nav("/dashboard");else nav("/login?next=/dashboard")};
   const goFaq=()=>nav({pathname:"/",hash:"#faq"});
   const goLeaderboard=()=>nav("/leaderboard");
-  const goGetStarted=()=>nav("/login?next=/arena");
-  const navBtnBase="text-xs px-2.5 sm:px-4 py-1.5 rounded-xl transition font-semibold whitespace-nowrap";
+  const goGetStarted=()=>nav("/login?next=/dashboard");
+  const navBtnBase="text-xs px-2.5 sm:px-4 py-1.5 min-h-8 rounded-xl transition font-semibold whitespace-nowrap";
   const navBtnIdle="text-white/58 hover:text-white/88 hover:bg-white/[0.04] border border-transparent hover:border-white/8";
-  const navBtnActive="text-white";
-  const navLabelActive="dashboard-title-highlight";
+  const navBtnActive="text-white font-bold";
+  const navLabelActive="nav-active-label";
   const faqActive=loc.pathname==="/"&&loc.hash==="#faq";
   return(
     <header className="sticky top-0 z-50 border-b border-white/[0.05] bg-[linear-gradient(180deg,rgba(7,8,16,0.88),rgba(9,8,18,0.76))] backdrop-blur-2xl" style={{paddingTop:"var(--safe-top)"}}>
@@ -32,8 +32,8 @@ export function Header(){
           <button onClick={goFaq} className={`hidden md:inline-flex ${navBtnBase} ${faqActive?navBtnActive:navBtnIdle}`}>
             <span className={faqActive?navLabelActive:""}>{t("nav.faq")}</span>
           </button>
-          <button onClick={goDashboard} className={`hidden md:inline-flex ${navBtnBase} ${loc.pathname==="/arena"?navBtnActive:navBtnIdle}`}>
-            <span className={loc.pathname==="/arena"?navLabelActive:""}>{t("nav.dashboard")}</span>
+          <button onClick={goDashboard} className={`hidden md:inline-flex ${navBtnBase} ${loc.pathname==="/dashboard"?navBtnActive:navBtnIdle}`}>
+            <span className={loc.pathname==="/dashboard"?navLabelActive:""}>{t("nav.dashboard")}</span>
           </button>
           <button onClick={goLeaderboard} className={`hidden md:inline-flex ${navBtnBase} ${loc.pathname==="/leaderboard"?navBtnActive:navBtnIdle}`}>
             <span className={loc.pathname==="/leaderboard"?navLabelActive:""}>{t("nav.leaderboard")}</span>

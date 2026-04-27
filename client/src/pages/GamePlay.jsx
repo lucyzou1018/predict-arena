@@ -8,7 +8,7 @@ import { useT } from "../context/LangContext";
 import { PredictButtons, CountdownRing } from "../components";
 import { ENTRY_FEE, PREDICT_TIMEOUT, PREDICT_SAFE_BUFFER, SERVER_URL, SETTLE_DELAY } from "../config/constants";
 
-const SHARE_TEXT = "Got a differentiated BTC view? Compare it on AlphaMatch. 📈📉 https://predict-arena-test.vercel.app/arena";
+const SHARE_TEXT = "Got a differentiated BTC view? Compare it on AlphaMatch. 📈📉 https://predict-arena-test.vercel.app/dashboard";
 const predictionStorageKey = (gameId, wallet) => `predict-arena:prediction:${gameId}:${wallet?.toLowerCase?.()}`;
 
 function readStoredPrediction(gameId, wallet) {
@@ -625,7 +625,7 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
       if (returnToDashboardOnSuccess) {
         clearStoredPrediction(targetChainGameId, wallet);
         resetGame();
-        nav("/arena", { replace: true });
+        nav("/dashboard", { replace: true });
       }
     } catch (error) {
       setClaimState({ claimed: false, error: error?.message || t("game.err.claimFailed"), success: null });
@@ -641,7 +641,7 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
   const exitToArena = useCallback(() => {
     clearStoredPrediction(currentChainGameId, wallet);
     resetGame();
-    nav("/arena", { replace: true });
+    nav("/dashboard", { replace: true });
   }, [currentChainGameId, nav, resetGame, wallet]);
 
   const rewardAmount = Number(result?.myResult?.reward || 0);
@@ -1467,7 +1467,7 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
             ) : null}
 
             <div className="flex gap-2">
-              <button onClick={() => nav("/arena")} className="flex-1 py-2.5 rounded-[18px] bg-fuchsia-500/[0.06] border border-fuchsia-500/15 hover:bg-fuchsia-500/[0.1] transition text-xs text-white/60">{t("result.confirm")}</button>
+              <button onClick={() => nav("/dashboard")} className="flex-1 py-2.5 rounded-[18px] bg-fuchsia-500/[0.06] border border-fuchsia-500/15 hover:bg-fuchsia-500/[0.1] transition text-xs text-white/60">{t("result.confirm")}</button>
               <button onClick={handleShareToX} className="flex-1 dashboard-action-primary !py-2.5 font-black !text-sm">Share to 𝕏</button>
             </div>
           </div>

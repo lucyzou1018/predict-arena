@@ -53,8 +53,8 @@ export default function WalletMenu() {
     {
       label: t("nav.dashboard"),
       icon: LayoutDashboard,
-      active: loc.pathname === "/arena",
-      action: () => goTo("/arena"),
+      active: loc.pathname === "/dashboard",
+      action: () => goTo("/dashboard"),
     },
     {
       label: t("nav.leaderboard"),

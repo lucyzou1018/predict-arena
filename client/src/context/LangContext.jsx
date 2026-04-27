@@ -839,7 +839,7 @@ const DICT = {
     "roomTransition.subtitle": "Syncing room state and preparing your seat",
     "roomTransition.link": "Link Established",
 
-    "game.share.text": "Got a differentiated BTC view? Compare it on AlphaMatch. 📈📉 https://predict-arena-test.vercel.app/arena",
+    "game.share.text": "Got a differentiated BTC view? Compare it on AlphaMatch. 📈📉 https://predict-arena-test.vercel.app/dashboard",
     "game.preparing.title": "Preparing Match",
     "game.preparing.desc": "Starting when all players are ready",
     "game.matchInProgress": "Match In Progress",
@@ -1797,7 +1797,7 @@ const DICT = {
     "roomTransition.subtitle": "同步房间状态并准备你的位置",
     "roomTransition.link": "连接已建立",
 
-    "game.share.text": "有不一样的 BTC 判断? 来 AlphaMatch 对照一下。 📈📉 https://predict-arena-test.vercel.app/arena",
+    "game.share.text": "有不一样的 BTC 判断? 来 AlphaMatch 对照一下。 📈📉 https://predict-arena-test.vercel.app/dashboard",
     "game.preparing.title": "准备对局",
     "game.preparing.desc": "玩家全部就绪后开始",
     "game.matchInProgress": "对局进行中",

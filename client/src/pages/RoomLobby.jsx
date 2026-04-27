@@ -215,11 +215,11 @@ export default function RoomLobby(){
       setPaid(false);
     }
     resetLobbyState();
-    nav("/arena",{replace:true});
+    nav("/dashboard",{replace:true});
   },[emit,nav,refund,resetLobbyState]);
   const confirmLobbyExit=useCallback(()=>{
     resetLobbyState();
-    nav("/arena",{replace:true});
+    nav("/dashboard",{replace:true});
   },[nav,resetLobbyState]);
 
   // Room expiry countdown
@@ -247,7 +247,7 @@ export default function RoomLobby(){
       resetLobbyState();
       setBootstrapped(false);
     }else if(previousWallet&&!wallet){
-      nav("/login?next=/arena",{replace:true});
+      nav("/login?next=/dashboard",{replace:true});
     }
     previousWalletRef.current=wallet;
   },[wallet,nav,resetLobbyState]);
@@ -270,7 +270,7 @@ export default function RoomLobby(){
           emit("game:resume:request");
           if(inactiveRedirectTimerRef.current)clearTimeout(inactiveRedirectTimerRef.current);
           inactiveRedirectTimerRef.current=setTimeout(()=>{
-            if(!cancelled)nav("/arena",{replace:true});
+            if(!cancelled)nav("/dashboard",{replace:true});
           },900);
           return;
         }

@@ -302,7 +302,7 @@ body::before{content:"";position:fixed;inset:0;background:radial-gradient(ellips
   pointer-events:none;
 }
 
-/* App-wide premium deep-blue background (used on interior pages like /arena) */
+/* App-wide premium deep-blue background (used on interior pages like /dashboard) */
 .app-bg{
   position:relative;isolation:isolate;
   background:
@@ -800,6 +800,12 @@ body::before{content:"";position:fixed;inset:0;background:radial-gradient(ellips
   background-clip:text;
   color:transparent;
   text-shadow:none;
+}
+.nav-active-label{
+  font-size:14px;
+  font-weight:800;
+  color:rgba(244,114,182,.98);
+  text-shadow:0 0 12px rgba(244,114,182,.24);
 }
 
 .landing-kicker{

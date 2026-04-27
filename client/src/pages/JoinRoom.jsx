@@ -169,7 +169,7 @@ export default function JoinRoom(){
   const confirmPaymentTimeoutError=useCallback(()=>{
     setPaymentTimeoutError(null);
     setErr(null);
-    nav("/arena",{replace:true});
+    nav("/dashboard",{replace:true});
   },[nav]);
   const payRoom=useCallback(async()=>{
     const startedAt=paymentStartedAtRef.current;

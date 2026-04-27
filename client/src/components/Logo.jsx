@@ -15,9 +15,9 @@ export function Logo({ className = "h-5 w-auto", active = false }) {
       {active ? (
         <defs>
           <linearGradient id={gradientId} x1="241" y1="304.5" x2="1934" y2="304.5" gradientUnits="userSpaceOnUse">
-            <stop offset="0%" stopColor="#fff8fb" />
-            <stop offset="52%" stopColor="#f5d0fe" />
-            <stop offset="100%" stopColor="#f9a8d4" />
+            <stop offset="0%" stopColor="#fbcfe8" />
+            <stop offset="52%" stopColor="#f472b6" />
+            <stop offset="100%" stopColor="#db2777" />
           </linearGradient>
         </defs>
       ) : null}

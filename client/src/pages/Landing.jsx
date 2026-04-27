@@ -24,17 +24,19 @@ export default function Landing() {
   const { wallet, connecting, mockMode, balance, showWalletMenu, setShowWalletMenu } = useWallet();
   const short = wallet ? `${wallet.slice(0, 6)}...${wallet.slice(-4)}` : "";
   const [openFaq, setOpenFaq] = useState(0);
-  const navBtnBase = "text-xs px-2.5 sm:px-4 py-1.5 rounded-xl transition font-semibold whitespace-nowrap";
+  const navBtnBase = "text-xs px-2.5 sm:px-4 py-1.5 min-h-8 rounded-xl transition font-semibold whitespace-nowrap";
   const navBtnIdle = "text-white/58 hover:text-white/88 hover:bg-white/[0.04] border border-transparent hover:border-white/8";
+  const navBtnActive = "text-white font-bold";
+  const navLabelActive = "nav-active-label";
 
   const handleEnter = () => {
-    if (wallet) nav("/arena");
-    else nav("/login?next=/arena");
+    if (wallet) nav("/dashboard");
+    else nav("/login?next=/dashboard");
   };
 
   const goDashboard = () => {
-    if (wallet) nav("/arena");
-    else nav("/login?next=/arena");
+    if (wallet) nav("/dashboard");
+    else nav("/login?next=/dashboard");
   };
 
   const goLeaderboard = () => nav("/leaderboard");
@@ -98,27 +100,27 @@ export default function Landing() {
             </button>
             <button
               onClick={() => nav("/how-to-play")}
-              className={`hidden md:inline-flex ${navBtnBase} ${loc.pathname === "/how-to-play" ? "text-white" : navBtnIdle} shrink-0`}
+              className={`hidden md:inline-flex ${navBtnBase} ${loc.pathname === "/how-to-play" ? navBtnActive : navBtnIdle} shrink-0`}
             >
-              <span className={loc.pathname === "/how-to-play" ? "dashboard-title-highlight" : ""}>{t("nav.howToPlay")}</span>
+              <span className={loc.pathname === "/how-to-play" ? navLabelActive : ""}>{t("nav.howToPlay")}</span>
             </button>
             <button
               onClick={goFaq}
-              className={`hidden md:inline-flex ${navBtnBase} ${faqActive ? "text-white" : navBtnIdle} shrink-0`}
+              className={`hidden md:inline-flex ${navBtnBase} ${faqActive ? navBtnActive : navBtnIdle} shrink-0`}
             >
-              <span className={faqActive ? "dashboard-title-highlight" : ""}>{t("nav.faq")}</span>
+              <span className={faqActive ? navLabelActive : ""}>{t("nav.faq")}</span>
             </button>
             <button
               onClick={goDashboard}
-              className={`hidden md:inline-flex ${navBtnBase} ${loc.pathname === "/arena" ? "text-white" : navBtnIdle} shrink-0`}
+              className={`hidden md:inline-flex ${navBtnBase} ${loc.pathname === "/dashboard" ? navBtnActive : navBtnIdle} shrink-0`}
             >
-              <span className={loc.pathname === "/arena" ? "dashboard-title-highlight" : ""}>{t("nav.dashboard")}</span>
+              <span className={loc.pathname === "/dashboard" ? navLabelActive : ""}>{t("nav.dashboard")}</span>
             </button>
             <button
               onClick={goLeaderboard}
-              className={`hidden md:inline-flex ${navBtnBase} ${loc.pathname === "/leaderboard" ? "text-white" : navBtnIdle} shrink-0`}
+              className={`hidden md:inline-flex ${navBtnBase} ${loc.pathname === "/leaderboard" ? navBtnActive : navBtnIdle} shrink-0`}
             >
-              <span className={loc.pathname === "/leaderboard" ? "dashboard-title-highlight" : ""}>{t("nav.leaderboard")}</span>
+              <span className={loc.pathname === "/leaderboard" ? navLabelActive : ""}>{t("nav.leaderboard")}</span>
             </button>
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
@@ -162,7 +164,7 @@ export default function Landing() {
                 </button>
               ) : (
                 <button
-                  onClick={() => nav("/login?next=/arena")}
+                  onClick={() => nav("/login?next=/dashboard")}
                   disabled={connecting}
                   className="dashboard-primary-btn text-xs px-4 py-1.5 font-semibold disabled:opacity-60"
                 >

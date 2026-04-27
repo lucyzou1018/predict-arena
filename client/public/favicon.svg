@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="alpha-mark" x1="13" y1="8" x2="52" y2="56" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#f4f4f5"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="16" fill="#070812"/>
+  <path fill="url(#alpha-mark)" d="M31.7 9.5 46.2 33.4l-7.9 4.3-7-12.2-10.8 17.6 10.8-6.2 2.8 5.1 13.7-7.3-14.4 15.4-3.7-6.1L2.2 59.2 31.7 9.5Z"/>
+  <path fill="url(#alpha-mark)" d="M48 37.3 61 58.6 43.1 49.6l-2.6-4.2L48 37.3Z"/>
+</svg>

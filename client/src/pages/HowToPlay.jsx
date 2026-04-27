@@ -222,7 +222,7 @@ export default function HowToPlay() {
             ))}
           </div>
           <div className="pt-5 mt-5 border-t border-white/[0.06]">
-            <button onClick={() => nav("/arena")} className="dashboard-primary-btn w-full !py-3 !text-sm">
+            <button onClick={() => nav("/dashboard")} className="dashboard-primary-btn w-full !py-3 !text-sm">
               {t("howto.cta.primary")}
             </button>
           </div>

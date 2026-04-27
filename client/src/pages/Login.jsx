@@ -12,7 +12,7 @@ export default function Login() {
   const next = useMemo(() => {
     const params = new URLSearchParams(loc.search);
     const n = params.get("next");
-    return n && n.startsWith("/") ? n : "/arena";
+    return n && n.startsWith("/") ? n : "/dashboard";
   }, [loc.search]);
 
   useEffect(() => {

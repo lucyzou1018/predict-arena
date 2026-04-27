@@ -958,7 +958,7 @@ export default function Home(){
   useEffect(()=>{
     const previousWallet=previousWalletRef.current;
     if(previousWallet&&!wallet){
-      nav("/login?next=/arena",{replace:true});
+      nav("/login?next=/dashboard",{replace:true});
     }
     previousWalletRef.current=wallet;
   },[wallet,nav]);

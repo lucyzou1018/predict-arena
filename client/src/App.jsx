@@ -9,13 +9,14 @@ import Leaderboard from"./pages/Leaderboard";
 import Login from"./pages/Login";
 import Sparkles from"./components/Sparkles";
 import RoomLobby from "./pages/RoomLobby";
-function AppContent(){const loc=useLocation();const hideHeader=loc.pathname==="/";const showFooter=["/","/arena","/leaderboard","/how-to-play","/login"].includes(loc.pathname);return<div className="min-h-screen relative app-bg flex flex-col">{loc.pathname==="/"&&<Sparkles/>}{!hideHeader&&<Header/>}<div className="flex-1"><Routes>
+function AppContent(){const loc=useLocation();const hideHeader=loc.pathname==="/";const showFooter=["/","/dashboard","/leaderboard","/how-to-play","/login"].includes(loc.pathname);return<div className="min-h-screen relative app-bg flex flex-col">{loc.pathname==="/"&&<Sparkles/>}{!hideHeader&&<Header/>}<div className="flex-1"><Routes>
   <Route path="/" element={<Landing/>}/>
   <Route path="/login" element={<Login/>}/>
-  <Route path="/arena" element={<Home/>}/>
+  <Route path="/dashboard" element={<Home/>}/>
+  <Route path="/arena" element={<Navigate to="/dashboard" replace/>}/>
   <Route path="/leaderboard" element={<Leaderboard/>}/>
   <Route path="/match" element={<RandomMatch/>}/>
-  <Route path="/room" element={<Navigate to="/arena" replace/>}/>
+  <Route path="/room" element={<Navigate to="/dashboard" replace/>}/>
   <Route path="/room/:inviteCode" element={<RoomLobby/>}/>
   <Route path="/join-room" element={<JoinRoom/>}/>
   <Route path="/game" element={<GamePlay/>}/>

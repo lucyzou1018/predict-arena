@@ -67,16 +67,22 @@ export default function ProfileModal() {
         className="absolute inset-0 backdrop-blur-sm"
         style={{
           background:
-            "radial-gradient(ellipse 95% 65% at 50% -5%, rgba(99,102,241,0.28), transparent 55%), radial-gradient(ellipse 70% 55% at 15% 100%, rgba(76,29,149,0.22), transparent 55%), radial-gradient(ellipse 60% 50% at 85% 100%, rgba(109,40,217,0.18), transparent 60%), rgba(6,10,31,0.82)",
+            "radial-gradient(ellipse 90% 60% at 50% -5%, rgba(217,70,239,0.16), transparent 56%), radial-gradient(ellipse 70% 55% at 15% 100%, rgba(88,28,135,0.12), transparent 58%), rgba(3,4,14,0.76)",
         }}
         onClick={() => setShowProfileModal(false)}
       />
       <div
         className="landing-story-card wallet-modal-card relative w-[420px] max-w-[94vw] !p-0 max-h-[calc(100dvh-2rem)] overflow-y-auto hide-scrollbar"
-        style={{ marginTop: "max(0px, env(safe-area-inset-top))", marginBottom: "max(0px, env(safe-area-inset-bottom))" }}
+        style={{
+          marginTop: "max(0px, env(safe-area-inset-top))",
+          marginBottom: "max(0px, env(safe-area-inset-bottom))",
+          background:
+            "linear-gradient(180deg, rgb(28,11,26) 0%, rgb(8,8,18) 48%, rgb(6,7,16) 100%)",
+          backdropFilter: "none",
+        }}
       >
         <div className="relative z-10">
-          <div className="relative px-5 pt-5 pb-6 bg-[radial-gradient(circle_at_top,rgba(217,70,239,0.2),transparent_58%),linear-gradient(180deg,rgba(255,255,255,0.04),rgba(255,255,255,0.01))]">
+          <div className="relative px-5 pt-5 pb-6 bg-[radial-gradient(circle_at_top,rgba(217,70,239,0.12),transparent_58%),linear-gradient(180deg,rgba(255,255,255,0.035),rgba(255,255,255,0.005))]">
             <div className="flex items-start justify-between gap-4">
               <div>
                 <p className="text-[11px] uppercase tracking-[0.22em] text-fuchsia-200/45">{t("wallet.menu.profile")}</p>
