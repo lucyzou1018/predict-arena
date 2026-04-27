@@ -29,6 +29,7 @@ export function WalletProvider({children}){
   const[walletName,setWalletName]=useState("");
   const[showWalletModal,setShowWalletModal]=useState(false);
   const[showWalletMenu,setShowWalletMenu]=useState(false);
+  const[showProfileModal,setShowProfileModal]=useState(false);
   const[connectStep,setConnectStep]=useState("");
   const[connectError,setConnectError]=useState("");
   const[pendingAction,setPendingAction]=useState(null);
@@ -293,6 +294,7 @@ export function WalletProvider({children}){
       mockMode,balance,setBalance,refund,
       walletName,showWalletModal,setShowWalletModal,
       showWalletMenu,setShowWalletMenu,
+      showProfileModal,setShowProfileModal,
       connectWithProvider,getWalletProviders,
       connectStep,connectError,pendingAction,setPendingAction,
     }}>

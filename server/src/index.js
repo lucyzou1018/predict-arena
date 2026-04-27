@@ -26,9 +26,9 @@ async function main() {
     },
   }));
   app.use(express.json());
-  app.get("/api/price", (_, res) => res.json({ price: priceService.getPrice() }));
+  app.get("/api/price", (_, res) => res.json(priceService.getStatus()));
   app.use("/api", gameRoutes);
-  app.get("/health", (_, res) => res.json({ status: "ok", price: priceService.getPrice() }));
+  app.get("/health", (_, res) => res.json({ status: "ok", ...priceService.getStatus() }));
   const server = http.createServer(app);
   initSocket(server);
   server.listen(config.port, () => console.log(`[Server] Running on port ${config.port}`));

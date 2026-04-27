@@ -14,6 +14,9 @@ const READ_PROVIDERS = BASE_SEPOLIA_FALLBACK_RPC_URLS.map(
 );
 const GAS_BUFFER_BPS = 12000n;
 const BASE_SEPOLIA_CHAIN_ID = BigInt(Number.parseInt(CHAIN.chainId, 16));
+const TX_CONFIRM_TIMEOUT_MS = 90000;
+const TX_PROVIDER_WAIT_TIMEOUT_MS = 20000;
+const TX_CONFIRM_POLL_MS = 1250;
 
 function toRpcQuantity(value) {
   if (value === undefined || value === null || value === "") return null;
@@ -36,6 +39,8 @@ async function withStableRead(fn) {
   if (lastError) throw lastError;
   throw new Error("Stable read provider unavailable");
 }
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function mapContractError(err) {
   const code = err?.code || err?.info?.error?.code;
@@ -94,6 +99,9 @@ function mapContractError(err) {
   }
   if (reason.includes("payment required")) {
     return "Entry payment is not confirmed yet for this wallet.";
+  }
+  if (reason.includes("confirmation is still syncing on base sepolia")) {
+    return "Payment is already on-chain but confirmation is still syncing. Reopen the room in a moment if the UI does not update automatically.";
   }
   if (reason.includes("network") || reason.includes("chain")) {
     return "Wallet network is incorrect. Switch to Base Sepolia and try again.";
@@ -200,6 +208,70 @@ export function useContract() {
     setLoading(false);
     return true;
   }, [mockMode, setBalance]);
+
+  const waitForTransactionConfirmation = useCallback(async (txOrHash, options = {}) => {
+    const hash = typeof txOrHash === "string" ? txOrHash : txOrHash?.hash;
+    if (!hash) throw new Error("Transaction hash missing");
+
+    const label = options.label || "Transaction";
+    const timeoutMs = options.timeoutMs || TX_CONFIRM_TIMEOUT_MS;
+    const providerWaitTimeoutMs = Math.min(timeoutMs, options.providerWaitTimeoutMs || TX_PROVIDER_WAIT_TIMEOUT_MS);
+    const pollMs = options.pollMs || TX_CONFIRM_POLL_MS;
+    const providers = [signer?.provider, ...READ_PROVIDERS].filter(Boolean);
+    let lastError = null;
+
+    if (signer?.provider?.waitForTransaction) {
+      try {
+        const receipt = await signer.provider.waitForTransaction(hash, 1, providerWaitTimeoutMs);
+        if (receipt) {
+          if (Number(receipt.status) === 0) throw new Error(`${label} transaction reverted on-chain`);
+          return receipt;
+        }
+      } catch (error) {
+        lastError = error;
+        const message = `${error?.message || error?.shortMessage || ""}`.toLowerCase();
+        if (message.includes("revert")) throw error;
+        console.warn(`[tx] ${label} provider wait fell back to stable RPC polling`, { hash, error });
+      }
+    }
+
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (typeof options.checkConfirmed === "function") {
+        try {
+          if (await options.checkConfirmed()) return { hash, status: 1 };
+        } catch (error) {
+          lastError = error;
+        }
+      }
+
+      for (const provider of providers) {
+        try {
+          const receipt = await provider.getTransactionReceipt(hash);
+          if (!receipt) continue;
+          if (Number(receipt.status) === 0) throw new Error(`${label} transaction reverted on-chain`);
+          return receipt;
+        } catch (error) {
+          lastError = error;
+          const message = `${error?.message || error?.shortMessage || ""}`.toLowerCase();
+          if (message.includes("revert")) throw error;
+        }
+      }
+
+      await sleep(pollMs);
+    }
+
+    if (typeof options.checkConfirmed === "function") {
+      try {
+        if (await options.checkConfirmed()) return { hash, status: 1 };
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    console.warn(`[tx] ${label} confirmation timed out`, { hash, error: lastError });
+    throw new Error(`${label} confirmation is still syncing on Base Sepolia. Please reopen the room in a moment if the UI does not update automatically.`);
+  }, [signer]);
 
   const prepareTransactionRequest = useCallback(async (txRequest, fallbackGasLimit, preferLegacy = false) => {
     if (!wallet) throw new Error("Wallet not connected");
@@ -322,7 +394,14 @@ export function useContract() {
       // Room/match payments happen repeatedly. Grant a reusable allowance once so
       // later payments usually only need the single payForGame wallet confirmation.
       const approvalRequest = await token.approve.populateTransaction(CONTRACT_ADDRESS, ethers.MaxUint256);
-      await (await sendPreparedTransaction(approvalRequest, 120000n)).wait();
+      const approvalTx = await sendPreparedTransaction(approvalRequest, 120000n);
+      await waitForTransactionConfirmation(approvalTx, {
+        label: "Approval",
+        checkConfirmed: async () => {
+          const refreshedAllowance = await token.allowance(wallet, CONTRACT_ADDRESS);
+          return refreshedAllowance >= amount;
+        },
+      });
       const refreshedAllowance = await waitForAllowance(token, wallet, CONTRACT_ADDRESS, amount);
       if (refreshedAllowance < amount) {
         throw new Error("Token approval has not finished syncing yet. Please wait a moment and try again.");
@@ -331,7 +410,7 @@ export function useContract() {
     }
 
     return { resolvedUsdc };
-  }, [getArena, sendPreparedTransaction, signer, wallet]);
+  }, [getArena, sendPreparedTransaction, signer, waitForTransactionConfirmation, wallet]);
 
   const payForGame = useCallback(async (gameId) => {
     if (shouldUseMockPayment) return mockPay();
@@ -369,19 +448,28 @@ export function useContract() {
           await arena.payForGame.staticCall(gameId);
         }
       } catch (simErr) {
-        console.error("[payForGame] staticCall failed:", simErr);
+        console.warn("[payForGame] staticCall failed:", mapContractError(simErr));
         throw simErr;
       }
 
       const paymentRequest = await arena.payForGame.populateTransaction(gameId);
-      await (await sendPreparedTransaction(paymentRequest, 300000n)).wait();
+      const paymentTx = await sendPreparedTransaction(paymentRequest, 300000n);
+      await waitForTransactionConfirmation(paymentTx, {
+        label: "Payment",
+        checkConfirmed: async () => {
+          const syncedReader = await getArenaReader();
+          if (!syncedReader) return false;
+          const [, hasPaid] = await syncedReader.getPlayerPrediction(gameId, wallet);
+          return !!hasPaid;
+        },
+      });
       return { approved: true, paid: true };
     } catch (err) {
       throw new Error(mapContractError(err));
     } finally {
       setLoading(false);
     }
-  }, [ensureTokenApproval, ensureWalletReady, getArena, getArenaReader, mockPay, sendPreparedTransaction, shouldUseMockPayment, wallet]);
+  }, [ensureTokenApproval, ensureWalletReady, getArena, getArenaReader, mockPay, sendPreparedTransaction, shouldUseMockPayment, waitForTransactionConfirmation, wallet]);
 
   const payForRoomEntry = useCallback(async ({ inviteCode, chainGameId = null } = {}) => {
     if (shouldUseMockPayment) return mockPay();

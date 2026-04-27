@@ -1,13 +1,14 @@
 import { useNavigate } from "react-router-dom";
 import { useT } from "../context/LangContext";
+import workflowCardImage from "../assets/howto-workflow-card.jpg";
 
-const SECTION_TITLE = "text-2xl sm:text-[2rem] font-black tracking-tight text-white";
-const SECTION_DESC = "mt-2 text-sm sm:text-base text-white/60 leading-7 max-w-2xl";
+const SECTION_TITLE = "dashboard-title text-2xl sm:text-[2rem] font-black tracking-tight";
+const SECTION_DESC = "mt-2 text-sm sm:text-base text-white/58 leading-7 max-w-2xl";
 const SECTION_WRAP = "border-t border-white/[0.08] pt-8 sm:pt-10";
-const BASE_CARD = "landing-step-card h-full";
-const ACCENT_CARD = "landing-mode-card h-full";
-const PANEL_CARD = "landing-story-card";
-const SUB_CARD = "landing-faq-card px-4 py-4";
+const BASE_CARD = "dashboard-room-card h-full !p-5";
+const ACCENT_CARD = "dashboard-room-card h-full !p-5";
+const PANEL_CARD = "dashboard-room-card";
+const SUB_CARD = "dashboard-room-subcard px-4 py-4";
 
 function StepIcon({ kind }) {
   const common = {
@@ -141,34 +142,41 @@ export default function HowToPlay() {
   const controlLabels = ["01", "02", "03", "04"];
 
   return (
-    <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-10">
+    <div className="relative min-h-screen overflow-x-hidden">
+      <div className="landing-bg" aria-hidden="true">
+        <div className="orb orb-1"/><div className="orb orb-2"/><div className="orb orb-3"/>
+      </div>
+      <div className="relative z-10 max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-10">
       <section className="mb-10 sm:mb-12">
         <div className="space-y-5 sm:space-y-6">
-          <div className="inline-flex items-center gap-1.5 bg-fuchsia-500/10 border border-fuchsia-500/20 rounded-full px-3 py-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-fuchsia-400 animate-pulse" />
-            <span className="text-fuchsia-200/80 text-[10px] font-bold tracking-[0.22em] uppercase">
+          <div className="dashboard-kicker">
+            <span className="w-1.5 h-1.5 rounded-full bg-fuchsia-300 animate-pulse" />
+            <span className="text-[10px] font-bold tracking-[0.22em] uppercase">
               {t("howto.kicker")}
             </span>
           </div>
 
-          <div className="max-w-3xl">
-            <h1 className="neon-title text-[1.75rem] sm:text-[2.15rem] lg:text-[2.7rem] leading-[1.24] uppercase max-w-[12ch] mb-4">
-              {t("howto.title")}
-            </h1>
-            <p className="text-white/68 text-base sm:text-lg leading-7 sm:leading-8 max-w-2xl">
-              {t("howto.subtitleDetail")}
-            </p>
-          </div>
-
-          <div className="grid gap-3 sm:grid-cols-3">
-            {["stake", "round", "onchain"].map((k) => (
-              <div key={k} className={`${SUB_CARD} text-left`}>
-                <p className="text-[10px] text-white/45 uppercase tracking-[0.18em] mb-2">Spec</p>
-                <p className="text-sm sm:text-[15px] font-bold text-white/85 leading-6">
-                  {t(`howto.meta.${k}`)}
-                </p>
-              </div>
-            ))}
+          <div
+            className="dashboard-room-card !p-5 sm:!p-7 lg:!p-8 min-h-[240px] sm:min-h-[280px] lg:min-h-[320px] flex items-center"
+            style={{
+              backgroundImage: `
+                linear-gradient(90deg, rgba(6, 7, 15, 0.9) 0%, rgba(6, 7, 15, 0.72) 24%, rgba(6, 7, 15, 0.28) 58%, rgba(6, 7, 15, 0.52) 100%),
+                linear-gradient(180deg, rgba(30, 4, 19, 0.16) 0%, rgba(6, 7, 15, 0.36) 100%),
+                url(${workflowCardImage})
+              `,
+              backgroundPosition: "center center, center center, -32% center",
+              backgroundRepeat: "no-repeat",
+              backgroundSize: "auto, auto, 112% 116%",
+            }}
+          >
+            <div className="max-w-3xl -translate-y-3 sm:-translate-y-4" style={{ zIndex: 2 }}>
+              <h1 className="dashboard-title mb-4 max-w-[12ch] text-2xl leading-[1.22] text-white sm:text-3xl">
+                {t("howto.title")}
+              </h1>
+              <p className="mt-4 max-w-2xl text-base leading-7 text-white/68 sm:text-lg sm:leading-8">
+                {t("howto.subtitleDetail")}
+              </p>
+            </div>
           </div>
         </div>
       </section>
@@ -186,7 +194,7 @@ export default function HowToPlay() {
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             {handbook.map((item) => (
-              <div key={item.title} className="rounded-2xl border border-white/[0.08] bg-white/[0.03] px-4 py-3.5">
+              <div key={item.title} className="dashboard-room-subcard px-4 py-3.5">
                 <div className="text-[15px] font-bold text-white mb-1.5">{item.title}</div>
                 <p className="text-[13px] leading-6 text-white/52">{item.desc}</p>
               </div>
@@ -207,14 +215,14 @@ export default function HowToPlay() {
             {rules.map((i) => (
               <div
                 key={i}
-                className="rounded-2xl border border-white/[0.08] bg-white/[0.03] px-4 py-3 text-[13px] text-white/72 leading-6"
+                className="dashboard-room-subcard px-4 py-3 text-[13px] text-white/72 leading-6"
               >
                 {t(`howto.rule.${i}`)}
               </div>
             ))}
           </div>
           <div className="pt-5 mt-5 border-t border-white/[0.06]">
-            <button onClick={() => nav("/arena")} className="btn-primary w-full !py-3 !text-sm">
+            <button onClick={() => nav("/arena")} className="dashboard-primary-btn w-full !py-3 !text-sm">
               {t("howto.cta.primary")}
             </button>
           </div>
@@ -367,15 +375,15 @@ export default function HowToPlay() {
 
           <div className={`${PANEL_CARD} !p-0 overflow-hidden`}>
             <div className="px-6 pt-5 pb-4">
-              <div className="text-[11px] font-semibold text-white/45 uppercase tracking-[0.22em] mb-2">
-                {t("howto.trust.controlTitle")}
-              </div>
+                <div className="dashboard-kicker text-[11px] mb-2">
+                  {t("howto.trust.controlTitle")}
+                </div>
             </div>
             <div className="px-6 pb-5 space-y-3">
               {controls.map((i, idx) => (
                 <div
                   key={i}
-                  className="grid gap-3 md:grid-cols-[48px_minmax(0,1fr)] items-start rounded-2xl border border-white/[0.06] bg-white/[0.025] px-4 py-4"
+                  className="dashboard-room-subcard grid gap-3 md:grid-cols-[48px_minmax(0,1fr)] items-start px-4 py-4"
                 >
                   <div className="w-10 h-10 rounded-xl border border-fuchsia-400/20 bg-fuchsia-400/[0.07] flex items-center justify-center font-mono text-[11px] text-fuchsia-200/80">
                     {controlLabels[idx]}
@@ -391,6 +399,7 @@ export default function HowToPlay() {
         </div>
       </section>
 
+      </div>
     </div>
   );
 }

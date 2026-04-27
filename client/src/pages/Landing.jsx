@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useWallet } from "../context/WalletContext";
 import { useT } from "../context/LangContext";
 import HeroTrophy from "../components/HeroTrophy";
@@ -19,24 +19,13 @@ const STRIP_INDEXES = [0, 1, 2, 3];
 
 export default function Landing() {
   const nav = useNavigate();
+  const loc = useLocation();
   const t = useT();
   const { wallet, connecting, mockMode, balance, showWalletMenu, setShowWalletMenu } = useWallet();
   const short = wallet ? `${wallet.slice(0, 6)}...${wallet.slice(-4)}` : "";
   const [openFaq, setOpenFaq] = useState(0);
-
-  const particles = useMemo(
-    () =>
-      Array.from({ length: 22 }).map((_, i) => ({
-        key: i,
-        left: `${4 + Math.random() * 92}%`,
-        top: `${4 + Math.random() * 92}%`,
-        delay: `${Math.random() * 5}s`,
-        duration: `${4 + Math.random() * 4}s`,
-        width: `${1.5 + Math.random() * 2.5}px`,
-        height: `${1.5 + Math.random() * 2.5}px`,
-      })),
-    []
-  );
+  const navBtnBase = "text-xs px-2.5 sm:px-4 py-1.5 rounded-xl transition font-semibold whitespace-nowrap";
+  const navBtnIdle = "text-white/58 hover:text-white/88 hover:bg-white/[0.04] border border-transparent hover:border-white/8";
 
   const handleEnter = () => {
     if (wallet) nav("/arena");
@@ -48,8 +37,25 @@ export default function Landing() {
     else nav("/login?next=/arena");
   };
 
+  const goLeaderboard = () => nav("/leaderboard");
+  const goFaq = () => nav({ pathname: "/", hash: "#faq" });
+  const faqActive = loc.pathname === "/" && loc.hash === "#faq";
+
+  useEffect(() => {
+    if (loc.pathname !== "/" || loc.hash !== "#faq") return;
+    const scrollToFaq = () => {
+      const faqSection = document.getElementById("faq");
+      if (!faqSection) return;
+      const headerHeight = document.querySelector("header")?.getBoundingClientRect().height || 0;
+      const targetTop = faqSection.getBoundingClientRect().top + window.scrollY - headerHeight - 24;
+      window.scrollTo({ top: Math.max(targetTop, 0), behavior: "smooth" });
+    };
+    const timer = window.setTimeout(scrollToFaq, 60);
+    return () => window.clearTimeout(timer);
+  }, [loc.hash, loc.pathname]);
+
   return (
-    <div className="relative flex flex-col">
+    <div className="relative min-h-screen flex flex-col overflow-x-hidden">
       <div className="landing-bg">
         <div className="orb orb-1" />
         <div className="orb orb-2" />
@@ -61,7 +67,7 @@ export default function Landing() {
             height: 360,
             top: "22%",
             left: "10%",
-            background: "radial-gradient(circle, rgba(77,140,255,0.34), transparent 70%)",
+            background: "radial-gradient(circle, rgba(53,28,92,0.18), transparent 72%)",
             animationDuration: "12s",
             animationDelay: "-2s",
           }}
@@ -73,45 +79,46 @@ export default function Landing() {
             height: 320,
             top: "45%",
             right: "8%",
-            background: "radial-gradient(circle, rgba(110,170,255,0.28), transparent 70%)",
+            background: "radial-gradient(circle, rgba(82,22,74,0.16), transparent 72%)",
             animationDuration: "14s",
             animationDelay: "-6s",
           }}
         />
-        <div className="grid-overlay" />
-        {particles.map((particle) => (
-          <div
-            key={particle.key}
-            className="particle"
-            style={{
-              left: particle.left,
-              top: particle.top,
-              animationDelay: particle.delay,
-              animationDuration: particle.duration,
-              width: particle.width,
-              height: particle.height,
-            }}
-          />
-        ))}
       </div>
+      <div className="landing-bottom-quiet-zone" aria-hidden="true" />
 
-      <header className="sticky top-0 z-20 border-b border-white/[0.06] bg-[#081432]/[0.01] backdrop-blur-2xl">
+      <header
+        className="fixed inset-x-0 top-0 z-50 border-b border-white/[0.06] bg-[linear-gradient(180deg,rgba(11,10,23,0.9),rgba(8,8,18,0.78))] backdrop-blur-2xl"
+        style={{ paddingTop: "var(--safe-top)" }}
+      >
         <div className="max-w-7xl mx-auto px-3 sm:px-6 py-3 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 sm:gap-6 min-w-0">
             <button onClick={() => nav("/")} className="hover:opacity-80 transition text-white shrink-0">
-              <Logo className="h-4 sm:h-6 w-auto" />
+              <Logo className="h-4 sm:h-6 w-auto" active={loc.pathname === "/"} />
             </button>
             <button
               onClick={() => nav("/how-to-play")}
-              className="text-xs px-2.5 sm:px-4 py-1.5 rounded-lg transition font-semibold text-white/40 hover:text-white/60 hover:bg-white/[0.06] whitespace-nowrap shrink-0"
+              className={`${navBtnBase} ${loc.pathname === "/how-to-play" ? "text-white" : navBtnIdle} shrink-0`}
             >
-              {t("nav.howToPlay")}
+              <span className={loc.pathname === "/how-to-play" ? "dashboard-title-highlight" : ""}>{t("nav.howToPlay")}</span>
+            </button>
+            <button
+              onClick={goFaq}
+              className={`${navBtnBase} ${faqActive ? "text-white" : navBtnIdle} shrink-0`}
+            >
+              <span className={faqActive ? "dashboard-title-highlight" : ""}>{t("nav.faq")}</span>
             </button>
             <button
               onClick={goDashboard}
-              className="hidden sm:inline-flex text-xs px-4 py-1.5 rounded-lg transition font-semibold text-white/40 hover:text-white/60 hover:bg-white/[0.06] whitespace-nowrap shrink-0"
+              className={`${navBtnBase} ${loc.pathname === "/arena" ? "text-white" : navBtnIdle} shrink-0`}
             >
-              {t("nav.dashboard")}
+              <span className={loc.pathname === "/arena" ? "dashboard-title-highlight" : ""}>{t("nav.dashboard")}</span>
+            </button>
+            <button
+              onClick={goLeaderboard}
+              className={`${navBtnBase} ${loc.pathname === "/leaderboard" ? "text-white" : navBtnIdle} shrink-0`}
+            >
+              <span className={loc.pathname === "/leaderboard" ? "dashboard-title-highlight" : ""}>{t("nav.leaderboard")}</span>
             </button>
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
@@ -120,7 +127,7 @@ export default function Landing() {
               {wallet ? (
                 <button
                   onClick={() => setShowWalletMenu(!showWalletMenu)}
-                  className="group text-xs pl-1.5 pr-3.5 py-1 rounded-xl transition font-semibold bg-white/[0.04] border border-white/[0.08] text-white/65 hover:text-white/90 hover:bg-white/[0.06] flex items-center gap-2"
+                  className="dashboard-secondary-btn group text-xs pl-1.5 pr-3.5 py-1 transition font-semibold flex items-center gap-2 !rounded-[18px]"
                 >
                   {/* Person avatar — pulsing glow + outward ring wave */}
                   <span
@@ -157,7 +164,7 @@ export default function Landing() {
                 <button
                   onClick={() => nav("/login?next=/arena")}
                   disabled={connecting}
-                  className="text-xs px-4 py-1.5 rounded-lg font-semibold bg-gradient-to-r from-indigo-500 via-violet-500 to-fuchsia-500 text-white shadow-lg shadow-violet-500/25 hover:shadow-violet-500/40 transition disabled:opacity-60"
+                  className="dashboard-primary-btn text-xs px-4 py-1.5 font-semibold disabled:opacity-60"
                 >
                   {connecting ? t("nav.connecting") : t("nav.getStarted")}
                 </button>
@@ -168,19 +175,24 @@ export default function Landing() {
         </div>
       </header>
 
+      <div
+        aria-hidden="true"
+        className="shrink-0"
+        style={{ height: "calc(56px + var(--safe-top))" }}
+      />
+
       <section className="relative z-10 pt-10 pb-12 lg:pt-14 lg:pb-16">
         <div className="max-w-7xl mx-auto px-6 w-full grid grid-cols-1 lg:grid-cols-[1.02fr_0.98fr] gap-10 lg:gap-12 items-start">
           <div className="text-left">
-            <div className="inline-flex items-center gap-2 bg-white/[0.04] border border-white/[0.08] rounded-full px-3 py-1.5 mb-6 animate-slideUp whitespace-nowrap">
+            <div className="dashboard-kicker mb-6 animate-slideUp whitespace-nowrap">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
-              <span className="text-white/55 text-[10px] font-semibold tracking-[0.18em] uppercase">
+              <span className="text-[10px] font-semibold tracking-[0.18em] uppercase">
                 {t("landing.badge.live")}
               </span>
-              <span className="text-white/20 text-[10px]">·</span>
               <span
                 className="text-[10px] font-semibold tracking-[0.18em] uppercase"
                 style={{
-                  background: "linear-gradient(90deg,#ec4899,#a855f7)",
+                  background: "linear-gradient(90deg,#f9a8d4,#c084fc)",
                   WebkitBackgroundClip: "text",
                   backgroundClip: "text",
                   color: "transparent",
@@ -190,11 +202,9 @@ export default function Landing() {
               </span>
             </div>
 
-            <h1 className="neon-title text-gradient-fuchsia text-2xl sm:text-3xl lg:text-[2.5rem] mb-5 animate-slideUp max-w-3xl uppercase" style={{lineHeight:1.4}}>
-              {t("landing.hero.line1")}
-              <br />
-              {t("landing.hero.line2")}
-              <br />
+            <h1 className="dashboard-title text-[2rem] sm:text-[2.6rem] lg:text-[3.2rem] mb-5 animate-slideUp max-w-4xl leading-[1.06]">
+              {t("landing.hero.line1")}{" "}
+              <span className="dashboard-title-highlight">{t("landing.hero.line2")}</span>{" "}
               {t("landing.hero.line3")}
             </h1>
 
@@ -205,13 +215,13 @@ export default function Landing() {
             <div className="flex flex-col sm:flex-row gap-3 animate-slideUp delay-200">
               <button
                 onClick={handleEnter}
-                className="btn-primary text-base sm:text-lg px-8 py-4 rounded-2xl relative overflow-hidden group cta-glow"
+                className="dashboard-primary-btn text-base sm:text-lg px-8 py-4 rounded-[22px] relative overflow-hidden group"
               >
                 <span className="relative z-10 flex items-center justify-center">{t("landing.cta.primary")}</span>
               </button>
               <button
                 onClick={() => nav("/how-to-play")}
-                className="hero-secondary-cta px-6 py-4 rounded-2xl border border-white/[0.08] bg-transparent text-white/58 font-semibold hover:text-white/78 transition-all duration-300"
+                className="dashboard-secondary-btn px-6 py-4 rounded-[22px] font-semibold transition-all duration-300"
               >
                 {t("landing.cta.secondary")}
               </button>
@@ -219,15 +229,14 @@ export default function Landing() {
 
             <div className="landing-proof-row animate-slideUp delay-300">
               {HERO_FACT_INDEXES.map((index) => (
-                <div key={index} className="landing-proof-inline">
+                <div key={index} className="dashboard-room-chip landing-proof-inline px-3 py-1.5">
                   <span>{t(`landing.fact.${index}`)}</span>
-                  {index < HERO_FACT_INDEXES.length - 1 ? <span className="landing-proof-separator">/</span> : null}
                 </div>
               ))}
             </div>
           </div>
 
-          <div className="animate-slideUp delay-100 relative flex items-center justify-center">
+          <div className="animate-slideUp delay-100 relative flex items-center justify-center lg:px-4">
             <div className="landing-stage-glow" />
             <HeroTrophy />
           </div>
@@ -236,10 +245,7 @@ export default function Landing() {
 
       <div
         className="relative z-10 py-6 border-y border-white/[0.06]"
-        style={{
-          background:
-            "linear-gradient(90deg, rgba(245,158,11,0.03), rgba(139,92,246,0.03), rgba(6,182,212,0.03))",
-        }}
+        style={{ background: "linear-gradient(90deg, rgba(255,255,255,0.01), rgba(236,72,153,0.04), rgba(255,255,255,0.01))" }}
       >
         <div className="max-w-6xl mx-auto px-6 grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-3">
           {STRIP_INDEXES.map((i) => (
@@ -251,14 +257,14 @@ export default function Landing() {
         </div>
       </div>
 
-      <section className="relative z-10 py-16">
+      <section className="relative z-10 pt-12 pb-8 sm:pt-14 sm:pb-10">
         <div className="max-w-6xl mx-auto px-6">
-          <div className="text-center mb-14">
-            <span className="landing-kicker">{t("landing.modes.kicker")}</span>
-            <h2 className="text-3xl sm:text-4xl font-black tracking-tight mt-3">
+          <div className="text-center mb-10 sm:mb-12">
+            <span className="dashboard-kicker">{t("landing.modes.kicker")}</span>
+            <h2 className="dashboard-title text-3xl sm:text-4xl mt-2.5">
               {t("landing.modes.title")}
             </h2>
-            <p className="text-white/45 text-sm sm:text-base mt-4 max-w-2xl mx-auto leading-relaxed">
+            <p className="text-white/45 text-sm sm:text-base mt-3 max-w-2xl mx-auto leading-relaxed">
               {t("landing.modes.desc")}
             </p>
           </div>
@@ -280,14 +286,14 @@ export default function Landing() {
         </div>
       </section>
 
-      <section className="relative z-10 py-16">
+      <section className="relative z-10 py-12 sm:py-14">
         <div className="max-w-6xl mx-auto px-6">
-          <div className="text-center mb-12">
-            <span className="landing-kicker">{t("landing.round.kicker")}</span>
-            <h2 className="text-3xl sm:text-4xl font-black tracking-tight mt-3">
+          <div className="text-center mb-9 sm:mb-10">
+            <span className="dashboard-kicker">{t("landing.round.kicker")}</span>
+            <h2 className="dashboard-title text-3xl sm:text-4xl mt-2.5">
               {t("landing.round.title")}
             </h2>
-            <p className="text-white/45 text-sm sm:text-base mt-4 max-w-2xl mx-auto leading-relaxed">
+            <p className="text-white/45 text-sm sm:text-base mt-3 max-w-2xl mx-auto leading-relaxed">
               {t("landing.round.desc")}
             </p>
           </div>
@@ -334,14 +340,14 @@ export default function Landing() {
         </div>
       </section>
 
-      <section className="relative z-10 py-20">
+      <section className="relative z-10 pt-8 pb-14 sm:pt-10 sm:pb-16">
         <div className="max-w-6xl mx-auto px-6">
-          <div className="text-center mb-14">
-              <span className="landing-kicker">{t("landing.edge.kicker")}</span>
-              <h2 className="text-3xl sm:text-4xl font-black tracking-tight mt-3">
+          <div className="text-center mb-10 sm:mb-12">
+              <span className="dashboard-kicker">{t("landing.edge.kicker")}</span>
+              <h2 className="dashboard-title text-3xl sm:text-4xl mt-2.5">
                 {t("landing.edge.title")}
               </h2>
-            <p className="text-white/45 text-sm sm:text-base mt-4 max-w-2xl mx-auto leading-relaxed">
+            <p className="text-white/45 text-sm sm:text-base mt-3 max-w-2xl mx-auto leading-relaxed">
               {t("landing.edge.desc")}
             </p>
           </div>
@@ -363,14 +369,14 @@ export default function Landing() {
         </div>
       </section>
 
-      <section className="relative z-10 py-20">
+      <section className="relative z-10 pt-8 pb-14 sm:pt-10 sm:pb-16">
         <div className="max-w-3xl mx-auto px-6">
-          <div className="text-center mb-10">
-            <span className="landing-kicker">{t("landing.faq.kicker")}</span>
-            <h2 className="text-3xl sm:text-4xl font-black tracking-tight mt-3">
+          <div id="faq" className="text-center mb-8 sm:mb-9 scroll-mt-28">
+            <span className="dashboard-kicker">{t("landing.faq.kicker")}</span>
+            <h2 className="dashboard-title text-3xl sm:text-4xl mt-2.5">
               {t("landing.faq.title")}
             </h2>
-            <p className="text-white/40 text-sm sm:text-base mt-4 leading-relaxed">
+            <p className="text-white/40 text-sm sm:text-base mt-3 leading-relaxed">
               {t("landing.faq.desc")}
             </p>
           </div>
@@ -403,22 +409,22 @@ export default function Landing() {
 
       <section className="relative z-10 pb-16">
         <div className="max-w-6xl mx-auto px-6">
-          <div className="text-center mb-14">
-            <span className="landing-kicker">{t("landing.final.kicker")}</span>
-            <h2 className="text-3xl sm:text-4xl font-black tracking-tight mt-3 leading-tight">
+          <div className="text-center mb-10 sm:mb-12">
+            <span className="dashboard-kicker">{t("landing.final.kicker")}</span>
+            <h2 className="dashboard-title text-3xl sm:text-4xl mt-2.5 leading-tight">
               {t("landing.final.title")}
             </h2>
-            <p className="text-white/45 text-sm sm:text-base mt-4 max-w-2xl mx-auto leading-relaxed">
+            <p className="text-white/45 text-sm sm:text-base mt-3 max-w-2xl mx-auto leading-relaxed">
               {t("landing.final.desc")}
             </p>
           </div>
           <div className="flex flex-col sm:flex-row gap-3 justify-center">
-            <button onClick={handleEnter} className="btn-primary text-base px-8 py-4 rounded-2xl">
+            <button onClick={handleEnter} className="dashboard-primary-btn text-base px-8 py-4 rounded-[22px]">
               {t("landing.final.launch")}
             </button>
             <button
               onClick={() => nav("/how-to-play")}
-              className="px-7 py-4 rounded-2xl border border-white/[0.1] bg-white/[0.03] text-white/75 font-semibold hover:bg-white/[0.05] hover:text-white transition-all duration-300"
+              className="dashboard-secondary-btn px-7 py-4 rounded-[22px] font-semibold transition-all duration-300"
             >
               {t("landing.final.review")}
             </button>

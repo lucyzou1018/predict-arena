@@ -25,7 +25,7 @@ export function NavActions() {
   };
 
   const btnCls =
-    "w-8 h-8 rounded-full border border-white/10 text-white/60 hover:text-white/95 hover:bg-white/[0.05] hover:border-white/20 transition flex items-center justify-center";
+    "w-8 h-8 rounded-full border border-white/[0.08] bg-[linear-gradient(180deg,rgba(19,17,31,0.82),rgba(10,10,18,0.86))] text-white/72 hover:text-white hover:border-fuchsia-200/[0.10] hover:bg-[linear-gradient(180deg,rgba(24,20,38,0.86),rgba(12,11,22,0.90))] transition flex items-center justify-center";
 
   return (
     <div className="flex items-center gap-1.5">
@@ -55,21 +55,14 @@ export function NavActions() {
 
         {open && (
           <div
-            className="absolute right-0 mt-2 w-60 rounded-2xl z-50 overflow-hidden"
-            style={{
-              background: "linear-gradient(180deg, rgba(20,22,44,0.92), rgba(14,15,30,0.96))",
-              border: "1px solid rgba(227,240,255,0.14)",
-              boxShadow:
-                "inset 0 1px 0 rgba(255,255,255,0.06), 0 18px 50px rgba(6,7,16,0.6), 0 0 0 1px rgba(124,92,255,0.08), 0 0 40px rgba(124,92,255,0.10)",
-              backdropFilter: "blur(14px)",
-            }}
+            className="absolute right-0 top-full mt-2 w-56 bg-[linear-gradient(180deg,rgba(18,16,30,0.98),rgba(10,10,18,0.98))] border border-white/[0.08] rounded-xl shadow-2xl overflow-hidden z-[80]"
           >
-            <div className="px-5 pt-4 pb-3 border-b border-white/[0.08]">
-              <div className="text-white/95 font-black text-base tracking-tight">
+            <div className="px-4 py-3 border-b border-white/[0.06]">
+              <div className="text-xs font-semibold text-white/70">
                 {t("nav.language")}
               </div>
             </div>
-            <div className="p-2">
+            <div>
               {LANGUAGES.map((l) => {
                 const selected = lang === l.code;
                 return (
@@ -79,14 +72,14 @@ export function NavActions() {
                       setLang(l.code);
                       setOpen(false);
                     }}
-                    className={`w-full flex items-center gap-2.5 text-left text-sm px-3 py-2.5 rounded-xl transition ${
+                    className={`w-full flex items-center gap-2 text-left text-xs px-4 py-3 font-semibold transition ${
                       selected
-                        ? "bg-white/[0.06] text-white font-semibold"
-                        : "text-white/75 hover:bg-white/[0.04] hover:text-white/95"
+                        ? "bg-white/[0.04] text-white"
+                        : "text-white/70 hover:text-white hover:bg-white/[0.04]"
                     }`}
                   >
                     <span
-                      className={`inline-flex w-3 h-3 rounded-full items-center justify-center ${
+                      className={`inline-flex w-3 h-3 rounded-full items-center justify-center shrink-0 ${
                         selected ? "" : "border border-white/25"
                       }`}
                       style={
@@ -105,10 +98,10 @@ export function NavActions() {
               })}
             </div>
             {/* Contact entry — shown only on mobile since the standalone contact icon is hidden there */}
-            <div className="sm:hidden border-t border-white/[0.08] p-2">
+            <div className="sm:hidden border-t border-white/[0.06]">
               <button
                 onClick={() => { setOpen(false); openContact(); }}
-                className="w-full flex items-center gap-2.5 text-left text-sm px-3 py-2.5 rounded-xl text-white/75 hover:bg-white/[0.04] hover:text-white/95 transition"
+                className="w-full flex items-center gap-2 text-left text-xs px-4 py-3 font-semibold text-white/70 hover:text-white hover:bg-white/[0.04] transition"
               >
                 <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                   <circle cx="12" cy="12" r="9" />

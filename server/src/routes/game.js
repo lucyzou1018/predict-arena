@@ -10,7 +10,7 @@ import { buildSettlementProof, buildSettlementTree } from "../utils/settlementMe
 const router = Router();
 const norm = (wallet = "") => wallet.toLowerCase();
 
-router.get("/price", (_, res) => res.json({ price: priceService.getPrice() }));
+router.get("/price", (_, res) => res.json(priceService.getStatus()));
 
 router.get("/games/:id", async (req, res) => {
   const g = await query("SELECT * FROM games WHERE id = $1", [req.params.id]);
@@ -332,7 +332,9 @@ router.get("/leaderboard", async (_, res) => {
   const r = await query(
     `SELECT wallet_address, wins, losses, total_earned, total_lost,
             (wins::float / NULLIF(wins+losses,0) * 100) as win_rate
-     FROM users ORDER BY total_earned DESC LIMIT 20`
+     FROM users
+     ORDER BY (total_earned - total_lost) DESC, total_earned DESC, wins DESC
+     LIMIT 20`
   );
   res.json({ users: r.rows });
 });

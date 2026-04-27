@@ -25,17 +25,15 @@ export default function Login() {
 
   return (
     <div className="relative flex items-center justify-center px-6 py-16 min-h-[calc(100vh-80px)]">
-      <div className="landing-bg" aria-hidden="true">
-        <div className="orb orb-1"/><div className="orb orb-2"/><div className="orb orb-3"/>
-      </div>
+      <div className="login-bg" aria-hidden="true" />
 
       <div className="relative z-10 w-full max-w-md">
-        <div className="landing-story-card p-8 sm:p-10">
+        <div className="dashboard-room-card p-8 sm:p-10">
           <div className="text-center mb-8">
-            <span className="landing-kicker mb-4 block">{t("login.badge")}</span>
-            <h1 className="text-[26px] sm:text-[28px] font-black tracking-tight mb-2 leading-tight">
+            <span className="dashboard-kicker mb-4 block justify-center">{t("login.badge")}</span>
+            <h1 className="dashboard-title text-[26px] sm:text-[28px] font-black tracking-tight mb-2 leading-tight">
               {t("login.title")}{" "}
-              <span className="text-gradient-fuchsia">AlphaMatch</span>
+              <span className="dashboard-title-highlight">AlphaMatch</span>
             </h1>
             <p className="text-white/55 text-sm leading-relaxed">
               {t("login.desc")}
@@ -45,12 +43,12 @@ export default function Login() {
           <button
             onClick={handleConnect}
             disabled={connecting}
-            className="relative w-full overflow-hidden flex items-center justify-center gap-2.5 px-5 py-3.5 rounded-xl font-semibold text-sm text-white bg-gradient-to-r from-indigo-500 via-violet-500 to-fuchsia-500 shadow-lg shadow-violet-500/25 hover:shadow-violet-500/40 transition disabled:opacity-60 disabled:cursor-not-allowed"
+            className="dashboard-primary-btn relative w-full overflow-hidden flex items-center justify-center gap-2.5 px-5 py-3.5 font-semibold text-sm disabled:opacity-60 disabled:cursor-not-allowed"
           >
             <span
               className="absolute inset-0 opacity-80"
               style={{
-                background: "linear-gradient(110deg,rgba(113,96,255,0.0),rgba(191,241,255,0.22),rgba(113,96,255,0.0))",
+                background: "linear-gradient(110deg,rgba(143,63,114,0.0),rgba(255,228,240,0.16),rgba(236,72,153,0.0))",
                 backgroundSize: "220% 100%",
                 animation: "shimmer 2.8s linear infinite",
               }}
@@ -75,7 +73,7 @@ export default function Login() {
 
           <ul className="space-y-2.5">
             {[t("login.point1"), t("login.point2"), t("login.point3")].map((item) => (
-              <li key={item} className="flex items-start gap-2.5 text-xs text-white/60">
+              <li key={item} className="dashboard-room-subcard flex items-start gap-2.5 px-3 py-3 text-xs text-white/62">
                 <span className="mt-0.5 w-4 h-4 rounded-full flex items-center justify-center flex-shrink-0 bg-fuchsia-500/10 border border-fuchsia-500/30">
                   <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="rgb(240,180,255)" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round">
                     <polyline points="20 6 9 17 4 12" />

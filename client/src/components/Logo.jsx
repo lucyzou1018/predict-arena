@@ -1,13 +1,26 @@
-export function Logo({ className = "h-5 w-auto" }) {
+import { useId } from "react";
+
+export function Logo({ className = "h-5 w-auto", active = false }) {
+  const gradientId = useId();
+
   return (
     <svg
       viewBox="241 173 1693 263"
       xmlns="http://www.w3.org/2000/svg"
-      fill="currentColor"
+      fill={active ? `url(#${gradientId})` : "currentColor"}
       className={className}
       aria-label="ALPHA MATCH"
       role="img"
     >
+      {active ? (
+        <defs>
+          <linearGradient id={gradientId} x1="241" y1="304.5" x2="1934" y2="304.5" gradientUnits="userSpaceOnUse">
+            <stop offset="0%" stopColor="#fff8fb" />
+            <stop offset="52%" stopColor="#f5d0fe" />
+            <stop offset="100%" stopColor="#f9a8d4" />
+          </linearGradient>
+        </defs>
+      ) : null}
       <path d="M399.238 173L477.369 301.477L435.062 324.852L397.587 259.017L339.709 353.473L397.685 319.904L412.7 347.11L486.396 308.137L408.88 390.65L389.423 357.887L241 436L399.238 173Z" />
       <path d="M487.326 321.956L557 435.873L460.913 387.652L446.745 365.522L487.326 321.956Z" />
       <path d="M1298.57 345V255H1315.32L1369.76 328.418L1423.37 255H1440.13V345H1428.88V265.195L1375.15 339.082H1364.95L1309.82 265.195V345H1298.57Z" />

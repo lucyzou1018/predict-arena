@@ -7,10 +7,12 @@ import{SERVER_URL}from"../config/constants";
 import{useGame}from"../context/GameContext";
 import{useContract}from"../hooks/useContract";
 import{useBtcPrice}from"../hooks/useBtcPrice";
-import{BtcTicker,TeamSlots,MatchAnimation,PaymentModal}from"../components";
+import{BtcTicker,TeamSlots,MatchAnimation,PaymentModal,RoomTransition}from"../components";
 import{ENTRY_FEE,TEAM_SIZES,PAYMENT_TIMEOUT}from"../config/constants";
 import{useT}from"../context/LangContext";
 import{Trophy,XCircle,TrendingUp}from"lucide-react";
+
+const EMPTY_STATS={wins:0,losses:0,total_earned:0,total_lost:0};
 
 function formatPaymentUiError(message){
   const text=(message||"").toLowerCase();
@@ -173,13 +175,13 @@ function SizeSelectorBase({selectedSize,onSelect,onAction,actionLabel,disabled,l
           <button key={s} onClick={()=>onSelect(s)} disabled={disabled}
             className={`py-3 rounded-xl font-black text-base transition-all
               ${selectedSize===s
-                ?"bg-gradient-to-br from-purple-500 to-fuchsia-600 text-white shadow-lg shadow-fuchsia-500/25 -translate-y-0.5"
+                ?"border border-fuchsia-400/30 bg-gradient-to-br from-[#6a2147] via-[#8f3f72] to-[#c04bd3] text-white shadow-[0_0_24px_rgba(236,72,153,0.18)] -translate-y-0.5"
                 :"bg-white/[0.03] border border-white/[0.06] text-white/20 hover:bg-white/[0.06] hover:text-white/40"}
               ${disabled?"!opacity-30 cursor-not-allowed":""}`}
           >{s}P</button>
         ))}
       </div>
-      <button onClick={onAction} disabled={disabled} className={`btn-primary w-full py-3 font-bold text-sm ${disabled?"!opacity-30 cursor-not-allowed":""}`}>{actionLabel}</button>
+      <button onClick={onAction} disabled={disabled} className={`dashboard-primary-btn w-full py-3 font-bold text-sm ${disabled?"!opacity-30 cursor-not-allowed":""}`}>{actionLabel}</button>
     </div>
   );
 }
@@ -254,7 +256,7 @@ function TeamSizeGrid({ selectedSize, onSelect, disabled }) {
           disabled={disabled}
           className={`rounded-[18px] min-h-[68px] sm:min-h-[76px] px-3 py-2.5 border transition-all text-left ${
             selectedSize === size
-              ? "border-fuchsia-400/45 bg-gradient-to-br from-fuchsia-500/22 via-violet-500/16 to-indigo-500/10 shadow-[0_0_32px_rgba(168,85,247,0.18)] -translate-y-0.5"
+              ? "border-fuchsia-400/34 bg-gradient-to-br from-[#59203f]/90 via-[#7a2f59]/88 to-[#ae47be]/82 shadow-[0_0_28px_rgba(236,72,153,0.14)] -translate-y-0.5"
               : "border-white/[0.08] bg-white/[0.03] text-white/55 hover:bg-white/[0.05] hover:border-white/[0.12]"
             } ${disabled ? "!opacity-30 cursor-not-allowed" : ""}`}
         >
@@ -293,9 +295,9 @@ function CreateRoomSelectorCard({ selectedSize, onSelect, onAction, disabled, bl
         type="button"
         onClick={onAction}
         disabled={disabled}
-        className={`btn-primary w-full !py-3.5 !text-[15px] ${disabled ? "!opacity-30 cursor-not-allowed" : ""}`}
+        className={`dashboard-primary-btn w-full !py-3.5 !text-[15px] ${disabled ? "!opacity-30 cursor-not-allowed" : ""}`}
       >
-        Create Arena
+        Create
       </button>
     </>
   );
@@ -335,9 +337,9 @@ function JoinRoomSelectorCard({ value, onChange, onSubmit, disabled, blockedMsg 
         type="button"
         onClick={onSubmit}
         disabled={value.length < 6 || disabled}
-        className="btn-primary w-full !py-3.5 !text-[15px] disabled:!opacity-30"
+        className="dashboard-primary-btn w-full !py-3.5 !text-[15px] disabled:!opacity-30"
       >
-        {t("home.action.joinArena")}
+        Join
       </button>
     </>
   );
@@ -370,7 +372,7 @@ function QuickMatchSelectorCard({ selectedSize, onSelect, onAction, disabled, bl
         type="button"
         onClick={onAction}
         disabled={disabled}
-        className={`btn-primary w-full !py-3.5 !text-[15px] ${disabled ? "!opacity-30 cursor-not-allowed" : ""}`}
+        className={`dashboard-primary-btn w-full !py-3.5 !text-[15px] ${disabled ? "!opacity-30 cursor-not-allowed" : ""}`}
       >
         Match
       </button>
@@ -386,6 +388,9 @@ export default function Home(){
   const{updateGame}=useGame();
   const{payForGame,payForRoomEntry,claimGameFunds,getGameClaimStatus,loading,claiming,mockPay,shouldUseMockPayment}=useContract();
   const price=useBtcPrice();
+  const titlePre=t("home.hero.title.pre");
+  const titleHighlight=t("home.hero.title.highlight");
+  const titleFull=`${titlePre} ${titleHighlight}`;
 
   // i18n helpers for things computed outside the component
   const translateHistoryResult=(g)=>{
@@ -429,8 +434,12 @@ export default function Home(){
   const[historyFilter,setHistoryFilter]=useState("all");
   const[payoutRulesOpen,setPayoutRulesOpen]=useState(false);
   const[historyPage,setHistoryPage]=useState(1);
-  const[stats,setStats]=useState(null);
+  const[stats,setStats]=useState(EMPTY_STATS);
   const[claimingHistoryId,setClaimingHistoryId]=useState(null);
+  const[createTransitioning,setCreateTransitioning]=useState(false);
+  const[joinTransitioning,setJoinTransitioning]=useState(false);
+  const[visibleTitleLength,setVisibleTitleLength]=useState(()=>Math.min(2,titleFull.length));
+  const titleTypingTimerRef=useRef(null);
 
   const[mode,setMode]=useState("create");
   const[createTeamSize,setCreateTeamSize]=useState(2);
@@ -448,6 +457,7 @@ export default function Home(){
   const[paymentErr,setPaymentErr]=useState(null);
   const[paymentNotice,setPaymentNotice]=useState(null);
   const[paymentFailureDialog,setPaymentFailureDialog]=useState(null);
+  const[suppressRestoredPaymentModal,setSuppressRestoredPaymentModal]=useState(false);
   const[roomCode,setRoomCode]=useState("");
   const[openRoom,setOpenRoom]=useState(null);
   const[room,setRoom]=useState({current:0,total:0,players:[]});
@@ -466,6 +476,36 @@ export default function Home(){
   const[joinCountdown,setJoinCountdown]=useState(null);
 
   const[joinPhase,setJoinPhase]=useState("select");
+
+  const visibleTitle=titleFull.slice(0,visibleTitleLength);
+  const typedTitlePre=visibleTitle.slice(0,Math.min(visibleTitle.length,titlePre.length));
+  const showTitleGap=visibleTitle.length>titlePre.length;
+  const typedTitleHighlight=visibleTitle.length>titlePre.length+1?visibleTitle.slice(titlePre.length+1):"";
+
+  useEffect(()=>{
+    setVisibleTitleLength(Math.min(2,titleFull.length));
+    if(titleTypingTimerRef.current){
+      clearInterval(titleTypingTimerRef.current);
+      titleTypingTimerRef.current=null;
+    }
+    if(titleFull.length<=2)return;
+    titleTypingTimerRef.current=window.setInterval(()=>{
+      setVisibleTitleLength((prev)=>{
+        const next=Math.min(prev+2,titleFull.length);
+        if(next>=titleFull.length&&titleTypingTimerRef.current){
+          clearInterval(titleTypingTimerRef.current);
+          titleTypingTimerRef.current=null;
+        }
+        return next;
+      });
+    },150);
+    return()=>{
+      if(titleTypingTimerRef.current){
+        clearInterval(titleTypingTimerRef.current);
+        titleTypingTimerRef.current=null;
+      }
+    };
+  },[titleFull]);
   const[joinErr,setJoinErr]=useState(null);
   const[joinPaid,setJoinPaid]=useState(false);
   const[joinCode,setJoinCode]=useState("");
@@ -485,6 +525,7 @@ export default function Home(){
   const createPaidRef=useRef(createPaid); createPaidRef.current=createPaid;
   const joinPaidRef=useRef(joinPaid); joinPaidRef.current=joinPaid;
   const joinCodeRef=useRef(joinCode); joinCodeRef.current=joinCode;
+  const joinValidInfoRef=useRef(joinValidInfo); joinValidInfoRef.current=joinValidInfo;
   const walletRef=useRef(wallet); walletRef.current=wallet;
   const roomRef=useRef(room); roomRef.current=room;
   const joinRoomRef=useRef(joinRoom); joinRoomRef.current=joinRoom;
@@ -496,6 +537,105 @@ export default function Home(){
   const paymentResumeRequestAtRef=useRef(0);
   const paymentStartedAtRef=useRef(null);
   const paymentFailureDialogRef=useRef(null);
+  const pendingCreatedRoomRef=useRef(null);
+  const createTransitionDoneRef=useRef(false);
+  const createTransitioningRef=useRef(false); createTransitioningRef.current=createTransitioning;
+  const pendingJoinedRoomRef=useRef(null);
+  const joinTransitionDoneRef=useRef(false);
+  const joinTransitioningRef=useRef(false); joinTransitioningRef.current=joinTransitioning;
+  const previousWalletRef=useRef(wallet);
+
+  const goToCreatedRoom=useCallback((payload=null)=>{
+    const roomPayload=payload||pendingCreatedRoomRef.current;
+    if(!roomPayload?.inviteCode)return;
+    nav(`/room/${roomPayload.inviteCode}`,{
+      state:{
+        fromCreate:true,
+        inviteCode:roomPayload.inviteCode,
+        expiresAt:roomPayload.expiresAt,
+        teamSize:roomPayload.teamSize||createTeamSizeRef.current,
+        current:1,
+        players:walletRef.current?[walletRef.current]:[],
+        phase:"waiting",
+      }
+    });
+  },[nav]);
+
+  const goToJoinedRoom=useCallback((payload=null)=>{
+    const roomPayload=payload||pendingJoinedRoomRef.current;
+    if(!roomPayload?.inviteCode)return;
+    nav(`/room/${roomPayload.inviteCode}`,{
+      state:{
+        fromJoin:true,
+        inviteCode:roomPayload.inviteCode,
+        expiresAt:roomPayload.expiresAt||null,
+        teamSize:roomPayload.teamSize||joinRoomRef.current.total||joinValidInfoRef.current?.total||0,
+        current:roomPayload.current||0,
+        players:Array.isArray(roomPayload.players)?roomPayload.players:[],
+        phase:roomPayload.phase||"waiting",
+      }
+    });
+  },[nav]);
+
+  const handleRoomTransitionComplete=useCallback(()=>{
+    if(createTransitioningRef.current){
+      createTransitionDoneRef.current=true;
+      if(pendingCreatedRoomRef.current)goToCreatedRoom();
+      return;
+    }
+    if(joinTransitioningRef.current){
+      joinTransitionDoneRef.current=true;
+      if(pendingJoinedRoomRef.current)goToJoinedRoom();
+    }
+  },[goToCreatedRoom,goToJoinedRoom]);
+
+  const maybeStartJoinTransition=useCallback((d={},phaseHint)=>{
+    if(joinPhaseRef.current!=="joining"&&joinPhaseRef.current!=="waiting"&&joinPhaseRef.current!=="preparing")return false;
+    const total=Number(d?.total||d?.players?.length||0);
+    const current=Number(d?.current||d?.players?.length||total||0);
+    const players=Array.isArray(d?.players)?d.players:[];
+    const paymentOpen=!!(d?.paymentOpen||d?.chainGameId);
+    const resolvedPhase=phaseHint||(paymentOpen?"payment":(d?.status==="full"||(total&&current>=total))?"preparing":"waiting");
+    const payload={
+      inviteCode:d?.inviteCode||joinCodeRef.current||"",
+      expiresAt:resolvedPhase==="waiting"?(d?.expiresAt||null):null,
+      teamSize:total,
+      current,
+      players,
+      phase:resolvedPhase,
+    };
+    if(!payload.inviteCode)return false;
+    pendingJoinedRoomRef.current=payload;
+    if(joinTransitionDoneRef.current){
+      goToJoinedRoom(payload);
+    }else if(!joinTransitioningRef.current){
+      joinTransitionDoneRef.current=false;
+      setJoinTransitioning(true);
+    }
+    return true;
+  },[goToJoinedRoom]);
+  const maybeStartJoinTransitionRef=useRef(maybeStartJoinTransition);
+  maybeStartJoinTransitionRef.current=maybeStartJoinTransition;
+
+  const failCreateStart=useCallback((message=t("home.err.serverUnavailable"))=>{
+    if(createTimeoutRef.current){clearTimeout(createTimeoutRef.current);createTimeoutRef.current=null;}
+    createCancelPendingRef.current=false;
+    pendingCreatedRoomRef.current=null;
+    createTransitionDoneRef.current=false;
+    setCreateTransitioning(false);
+    setCreateHint(null);
+    setCreatePhase("select");
+    setCreateErr(message);
+  },[t]);
+
+  const failJoinStart=useCallback((message=t("home.err.serverUnavailable"))=>{
+    if(joinTimeoutRef.current){clearTimeout(joinTimeoutRef.current);joinTimeoutRef.current=null;}
+    pendingJoinedRoomRef.current=null;
+    joinTransitionDoneRef.current=false;
+    setJoinTransitioning(false);
+    setJoinPhase("select");
+    setJoinErr(message);
+  },[t]);
 
   const resetMatchState=useCallback((message=null,{cancelQueue=false}={})=>{
     if(cancelQueue)emit("match:cancel");
@@ -555,6 +695,93 @@ export default function Home(){
     }catch{}
   },[getGameClaimStatus]);
 
+  const restoreOpenRoom=useCallback(async(targetWallet=walletRef.current,options={})=>{
+    if(!targetWallet)return null;
+    try{
+      const response=await fetch(`${SERVER_URL}/api/users/${targetWallet}/open-room`,options?.signal?{signal:options.signal}:undefined);
+      const d=await response.json();
+      const ownedRoom=d.room?.is_owner?d.room:null;
+      setOpenRoom(ownedRoom);
+      if(!d.room?.invite_code){
+        setSuppressRestoredPaymentModal(false);
+        return null;
+      }
+      const code=d.room.invite_code;
+      const players=d.room.players?.length?d.room.players:Array.from({length:d.room.current_players||1},(_,i)=> i===0 ? targetWallet : `player-${i}`);
+      const total=d.room.max_players;
+      const current=d.room.current_players||players.length||1;
+      const expiresAt=(d.room.expires_at?new Date(d.room.expires_at).getTime():new Date(d.room.created_at).getTime()+300000);
+      const isExpired=expiresAt<=Date.now();
+      const isPaymentPhase=d.room.phase==="payment"||d.room.phase==="paid_waiting";
+      const isPreparingPhase=d.room.phase==="preparing";
+      const nextPaymentStartedAt=d.room.payment_started_at?new Date(d.room.payment_started_at).getTime():null;
+      setSuppressRestoredPaymentModal(isPaymentPhase||isPreparingPhase);
+      if(isPaymentPhase||isPreparingPhase){
+        setRoomFullInfo({gameId:d.room.game_id||d.room.id,chainGameId:d.room.chain_game_id||null,inviteCode:code,maxPlayers:total,owner:d.room.owner||null,auth:d.room.auth||null,players,paymentTimeout:d.room.payment_timeout_ms});
+        setPaymentProgress({paidCount:d.room.paid_count||0,total:d.room.total_players||total});
+        setPaymentStartedAt(isPaymentPhase?nextPaymentStartedAt:null);
+      }else{
+        setRoomFullInfo(null);
+        setPaymentProgress({paidCount:0,total:0});
+        setPaymentStartedAt(null);
+      }
+      if(d.room.is_owner){
+        if(createTimeoutRef.current){clearTimeout(createTimeoutRef.current);createTimeoutRef.current=null;}
+        setCreateTeamSize(total);
+        setRoomCode(code);
+        setRoom({current,total,players});
+        setCreateErr(null);
+        setCreateHint(null);
+        if(createPhaseRef.current==="creating"||createTransitioningRef.current){
+          pendingCreatedRoomRef.current={inviteCode:code,expiresAt,teamSize:total};
+          if(createTransitionDoneRef.current){goToCreatedRoom(pendingCreatedRoomRef.current);}
+          return "owner";
+        }
+        if(isPaymentPhase||isPreparingPhase){
+          setCreatePaid(d.room.phase==="paid_waiting");
+          setCreatePhase(d.room.phase);
+          setRoomExpiresAt(null);
+        }else if(isExpired){
+          setCreatePhase("expired");
+        }else{
+          setCreatePhase("waiting");
+          setRoomExpiresAt(expiresAt);
+        }
+        return "owner";
+      }else{
+        setJoinCode(code);
+        setJoinRoom({current,total,players});
+        const joinRoomPayload={inviteCode:code,expiresAt:isPaymentPhase||isPreparingPhase?null:expiresAt,teamSize:total,current,players,phase:isPaymentPhase?d.room.phase:(isPreparingPhase?"preparing":"waiting")};
+        if(joinPhaseRef.current==="joining"||joinTransitioningRef.current){
+          pendingJoinedRoomRef.current=joinRoomPayload;
+          if(joinTransitionDoneRef.current){goToJoinedRoom(pendingJoinedRoomRef.current);}
+          else if(!joinTransitioningRef.current){
+            joinTransitionDoneRef.current=false;
+            setJoinTransitioning(true);
+          }
+          return "guest";
+        }
+        if(isPaymentPhase||isPreparingPhase){
+          setJoinPaid(d.room.phase==="paid_waiting");
+          setJoinPhase(d.room.phase);
+          setJoinExpiresAt(null);
+        }else if(isExpired){
+          setJoinErr(t("home.expiredMsg"));
+          setJoinPhase("select");
+        }else{
+          setJoinPhase("waiting");
+          setJoinExpiresAt(expiresAt);
+        }
+        return "guest";
+      }
+    }catch{
+      setSuppressRestoredPaymentModal(false);
+      return null;
+    }
+  },[goToCreatedRoom,goToJoinedRoom,t]);
+  const reloadHistoryRef=useRef(reloadHistory); reloadHistoryRef.current=reloadHistory;
+  const restoreOpenRoomRef=useRef(restoreOpenRoom); restoreOpenRoomRef.current=restoreOpenRoom;
+
   const isPaymentClosureReason=useCallback((reason="")=>/timed out|timeout|window closed|did not complete payment|room has been dissolved/i.test(String(reason)),[]);
 
   const handleRoomPaymentFailure=useCallback((reason)=>{
@@ -596,6 +823,7 @@ export default function Home(){
   // Panel focus state
   const scrollRef=useRef(null);
   const[activeCard,setActiveCard]=useState(0);
+  const[focusedCard,setFocusedCard]=useState(0);
   const[isDesktopCarousel,setIsDesktopCarousel]=useState(()=>typeof window!=="undefined"&&window.innerWidth>=768);
   const CARDS=["create","join","match"];
   const pageCount=isDesktopCarousel?2:CARDS.length;
@@ -627,15 +855,27 @@ export default function Home(){
     if(scrollPosRef.current===pos)return;
     scrollPosRef.current=pos;
     setActiveCard(pos);
-    setMode(CARDS[pos]);
+    if(!isDesktopCarousel){
+      setFocusedCard(pos);
+      setMode(CARDS[pos]);
+    }
   };
 
   const goCard=(idx)=>{
     const next=Math.max(0,Math.min(maxPageIndex,idx));
     scrollPosRef.current=next;
     setActiveCard(next);
-    setMode(CARDS[next]);
+    if(!isDesktopCarousel){
+      setFocusedCard(next);
+      setMode(CARDS[next]);
+    }
     scrollToCard(next);
+  };
+
+  const focusCard=(idx)=>{
+    const next=Math.max(0,Math.min(CARDS.length-1,idx));
+    setFocusedCard(next);
+    setMode(CARDS[next]);
   };
 
   const scrollRight=()=>goCard(activeCard+1);
@@ -645,9 +885,12 @@ export default function Home(){
     if(activeCard<=maxPageIndex)return;
     scrollPosRef.current=maxPageIndex;
     setActiveCard(maxPageIndex);
-    setMode(CARDS[maxPageIndex]);
+    if(!isDesktopCarousel){
+      setFocusedCard(maxPageIndex);
+      setMode(CARDS[maxPageIndex]);
+    }
     requestAnimationFrame(()=>scrollToCard(maxPageIndex));
-  },[activeCard,maxPageIndex]);
+  },[activeCard,isDesktopCarousel,maxPageIndex]);
 
   // Room expiry countdown timer
   useEffect(()=>{
@@ -710,64 +953,32 @@ export default function Home(){
   },[paymentStartedAt]);
 
   useEffect(()=>{
+    const previousWallet=previousWalletRef.current;
+    if(previousWallet&&!wallet){
+      nav("/login?next=/arena",{replace:true});
+    }
+    previousWalletRef.current=wallet;
+  },[wallet,nav]);
+
+  useEffect(()=>{
     // Reset ALL state on wallet disconnect or switch
-    setHistory([]);setStats(null);
+    setHistory([]);setStats(EMPTY_STATS);
+    setCreateTransitioning(false);pendingCreatedRoomRef.current=null;createTransitionDoneRef.current=false;
+    setJoinTransitioning(false);pendingJoinedRoomRef.current=null;joinTransitionDoneRef.current=false;
+    setSuppressRestoredPaymentModal(false);
     setCreatePhase("select");setCreateErr(null);setCreatePaid(false);setRoomCode("");setRoom({current:0,total:0,players:[]});setOpenRoom(null);setRoomExpiresAt(null);setRoomCountdown(null);
     setJoinPhase("select");setJoinErr(null);setJoinPaid(false);setJoinCode("");setJoinRoom({current:0,total:0,players:[]});setJoinExpiresAt(null);setJoinCountdown(null);setJoinValidInfo(null);
     setMatchPhase("select");setMatchErr(null);setMatchInfo({current:0});setPending(null);
     setPaymentStartedAt(null);setPaymentCountdown(null);setRoomFullInfo(null);setPaymentProgress({paidCount:0,total:0});setPaymentErr(null);
     if(!wallet) return;
-    reloadHistory(wallet);
-    fetch(`${SERVER_URL}/api/users/${wallet}`).then(r=>r.json()).then(setStats).catch(()=>{});
-    fetch(`${SERVER_URL}/api/users/${wallet}/open-room`).then(r=>r.json()).then(d=>{
-      setOpenRoom(d.room||null);
-      if(d.room?.invite_code){
-        const code=d.room.invite_code;
-        const players=d.room.players?.length?d.room.players:Array.from({length:d.room.current_players||1},(_,i)=> i===0 ? wallet : `player-${i}`);
-        const total=d.room.max_players;
-        const current=d.room.current_players||players.length||1;
-        const expiresAt=(d.room.expires_at?new Date(d.room.expires_at).getTime():new Date(d.room.created_at).getTime()+300000);
-        const isExpired=expiresAt<=Date.now();
-        const isPaymentPhase=d.room.phase==="payment"||d.room.phase==="paid_waiting";
-        const isPreparingPhase=d.room.phase==="preparing";
-        const paymentStartedAt=d.room.payment_started_at?new Date(d.room.payment_started_at).getTime():null;
-        if(isPaymentPhase||isPreparingPhase){
-          setRoomFullInfo({gameId:d.room.game_id||d.room.id,chainGameId:d.room.chain_game_id||null,inviteCode:code,maxPlayers:total,owner:d.room.owner||null,auth:d.room.auth||null,players,paymentTimeout:d.room.payment_timeout_ms});
-          setPaymentProgress({paidCount:d.room.paid_count||0,total:d.room.total_players||total});
-          setPaymentStartedAt(isPaymentPhase?paymentStartedAt:null);
-        }
-        if(d.room.is_owner){
-          setCreateTeamSize(total);
-          setRoomCode(code);
-          setRoom({current,total,players});
-          if(isPaymentPhase||isPreparingPhase){
-            setCreatePaid(d.room.phase==="paid_waiting");
-            setCreatePhase(d.room.phase);
-            setRoomExpiresAt(null);
-          } else if(isExpired){
-            setCreatePhase("expired");
-          } else {
-            setRoomExpiresAt(expiresAt);
-            setCreatePhase("waiting");
-          }
-        } else {
-          setJoinCode(code);
-          setJoinRoom({current,total,players});
-          if(isPaymentPhase||isPreparingPhase){
-            setJoinPaid(d.room.phase==="paid_waiting");
-            setJoinPhase(d.room.phase);
-            setJoinExpiresAt(null);
-          } else if(isExpired){
-            setJoinErr(t("home.expiredMsg"));
-            setJoinPhase("select");
-          } else {
-            setJoinExpiresAt(expiresAt);
-            setJoinPhase("waiting");
-          }
-          setTimeout(()=>goCard(1),100);
-        }
-      }
-    }).catch(()=>{});
+    reloadHistoryRef.current(wallet);
+    fetch(`${SERVER_URL}/api/users/${wallet}`).then(r=>r.json()).then(data=>setStats({
+      wins:Number(data?.wins||0),
+      losses:Number(data?.losses||0),
+      total_earned:Number(data?.total_earned||0),
+      total_lost:Number(data?.total_lost||0),
+    })).catch(()=>setStats(EMPTY_STATS));
+    restoreOpenRoomRef.current(wallet);
   },[wallet]);
 
   // ===== SOCKET EVENT LISTENERS =====
@@ -775,16 +986,24 @@ export default function Home(){
   useEffect(()=>{
     const refreshHistory=()=>reloadHistory(walletRef.current);
     const u=[
+      on("connect_error",()=>{
+        const msg=t("home.err.serverUnavailable");
+        if((createPhaseRef.current==="creating"||createTransitioningRef.current)&&!pendingCreatedRoomRef.current)failCreateStart(msg);
+        if((joinPhaseRef.current==="validating"||joinPhaseRef.current==="joining"||joinTransitioningRef.current)&&!pendingJoinedRoomRef.current)failJoinStart(msg);
+      }),
+      on("disconnect",()=>{
+        const msg=t("home.err.serverUnavailable");
+        if((createPhaseRef.current==="creating"||createTransitioningRef.current)&&!pendingCreatedRoomRef.current)failCreateStart(msg);
+        if((joinPhaseRef.current==="validating"||joinPhaseRef.current==="joining"||joinTransitioningRef.current)&&!pendingJoinedRoomRef.current)failJoinStart(msg);
+      }),
       on("room:created",d=>{
         if(createTimeoutRef.current){clearTimeout(createTimeoutRef.current);createTimeoutRef.current=null;}
         createCancelPendingRef.current=false;
         createPhaseBeforeCancelRef.current="select";
         setCreateErr(null);
         setCreateHint(null);
-        setRoomCode(d.inviteCode);
-        setRoom({current:1,total:createTeamSizeRef.current,players:[walletRef.current]});
-        setRoomExpiresAt(d.expiresAt);
-        setCreatePhase("waiting");
+        pendingCreatedRoomRef.current={inviteCode:d.inviteCode,expiresAt:d.expiresAt,teamSize:createTeamSizeRef.current};
+        if(createTransitionDoneRef.current){goToCreatedRoom();}
       }),
       on("room:update",d=>{
         if(createPhaseRef.current==="waiting"||createPhaseRef.current==="paid_waiting"||createPhaseRef.current==="preparing"){
@@ -800,14 +1019,18 @@ export default function Home(){
         }
         const roomIsFull=d.status==="full"||(d.total&&d.current>=d.total);
         if(roomIsFull){
-          if(d.paymentOpen||d.chainGameId)enterRoomPayment(d);
-          else {
+          if(d.paymentOpen||d.chainGameId){
+            if(maybeStartJoinTransitionRef.current(d,"payment"))return;
+            enterRoomPayment(d);
+          }else {
+            if(maybeStartJoinTransitionRef.current(d,"preparing"))return;
             if(createPhaseRef.current==="waiting"||createPhaseRef.current==="creating")setCreatePhase("preparing");
             if(joinPhaseRef.current==="waiting"||joinPhaseRef.current==="joining")setJoinPhase("preparing");
           }
         }
       }),
       on("room:preparing",d=>{
+        if(maybeStartJoinTransitionRef.current(d,"preparing"))return;
         const total=d.total||d.players?.length||0;
         setPaymentErr(null);
         setPaymentNotice(null);
@@ -825,19 +1048,38 @@ export default function Home(){
         if(joinPhaseRef.current==="waiting"||joinPhaseRef.current==="joining")setJoinPhase("preparing");
       }),
       on("room:full",d=>{
+        if(maybeStartJoinTransitionRef.current(d,d?.paymentOpen||d?.chainGameId?"payment":"preparing"))return;
         if(d.paymentOpen||d.chainGameId)enterRoomPayment(d);
         else {
           if(createPhaseRef.current==="waiting"||createPhaseRef.current==="creating")setCreatePhase("preparing");
           if(joinPhaseRef.current==="waiting"||joinPhaseRef.current==="joining")setJoinPhase("preparing");
         }
       }),
-      on("room:payment:opened",d=>{enterRoomPayment(d);}),
+      on("room:payment:opened",d=>{
+        if(maybeStartJoinTransitionRef.current(d,"payment"))return;
+        enterRoomPayment(d);
+      }),
       on("room:error",d=>{
         if(createTimeoutRef.current){clearTimeout(createTimeoutRef.current);createTimeoutRef.current=null;}
+        if(joinTimeoutRef.current){clearTimeout(joinTimeoutRef.current);joinTimeoutRef.current=null;}
         const uiMsg=formatPaymentUiError(d.message);
+        if(/already in a room/i.test(String(d?.message||""))){
+          restoreOpenRoom(walletRef.current);
+          return;
+        }
+        if(createPhaseRef.current==="creating"){
+          setCreateTransitioning(false);
+          pendingCreatedRoomRef.current=null;
+          createTransitionDoneRef.current=false;
+        }
         if(createPhaseRef.current==="dissolving"){
           createCancelPendingRef.current=false;
           setCreatePhase(createPhaseBeforeCancelRef.current==="paid_waiting"?"paid_waiting":"waiting");
+        }
+        if(joinPhaseRef.current==="joining"){
+          setJoinTransitioning(false);
+          pendingJoinedRoomRef.current=null;
+          joinTransitionDoneRef.current=false;
         }
         setCreateHint(null);
         const tUiMsg=translateUiError(uiMsg);
@@ -899,7 +1141,7 @@ export default function Home(){
         if(createTimeoutRef.current){clearTimeout(createTimeoutRef.current);createTimeoutRef.current=null;}
         createCancelPendingRef.current=false;
         createPhaseBeforeCancelRef.current="select";
-        const reason=d?.reason||"A player timed out before completing payment. This room has been dissolved.";
+        const reason=d?.reason||"A player did not complete payment. This room has been dissolved.";
         if(isPaymentClosureReason(reason)){
           handleRoomPaymentFailure(reason);
           return;
@@ -914,17 +1156,24 @@ export default function Home(){
         setJoinPhase(prev=>(prev==="payment"||prev==="paid_waiting"||prev==="preparing")?"select":prev);
       }),
       on("room:joined",d=>{
+        if(joinTimeoutRef.current){clearTimeout(joinTimeoutRef.current);joinTimeoutRef.current=null;}
         if(d.error){setJoinErr(d.error);if(joinPaidRef.current){refund(ENTRY_FEE);setJoinPaid(false);}setJoinPhase("select");return;}
         const total=d.total||d.players?.length||0;
         const current=d.current||d.players?.length||0;
         setJoinRoom({current,total,players:d.players});
         if(d.expiresAt)setJoinExpiresAt(d.expiresAt);
-        if(d.status==="full"){
-          if(d.paymentOpen||d.chainGameId)enterRoomPayment(d);
-          else setJoinPhase(current=>current==="waiting"||current==="joining"?"preparing":current);
-        } else if(joinPhaseRef.current!=="payment"&&joinPhaseRef.current!=="paid_waiting"){
-          setJoinPhase("waiting");
-        }
+        setJoinErr(null);
+        setJoinValidInfo(null);
+        pendingJoinedRoomRef.current={
+          inviteCode:d.inviteCode||joinCodeRef.current,
+          expiresAt:d.status==="full"||d.paymentOpen||d.chainGameId?null:d.expiresAt||null,
+          teamSize:total,
+          current,
+          players:Array.isArray(d.players)?d.players:[],
+          phase:d.paymentOpen||d.chainGameId?"payment":d.status==="full"?"preparing":"waiting",
+        };
+        joinTransitionDoneRef.current=false;
+        setJoinTransitioning(true);
       }),
       on("game:start",d=>{
         updateGame({gameId:d.gameId,chainGameId:d.chainGameId||d.gameId,mode:"room",teamSize:d.players.length,players:d.players,phase:"predicting",basePrice:d.basePrice,countdown:Math.round((d.predictTimeout||30000)/1000),predictSafeBuffer:Math.round((d.predictSafeBuffer||5000)/1000),predictionDeadline:d.predictionDeadline||null});
@@ -938,7 +1187,7 @@ export default function Home(){
       }),
     ];
     return()=>u.forEach(f=>f());
-  },[on,updateGame,nav,handleRoomPaymentFailure,isPaymentClosureReason]);
+  },[on,updateGame,nav,handleRoomPaymentFailure,isPaymentClosureReason,restoreOpenRoom,failCreateStart,failJoinStart,t]);
 
   // Check if any mode is currently active (not in idle "select" state)
   const isCreateBusy=createPhase!=="select";
@@ -963,18 +1212,102 @@ export default function Home(){
       ?t("home.err.matchBlocked.join")
       :null;
 
-  const createRoom=()=>{if(isJoinBusy||isMatchBusy){setCreateErr(t("home.err.finishFirst"));return;}if(isCreateBusy){setCreateErr(t("home.err.alreadyCreating"));return;}if(!mockMode && (!wallet || !provider || !signer)){connect({type:"create-room"});return;}createCancelPendingRef.current=false;createPhaseBeforeCancelRef.current="select";setCreateErr(null);setCreateHint(null);setCreatePhase("creating");if(createTimeoutRef.current)clearTimeout(createTimeoutRef.current);createTimeoutRef.current=setTimeout(()=>{createTimeoutRef.current=null;if(createPhaseRef.current==="creating")setCreateHint(t("home.err.baseSlow"));},12000);emit("room:create",{teamSize:createTeamSize});};
+  const createRoom=()=>{
+    if(isJoinBusy||isMatchBusy){setCreateErr(t("home.err.finishFirst"));return;}
+    if(isCreateBusy){setCreateErr(t("home.err.alreadyCreating"));return;}
+    if(!mockMode && (!wallet || !provider || !signer)){connect({type:"create-room"});return;}
+    createCancelPendingRef.current=false;
+    createPhaseBeforeCancelRef.current="select";
+    pendingCreatedRoomRef.current=null;
+    createTransitionDoneRef.current=false;
+    setCreateErr(null);
+    setCreateHint(null);
+    setCreatePhase("creating");
+    setCreateTransitioning(true);
+    if(createTimeoutRef.current)clearTimeout(createTimeoutRef.current);
+    createTimeoutRef.current=setTimeout(async()=>{
+      createTimeoutRef.current=null;
+      if(createPhaseRef.current!=="creating"||pendingCreatedRoomRef.current)return;
+      setCreateHint(t("home.err.baseSlow"));
+      const controller=new AbortController();
+      const abortTimer=setTimeout(()=>controller.abort(),3000);
+      const restored=await restoreOpenRoom(walletRef.current,{signal:controller.signal});
+      clearTimeout(abortTimer);
+      if(!restored&&createPhaseRef.current==="creating"&&!pendingCreatedRoomRef.current){
+        failCreateStart(t("home.err.serverUnavailable"));
+      }
+    },12000);
+    emit("room:create",{teamSize:createTeamSize});
+  };
   const payCreate=useCallback(async()=>{try{setPaymentErr(null);setPaymentNotice(null);if(!roomFullInfo?.gameId||!wallet)throw new Error("Missing game id");const startedAt=paymentStartedAtRef.current;const deadline=startedAt?startedAt+PAYMENT_TIMEOUT*1000:null;if((deadline&&Date.now()>=deadline)||paymentFailureDialogRef.current){handleRoomPaymentFailure(t("home.err.windowClosed"));return;}const paymentResult=await payForRoomEntry({inviteCode:roomCode,chainGameId:roomFullInfo?.chainGameId||null});const nowDeadline=paymentStartedAtRef.current?paymentStartedAtRef.current+PAYMENT_TIMEOUT*1000:deadline;if((nowDeadline&&Date.now()>=nowDeadline)||paymentFailureDialogRef.current){if(paymentResult?.paid)refund(ENTRY_FEE);handleRoomPaymentFailure(t("home.err.windowClosed"));return;}if(paymentResult?.chainGameId){setRoomFullInfo(prev=>prev?{...prev,chainGameId:paymentResult.chainGameId}:prev);}setPaymentProgress(prev=>({paidCount:Math.min(prev.total||roomFullInfo?.maxPlayers||1,Math.max(prev.paidCount||0,1)),total:prev.total||roomFullInfo?.maxPlayers||1}));setCreatePaid(true);setCreateErr(null);emit("room:payment:confirm",{gameId:roomFullInfo.gameId,chainGameId:paymentResult?.chainGameId||roomFullInfo?.chainGameId||null,inviteCode:roomCode,wallet});setCreatePhase("paid_waiting");}catch(e){const startedAtCatch=paymentStartedAtRef.current;const deadlineCatch=startedAtCatch?startedAtCatch+PAYMENT_TIMEOUT*1000:null;const timedOut=(deadlineCatch&&Date.now()>=deadlineCatch)||!!paymentFailureDialogRef.current;if(timedOut)return;const msg=formatPaymentUiError(e?.message||"Payment failed");setCreateErr(msg);setPaymentErr(msg);}},[payForRoomEntry,roomFullInfo,roomCode,emit,wallet,refund,handleRoomPaymentFailure]);
   const beginCreateRoomCancel=()=>{createCancelPendingRef.current=true;createPhaseBeforeCancelRef.current=createPhaseRef.current;setCreateErr(null);setCreateHint(t("home.cancelling"));setRoomCountdown(null);setCreatePhase("dissolving");emit("room:dissolve",{inviteCode:roomCodeRef.current||roomCode});};
   const cancelCreate=()=>{beginCreateRoomCancel();};
   const dissolveRoom=()=>{beginCreateRoomCancel();};
+  const enterCreatedRoom=useCallback(()=>{
+    const inviteCode=(roomCodeRef.current||roomCode||openRoom?.invite_code||roomFullInfo?.inviteCode||"").trim();
+    if(!inviteCode)return;
+    const players=Array.isArray(room.players)&&room.players.length
+      ? room.players
+      : Array.isArray(roomFullInfo?.players)&&roomFullInfo.players.length
+        ? roomFullInfo.players
+        : walletRef.current
+          ? [walletRef.current]
+          : [];
+    const total=room.total||roomFullInfo?.maxPlayers||createTeamSizeRef.current||createTeamSize;
+    const current=room.current||players.length||1;
+    const phase=["payment","paid_waiting","preparing"].includes(createPhaseRef.current)?createPhaseRef.current:"waiting";
+    nav(`/room/${inviteCode}`,{
+      state:{
+        fromCreate:true,
+        inviteCode,
+        expiresAt:phase==="waiting"?roomExpiresAt:null,
+        teamSize:total,
+        current,
+        players,
+        phase,
+      }
+    });
+  },[createTeamSize,nav,openRoom,room,roomCode,roomExpiresAt,roomFullInfo]);
+  const enterJoinedRoom=useCallback(()=>{
+    const inviteCode=(joinCodeRef.current||joinCode||roomFullInfo?.inviteCode||"").trim();
+    if(!inviteCode)return;
+    const players=Array.isArray(joinRoom.players)&&joinRoom.players.length
+      ? joinRoom.players
+      : Array.isArray(roomFullInfo?.players)&&roomFullInfo.players.length
+        ? roomFullInfo.players
+        : [];
+    const total=joinRoom.total||roomFullInfo?.maxPlayers||joinValidInfoRef.current?.total||players.length||0;
+    const current=joinRoom.current||players.length||0;
+    const phase=["payment","paid_waiting","preparing"].includes(joinPhaseRef.current)?joinPhaseRef.current:"waiting";
+    nav(`/room/${inviteCode}`,{
+      state:{
+        fromJoin:true,
+        inviteCode,
+        expiresAt:phase==="waiting"?joinExpiresAt:null,
+        teamSize:total,
+        current,
+        players,
+        phase,
+      }
+    });
+  },[joinCode,joinExpiresAt,joinRoom,nav,roomFullInfo]);
   const clearExpired=()=>{setCreatePhase("select");setRoomCode("");setRoom({current:0,total:0,players:[]});setOpenRoom(null);setCreateErr(null);reloadHistory(wallet);};
   const copyCode=()=>{navigator.clipboard.writeText(roomCode);setCopied(true);setTimeout(()=>setCopied(false),2000);};
   const shareTwitter=()=>{const url=typeof window!=="undefined"?window.location.origin:"";const text=t("home.share.text",{code:roomCode,url});const intent=`https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}`;if(typeof window!=="undefined")window.open(intent,"_blank","noopener,noreferrer");};
 
   // Join flow: confirm dialog (no payment), then join directly
   const submitJoin=()=>{if(isCreateBusy||isMatchBusy){setJoinErr(t("home.err.finishFirst"));return;}if(isJoinBusy){setJoinErr(t("home.err.alreadyJoin"));return;}if(!mockMode && (!wallet || !provider || !signer)){connect({type:"join-room",code:joinCode});return;}if(joinCode.length<6)return setJoinErr(t("home.err.incompleteCode"));setJoinErr(null);setJoinPhase("validating");if(joinTimeoutRef.current)clearTimeout(joinTimeoutRef.current);joinTimeoutRef.current=setTimeout(()=>{setJoinErr(t("home.err.invalidCode"));setJoinPhase("select");},4000);emit("room:validate",{inviteCode:joinCode.toUpperCase()});};
-  const confirmJoin=()=>{emit("room:join",{inviteCode:joinCode.toUpperCase()});setJoinPhase("joining");};
+  const confirmJoin=()=>{
+    if(joinTimeoutRef.current)clearTimeout(joinTimeoutRef.current);
+    joinTimeoutRef.current=setTimeout(()=>{
+      joinTimeoutRef.current=null;
+      if(joinPhaseRef.current==="joining"&&!pendingJoinedRoomRef.current){
+        failJoinStart(t("home.err.serverUnavailable"));
+      }
+    },8000);
+    emit("room:join",{inviteCode:joinCode.toUpperCase()});
+    setJoinPhase("joining");
+  };
   const payJoin=useCallback(async()=>{try{setPaymentErr(null);setPaymentNotice(null);if(!roomFullInfo?.gameId||!wallet)throw new Error("Missing game id");const startedAt=paymentStartedAtRef.current;const deadline=startedAt?startedAt+PAYMENT_TIMEOUT*1000:null;if((deadline&&Date.now()>=deadline)||paymentFailureDialogRef.current){handleRoomPaymentFailure(t("home.err.windowClosed"));return;}const paymentResult=await payForRoomEntry({inviteCode:roomFullInfo.inviteCode||joinCode,chainGameId:roomFullInfo?.chainGameId||null});const nowDeadline=paymentStartedAtRef.current?paymentStartedAtRef.current+PAYMENT_TIMEOUT*1000:deadline;if((nowDeadline&&Date.now()>=nowDeadline)||paymentFailureDialogRef.current){if(paymentResult?.paid)refund(ENTRY_FEE);handleRoomPaymentFailure(t("home.err.windowClosed"));return;}if(paymentResult?.chainGameId){setRoomFullInfo(prev=>prev?{...prev,chainGameId:paymentResult.chainGameId}:prev);}setPaymentProgress(prev=>({paidCount:Math.min(prev.total||roomFullInfo?.maxPlayers||1,Math.max(prev.paidCount||0,1)),total:prev.total||roomFullInfo?.maxPlayers||1}));setJoinPaid(true);setJoinErr(null);emit("room:payment:confirm",{gameId:roomFullInfo.gameId,chainGameId:paymentResult?.chainGameId||roomFullInfo?.chainGameId||null,inviteCode:roomFullInfo.inviteCode||joinCode,wallet});setJoinPhase("paid_waiting");}catch(e){const startedAtCatch=paymentStartedAtRef.current;const deadlineCatch=startedAtCatch?startedAtCatch+PAYMENT_TIMEOUT*1000:null;const timedOut=(deadlineCatch&&Date.now()>=deadlineCatch)||!!paymentFailureDialogRef.current;if(timedOut)return;const msg=formatPaymentUiError(e?.message||"Payment failed");setJoinErr(msg);setPaymentErr(msg);}},[joinCode,payForRoomEntry,emit,roomFullInfo,wallet,refund,handleRoomPaymentFailure]);
   const leaveRoom=()=>{emit("room:leave");if(joinPaid){refund(ENTRY_FEE);setJoinPaid(false);}setJoinPhase("select");setJoinExpiresAt(null);};
 
@@ -1038,7 +1371,8 @@ export default function Home(){
   const isMatchPaymentPhase=matchPhase==="payment";
   const isMatchPaidWaiting=matchPhase==="paid_waiting";
   const isWaitingPaymentPhase=isRoomPaidWaiting||isMatchPaidWaiting;
-  const showPayment=isRoomPreparing||isRoomPaymentPhase||isWaitingPaymentPhase||isMatchPreparing||isMatchPaymentPhase||!!paymentFailureDialog;
+  const showRoomPayment=(isRoomPreparing||isRoomPaymentPhase||isRoomPaidWaiting)&&!suppressRestoredPaymentModal;
+  const showPayment=showRoomPayment||isMatchPreparing||isMatchPaymentPhase||isMatchPaidWaiting||!!paymentFailureDialog;
   const paymentModalMode=isWaitingPaymentPhase?"waiting":(isRoomPreparing||isMatchPreparing)?"preparing":"confirm";
   const preparingMatchTotal=matchInfo.current||matchTeamSize;
   const onPayConfirm=createPhase==="payment"?payCreate:joinPhase==="payment"?payJoin:payMatch;
@@ -1116,13 +1450,21 @@ export default function Home(){
   const createRoomTotal=room.total||createTeamSize;
   const hasGeneratedRoom=(createPhase==="waiting"||createPhase==="paid_waiting"||createPhase==="preparing"||createPhase==="expired"||!!openRoom);
   const showCreateRoomCountdown=roomCountdown!==null&&roomCountdown>0&&room.current<createRoomTotal;
-  const showCreatePaymentCountdown=paymentCountdown!==null&&paymentCountdown>0&&createPhase==="paid_waiting";
+  const showCreatePaymentCountdown=paymentCountdown!==null&&paymentCountdown>0&&(createPhase==="payment"||createPhase==="paid_waiting");
   const createCountdownLabel=showCreatePaymentCountdown?t("home.countdown.payment"):t("home.countdown.expires");
   const createCountdownValue=showCreatePaymentCountdown?`${paymentCountdown}s`:fmtCountdown(roomCountdown);
+  const createdRoomInviteCode=(roomCode||openRoom?.invite_code||roomFullInfo?.inviteCode||"").trim();
+  const canEnterCreatedRoom=!!createdRoomInviteCode&&["waiting","preparing","payment","paid_waiting"].includes(createPhase);
+  const joinedRoomInviteCode=(joinCode||roomFullInfo?.inviteCode||"").trim();
+  const canEnterJoinedRoom=!!joinedRoomInviteCode&&["waiting","preparing","payment","paid_waiting"].includes(joinPhase);
 
   const renderCreatePanel=()=>(
-    <div className={`relative transition-all duration-300 ${activeCard===0?"[filter:drop-shadow(0_0_22px_rgba(217,70,239,0.3))]":"hover:[filter:drop-shadow(0_0_18px_rgba(217,70,239,0.18))]"}`}>
-      <div className="landing-story-card h-full min-h-[340px] sm:min-h-[360px] w-full !p-4 sm:!p-5">
+    <div
+      onPointerDownCapture={()=>focusCard(0)}
+      onFocusCapture={()=>focusCard(0)}
+      className={`relative transition-all duration-300 ${focusedCard===0?"[filter:drop-shadow(0_0_22px_rgba(217,70,239,0.22))]":"hover:[filter:drop-shadow(0_0_18px_rgba(217,70,239,0.18))]"}`}
+    >
+      <div className="dashboard-room-card h-full min-h-[340px] sm:min-h-[360px] w-full !p-4 sm:!p-5">
         {hasGeneratedRoom&&(
           <div className="flex items-start justify-between gap-3 mb-5">
             <div className="flex items-start gap-3 min-w-0">
@@ -1167,9 +1509,9 @@ export default function Home(){
         )}
         {createPhase==="creating"&&(<div className="text-center py-10"><div className="w-8 h-8 mx-auto rounded-full border-2 border-fuchsia-400/30 border-t-fuchsia-300 animate-spin mb-3"/><p className="text-white/40 text-xs">{t("home.creating")}</p></div>)}
         {createPhase==="dissolving"&&(<div className="text-center py-10"><div className="w-8 h-8 mx-auto rounded-full border-2 border-fuchsia-400/30 border-t-fuchsia-300 animate-spin mb-3"/><p className="text-white/40 text-xs">{t("home.cancelling")}</p></div>)}
-        {(createPhase==="waiting"||createPhase==="paid_waiting"||createPhase==="preparing")&&(
+        {(createPhase==="waiting"||createPhase==="payment"||createPhase==="paid_waiting"||createPhase==="preparing")&&(
           <div className="text-center">
-            <div className="rounded-[28px] border border-white/[0.08] bg-white/[0.03] px-5 py-4 mb-3 text-left">
+            <div className="dashboard-room-subcard px-5 py-4 mb-3 text-left">
               <div className="flex items-start justify-between gap-3 mb-1">
                 <p className="text-white/34 text-[9px] uppercase tracking-[0.28em]">{t("home.arenaCode")}</p>
                 <button
@@ -1198,22 +1540,31 @@ export default function Home(){
             </div>
             <TeamSlots total={createRoomTotal} players={room.players} current={room.current}/>
             <div className="mt-2 flex flex-wrap items-center justify-center gap-2 text-[10px]">
-              <div className="inline-flex items-center gap-1.5 rounded-full border border-white/[0.06] bg-white/[0.03] px-3 py-1.5">
+              <div className="dashboard-room-chip inline-flex items-center gap-1.5 px-3 py-1.5">
                 <span className="w-1.5 h-1.5 rounded-full bg-fuchsia-400 animate-pulse"/>
                 <span className="text-white/34 font-mono">{createPhase==="preparing" ? t("home.preparingPayment") : createPaid && paymentProgress.total ? `${paymentProgress.paidCount}/${paymentProgress.total} ${t("home.paid")}` : `${room.current}/${createRoomTotal} ${t("home.ready")}`}</span>
               </div>
             </div>
-            <button onClick={dissolveRoom} disabled={createPhase==="preparing"} className="mt-3 w-full py-2 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:bg-rose-500/[0.06] hover:text-rose-400 transition text-[10px] text-white/20 disabled:opacity-30 disabled:cursor-not-allowed">{t("home.cancel")}</button>
+            <div className="mt-3 flex gap-2">
+              <button onClick={dissolveRoom} className={`dashboard-secondary-btn danger ${canEnterCreatedRoom?"flex-1":"w-full"} py-2 text-[10px]`}>
+                {t("home.cancel")}
+              </button>
+              {canEnterCreatedRoom&&(
+                <button onClick={enterCreatedRoom} className="dashboard-secondary-btn flex-1 py-2 text-[10px] !text-fuchsia-100 hover:!text-white">
+                  {t("home.enterRoom")}
+                </button>
+              )}
+            </div>
           </div>
         )}
         {createPhase==="expired"&&(
           <div className="text-center">
             <p className="text-white/20 text-[8px] uppercase tracking-[0.3em] mb-2">{t("home.arenaCode")}</p>
-            <div className="bg-white/[0.04] border border-white/[0.06] rounded-xl px-4 py-3 mb-3">
+            <div className="dashboard-room-subcard px-4 py-3 mb-3">
               <span className="text-2xl font-mono font-black tracking-[0.4em] text-white/15 line-through">{roomCode}</span>
             </div>
             <p className="text-rose-400 text-xs mb-3">{t("home.expiredMsg")}</p>
-            <button onClick={clearExpired} className="w-full py-2.5 rounded-xl bg-gradient-to-br from-rose-500 to-rose-600 text-white font-bold text-sm shadow-lg shadow-rose-500/20 hover:shadow-rose-500/30 transition">
+            <button onClick={clearExpired} className="dashboard-primary-btn w-full py-2.5 font-bold text-sm">
               {t("home.expiredCta")}
             </button>
           </div>
@@ -1223,8 +1574,12 @@ export default function Home(){
   );
 
   const renderJoinPanel=()=>(
-    <div className={`relative transition-all duration-300 ${activeCard===1?"[filter:drop-shadow(0_0_22px_rgba(217,70,239,0.3))]":"hover:[filter:drop-shadow(0_0_18px_rgba(217,70,239,0.18))]"}`}>
-      <div className="landing-story-card h-full min-h-[340px] sm:min-h-[360px] w-full !p-4 sm:!p-5">
+    <div
+      onPointerDownCapture={()=>focusCard(1)}
+      onFocusCapture={()=>focusCard(1)}
+      className={`relative transition-all duration-300 ${focusedCard===1?"[filter:drop-shadow(0_0_22px_rgba(217,70,239,0.22))]":"hover:[filter:drop-shadow(0_0_18px_rgba(217,70,239,0.18))]"}`}
+    >
+      <div className="dashboard-room-card h-full min-h-[340px] sm:min-h-[360px] w-full !p-4 sm:!p-5">
         {joinPhase!=="select"&&(
           <div className="flex items-start gap-3 mb-5">
             <div className="w-10 h-10 rounded-2xl bg-fuchsia-500/18 border border-fuchsia-500/20 flex items-center justify-center text-fuchsia-100/80 shrink-0">
@@ -1253,26 +1608,32 @@ export default function Home(){
         {joinPhase==="confirm"&&(
           <div className="text-center">
             <p className="text-white/40 text-xs mb-3">{t("home.joinConfirm")}</p>
-            <div className="bg-white/[0.04] border border-white/[0.06] rounded-xl px-4 py-3 mb-4">
+            <div className="dashboard-room-subcard px-4 py-3 mb-4">
               <span className="text-xl font-mono font-black tracking-[0.4em] text-gradient-fuchsia">{joinCode}</span>
             </div>
             <p className="text-white/25 text-[10px] mb-4">{joinValidInfo?t("home.joinPlayersInRoom",{n:joinValidInfo.current,total:joinValidInfo.total}):""}</p>
             <div className="flex gap-2">
-              <button onClick={()=>{setJoinPhase("select");setJoinValidInfo(null);}} className="flex-1 py-2.5 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:bg-white/[0.04] text-white/30 text-xs transition">{t("home.cancel")}</button>
-              <button onClick={confirmJoin} className="flex-1 btn-primary !py-2.5 !text-sm font-bold">{t("home.join")}</button>
+              <button onClick={()=>{setJoinPhase("select");setJoinValidInfo(null);}} className="dashboard-secondary-btn flex-1 py-2.5 text-xs">{t("home.cancel")}</button>
+              <button onClick={confirmJoin} className="dashboard-primary-btn flex-1 !py-2.5 !text-sm font-bold">{t("home.join")}</button>
             </div>
           </div>
         )}
-        {(joinPhase==="waiting"||joinPhase==="paid_waiting"||joinPhase==="preparing")&&(
+        {(joinPhase==="waiting"||joinPhase==="payment"||joinPhase==="paid_waiting"||joinPhase==="preparing")&&(
           <div className="text-center">
             <p className="text-white/20 text-[8px] uppercase tracking-[0.3em] mb-2">{t("home.joinedArena")}</p>
-            <div className="bg-white/[0.04] border border-white/[0.06] rounded-xl px-4 py-3 mb-3">
+            <div className="dashboard-room-subcard px-4 py-3 mb-3">
               <span className="text-xl font-mono font-black tracking-[0.4em] text-gradient-fuchsia">{joinCode}</span>
             </div>
             <TeamSlots total={joinRoom.total} players={joinRoom.players}/>
             <div className="mt-2 inline-flex items-center gap-1.5 text-[10px]">
               <span className="w-1.5 h-1.5 rounded-full bg-fuchsia-400 animate-pulse"/>
-              <span className="text-white/30 font-mono">{joinPhase==="preparing" ? t("home.preparingPayment") : joinPaid && paymentProgress.total ? `${paymentProgress.paidCount}/${paymentProgress.total} ${t("home.paid")}` : `${joinRoom.current}/${joinRoom.total} ${t("home.waiting")}`}</span>
+              <span className="text-white/30 font-mono">
+                {joinPhase==="preparing"
+                  ? t("home.preparingPayment")
+                  : (joinPhase==="payment"||joinPhase==="paid_waiting") && paymentProgress.total
+                    ? `${paymentProgress.paidCount}/${paymentProgress.total} ${t("home.paid")}`
+                    : `${joinRoom.current}/${joinRoom.total} ${t("home.waiting")}`}
+              </span>
             </div>
             {joinCountdown!==null&&joinCountdown>0&&joinRoom.current<joinRoom.total&&(
               <div className={`mt-2 flex items-center justify-center gap-1.5 ${joinCountdown<=30?"text-rose-400":"text-fuchsia-300"}`}>
@@ -1281,14 +1642,21 @@ export default function Home(){
                 <span className="text-[9px] text-white/25 ml-1">{t("home.remaining")}</span>
               </div>
             )}
-            {paymentCountdown!==null&&paymentCountdown>0&&joinPhase==="paid_waiting"&&(
+            {paymentCountdown!==null&&paymentCountdown>0&&(joinPhase==="payment"||joinPhase==="paid_waiting")&&(
               <div className={`mt-2 flex items-center justify-center gap-1.5 ${paymentCountdown<=10?"text-rose-400":"text-fuchsia-300"}`}>
                 <span className="text-sm">💰</span>
                 <span className="text-sm font-mono font-bold">{paymentCountdown}s</span>
                 <span className="text-[9px] text-white/25 ml-1">{t("home.payment.countdown")}</span>
               </div>
             )}
-            <button onClick={leaveRoom} disabled={joinPhase==="preparing"} className="mt-3 w-full py-2 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:bg-rose-500/[0.06] hover:text-rose-400 transition text-[10px] text-white/20 disabled:opacity-30 disabled:cursor-not-allowed">{t("home.leave")}</button>
+            <div className="mt-3 flex gap-2">
+              <button onClick={leaveRoom} disabled={joinPhase==="preparing"} className={`dashboard-secondary-btn danger ${canEnterJoinedRoom?"flex-1":"w-full"} py-2 text-[10px] disabled:opacity-30 disabled:cursor-not-allowed`}>{t("home.leave")}</button>
+              {canEnterJoinedRoom&&(
+                <button onClick={enterJoinedRoom} className="dashboard-secondary-btn flex-1 py-2 text-[10px] !text-fuchsia-100 hover:!text-white">
+                  {t("home.enterRoom")}
+                </button>
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -1296,8 +1664,12 @@ export default function Home(){
   );
 
   const renderMatchPanel=()=>(
-    <div className={`relative transition-all duration-300 ${activeCard===2?"[filter:drop-shadow(0_0_22px_rgba(217,70,239,0.3))]":"hover:[filter:drop-shadow(0_0_18px_rgba(217,70,239,0.18))]"}`}>
-      <div className="landing-story-card h-full min-h-[340px] sm:min-h-[360px] w-full !p-4 sm:!p-5">
+    <div
+      onPointerDownCapture={()=>focusCard(2)}
+      onFocusCapture={()=>focusCard(2)}
+      className={`relative transition-all duration-300 ${focusedCard===2?"[filter:drop-shadow(0_0_22px_rgba(217,70,239,0.22))]":"hover:[filter:drop-shadow(0_0_18px_rgba(217,70,239,0.18))]"}`}
+    >
+      <div className="dashboard-room-card h-full min-h-[340px] sm:min-h-[360px] w-full !p-4 sm:!p-5">
         {matchPhase!=="select"&&(
           <div className="flex items-start gap-3 mb-5">
             <div className="w-10 h-10 rounded-2xl bg-fuchsia-500/18 border border-fuchsia-500/20 flex items-center justify-center text-fuchsia-100/80 shrink-0">
@@ -1324,7 +1696,7 @@ export default function Home(){
         {matchPhase==="matching"&&(
           <div>
             <MatchAnimation teamSize={matchTeamSize} current={matchInfo.current} countdown={cd} status="matching"/>
-            <button onClick={cancelMatch} className="w-full mt-3 py-2 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:bg-white/[0.04] transition text-[10px] text-white/20">{t("home.cancel")}</button>
+            <button onClick={cancelMatch} className="dashboard-secondary-btn danger w-full mt-3 py-2 text-[10px]">{t("home.cancel")}</button>
           </div>
         )}
         {matchPhase==="preparing"&&(
@@ -1347,9 +1719,11 @@ export default function Home(){
       {/* Top section */}
       <div className="grid grid-cols-1 mb-8">
         <div>
-          <span className="landing-kicker mb-3 block">ARENA DASHBOARD</span>
-          <h1 className="neon-title text-2xl sm:text-3xl mb-2 uppercase">
-            {t("home.hero.title.pre")} <span className="text-gradient">{t("home.hero.title.highlight")}</span>
+          <span className="dashboard-kicker mb-3 block">ARENA DASHBOARD</span>
+          <h1 className="dashboard-title text-2xl sm:text-3xl mb-2 uppercase">
+            {typedTitlePre}
+            {showTitleGap?" ":""}
+            {typedTitleHighlight?<span className="dashboard-title-highlight">{typedTitleHighlight}</span>:null}
           </h1>
           <p className="text-white/50 text-sm leading-relaxed max-w-lg">
             {t("home.hero.desc", { fee: ENTRY_FEE })}
@@ -1365,7 +1739,7 @@ export default function Home(){
       </div>
 
       {/* Stats bar */}
-      {stats&&(stats.wins>0||stats.losses>0)&&<div className="flex items-center gap-6 mb-6 px-1">
+      <div className="flex items-center gap-6 mb-6 px-1">
         <div className="flex items-center gap-2">
           <Trophy size={18} className="text-emerald-400/70"/>
           <span className="text-xs text-white/35 uppercase tracking-wider">{t("home.stats.wins")}</span>
@@ -1383,18 +1757,18 @@ export default function Home(){
           <span className="text-xs text-white/35 uppercase tracking-wider">{t("home.stats.profit")}</span>
           <span className={`text-base font-black ${parseFloat(stats.total_earned)-parseFloat(stats.total_lost)>=0?"text-emerald-400":"text-rose-400"}`}>{(parseFloat(stats.total_earned)-parseFloat(stats.total_lost)).toFixed(2)}</span>
         </div>
-      </div>}
+      </div>
 
       {/* ===== Action Panels ===== */}
       <div className="relative mb-8">
         <button onClick={scrollLeft}
           disabled={activeCard===0}
-          className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-3 z-10 w-8 h-8 rounded-full bg-white/[0.06] border border-white/[0.08] flex items-center justify-center text-white/40 hover:text-white/70 hover:bg-white/[0.1] transition backdrop-blur-sm disabled:opacity-25 disabled:cursor-not-allowed disabled:hover:bg-white/[0.06]">
+          className="dashboard-secondary-btn absolute left-0 top-1/2 -translate-y-1/2 -translate-x-3 z-10 w-8 h-8 !rounded-full flex items-center justify-center backdrop-blur-sm disabled:opacity-25 disabled:cursor-not-allowed">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="15 18 9 12 15 6"/></svg>
         </button>
         <button onClick={scrollRight}
           disabled={activeCard===maxPageIndex}
-          className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-3 z-10 w-8 h-8 rounded-full bg-white/[0.06] border border-white/[0.08] flex items-center justify-center text-white/40 hover:text-white/70 hover:bg-white/[0.1] transition backdrop-blur-sm disabled:opacity-25 disabled:cursor-not-allowed disabled:hover:bg-white/[0.06]">
+          className="dashboard-secondary-btn absolute right-0 top-1/2 -translate-y-1/2 translate-x-3 z-10 w-8 h-8 !rounded-full flex items-center justify-center backdrop-blur-sm disabled:opacity-25 disabled:cursor-not-allowed">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="9 18 15 12 9 6"/></svg>
         </button>
 
@@ -1412,7 +1786,7 @@ export default function Home(){
           {Array.from({length:pageCount}).map((_,i)=>(
             <button key={i} onClick={()=>goCard(i)}
               className={`rounded-full transition-all duration-300
-                ${activeCard===i?"w-7 h-2.5 bg-gradient-to-r from-purple-500 via-fuchsia-500 to-purple-500":"w-2.5 h-2.5 bg-white/35 hover:bg-white/55"}`}
+                ${activeCard===i?"w-7 h-2.5 bg-gradient-to-r from-[#8f3f72] via-[#c04bd3] to-[#ec4899]":"w-2.5 h-2.5 bg-white/35 hover:bg-white/55"}`}
             />
           ))}
           {activeCard<maxPageIndex&&<span className="text-white/40 text-[10px] ml-1">{t("home.swipe.right")}</span>}
@@ -1471,11 +1845,11 @@ export default function Home(){
       />
 
       {/* History */}
-      <div className="landing-advantage-card p-4 mb-4">
+      <div className="dashboard-room-card p-4 mb-4">
         <div className="flex items-center justify-between mb-3">
-          <span className="landing-kicker">{t("home.history.title")}</span>
+          <span className="dashboard-kicker">{t("home.history.title")}</span>
           <div className="flex gap-1">
-            {[["all","home.history.filter.all"],["create","home.history.filter.create"],["join","home.history.filter.join"],["random","home.history.filter.random"]].map(([k,l])=><button key={k} onClick={()=>setHistoryFilter(k)} className={`px-2 py-1 rounded-lg text-[10px] ${historyFilter===k?"bg-fuchsia-500/20 text-fuchsia-300 border border-fuchsia-500/25":"bg-white/[0.03] text-white/25 border border-white/[0.04]"}`}>{t(l)}</button>)}
+            {[["all","home.history.filter.all"],["create","home.history.filter.create"],["join","home.history.filter.join"],["random","home.history.filter.random"]].map(([k,l])=><button key={k} onClick={()=>setHistoryFilter(k)} className={`dashboard-ghost-btn px-2 py-1 text-[10px] ${historyFilter===k?"is-active":""}`}>{t(l)}</button>)}
           </div>
         </div>
         <div>
@@ -1501,19 +1875,19 @@ export default function Home(){
               const actionLabel = translateHistoryLabel(g.claimLabel, t("home.history.claim"));
               const claimedLabel = translateHistoryLabel(g.claimedLabel, t("home.history.claimed"));
               return (
-                <div key={g.id} className={`bg-white/[0.02] border border-white/[0.05] rounded-xl px-3 py-2.5 border-l-2 ${result==="Win"?"border-l-emerald-500/60":result==="Lose"?"border-l-rose-500/60":result==="Playing"?"border-l-sky-500/60":"border-l-fuchsia-500/40"}`}>
-                  <div className="flex items-start justify-between gap-3">
+                <div key={g.id} className={`dashboard-room-list-item px-3 py-2.5 border-l-2 ${result==="Win"?"border-l-emerald-500/60":result==="Lose"?"border-l-rose-500/60":result==="Playing"?"border-l-sky-500/60":"border-l-fuchsia-500/40"}`}>
+                  <div className="grid grid-cols-[minmax(0,1fr)_148px_minmax(0,1fr)] items-start gap-3 sm:grid-cols-[minmax(0,1fr)_168px_minmax(0,1fr)]">
                     <div className="min-w-0">
                       <p className="text-sm font-bold leading-none">{title}</p>
                       <p className="text-[10px] text-white/25 mt-1">{time}</p>
                     </div>
-                    <div className="flex-1 text-center min-w-0 px-2">
-                      <p className="text-[10px] text-white/30">{t("home.arenaCode")}</p>
+                    <div className="min-w-0 self-center text-center">
+                      <p className="text-[10px] text-white/88">{t("home.arenaCode")}</p>
                       <p className="text-[11px] font-mono text-fuchsia-300 truncate">{isRoom && g.invite_code ? g.invite_code : "—"}</p>
                     </div>
-                    <div className="text-right shrink-0">
+                    <div className="min-w-0 justify-self-end text-right">
                       <p className="text-[10px] text-white/35">{g.max_players}P</p>
-                      <span className={`text-[10px] font-bold mt-1 px-2 py-0.5 rounded-full inline-block border ${result==="Win"?"bg-emerald-500/15 text-emerald-400 border-emerald-500/25":result==="Lose"?"bg-rose-500/15 text-rose-400 border-rose-500/25":result==="Playing"?"bg-sky-500/15 text-sky-300 border-sky-500/25":"bg-fuchsia-500/15 text-fuchsia-300 border-fuchsia-500/25"}`}>{result}</span>
+                      <span className={`text-[10px] font-bold mt-1 px-2 py-0.5 rounded-full inline-block border ${result==="Win"?"bg-emerald-500/15 text-white border-emerald-500/25":result==="Lose"?"bg-rose-500/15 text-white border-rose-500/25":result==="Playing"?"bg-sky-500/15 text-white border-sky-500/25":"bg-fuchsia-500/15 text-white border-fuchsia-500/25"}`}>{result}</span>
                     </div>
                   </div>
                   {g.error_message&&g.state==="failed"&&(
@@ -1527,8 +1901,8 @@ export default function Home(){
                         isClaimed
                           ?"bg-emerald-500/10 border border-emerald-500/15 text-emerald-300 cursor-default"
                           : canClaim
-                            ?"bg-gradient-to-r from-emerald-500 to-teal-500 text-white shadow shadow-emerald-500/20 disabled:opacity-60"
-                            :"bg-white/[0.03] border border-white/[0.05] text-white/35 cursor-default"
+                            ?"dashboard-primary-btn !rounded-lg !border-fuchsia-300/22 !bg-gradient-to-r !from-[#7a3a64] !via-[#ab4bc2] !to-[#db5a9f] text-white disabled:opacity-60"
+                            :"dashboard-secondary-btn !rounded-lg text-white/35 cursor-default"
                       }`}
                     >
                       {isClaiming ? t("home.history.claiming") : isClaimed ? claimedLabel : actionLabel}
@@ -1538,9 +1912,9 @@ export default function Home(){
               );
             })}
             {totalPages > 1 && <div className="flex items-center justify-center gap-2 pt-2">
-              <button onClick={()=>setHistoryPage(p=>Math.max(1,p-1))} disabled={page===1} className="px-2 py-1 rounded-lg text-[10px] bg-white/[0.03] border border-white/[0.04] text-white/35 disabled:opacity-30">{t("home.history.prev")}</button>
+              <button onClick={()=>setHistoryPage(p=>Math.max(1,p-1))} disabled={page===1} className="dashboard-ghost-btn px-2 py-1 text-[10px] disabled:opacity-30">{t("home.history.prev")}</button>
               <span className="text-[10px] text-white/35">{page} / {totalPages}</span>
-              <button onClick={()=>setHistoryPage(p=>Math.min(totalPages,p+1))} disabled={page===totalPages} className="px-2 py-1 rounded-lg text-[10px] bg-white/[0.03] border border-white/[0.04] text-white/35 disabled:opacity-30">{t("home.history.next")}</button>
+              <button onClick={()=>setHistoryPage(p=>Math.min(totalPages,p+1))} disabled={page===totalPages} className="dashboard-ghost-btn px-2 py-1 text-[10px] disabled:opacity-30">{t("home.history.next")}</button>
             </div>}
           </div>;
         })()}
@@ -1548,10 +1922,10 @@ export default function Home(){
       </div>
 
       <div className="grid grid-cols-1 gap-4">
-        <div className="landing-advantage-card p-4">
+        <div className="dashboard-room-card p-4">
           <div>
           <div className="flex items-center justify-between mb-3">
-            <span className="landing-kicker">{t("home.quickRules")}</span>
+            <span className="dashboard-kicker">{t("home.quickRules")}</span>
             <button onClick={()=>nav("/how-to-play")} className="text-[10px] text-fuchsia-300/60 hover:text-fuchsia-300 transition font-semibold">{t("home.learnMore")}</button>
           </div>
           <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs text-white/55">
@@ -1560,7 +1934,7 @@ export default function Home(){
             <div className="flex items-center gap-2 py-1"><span>📊</span>{t("home.rule.settle")}</div>
             <div className="flex items-center gap-2 py-1"><span>🏆</span>{t("home.rule.pool")}</div>
           </div>
-          <div className="mt-2 rounded-lg bg-white/[0.02] border border-white/[0.04]">
+          <div className="dashboard-room-subcard mt-2">
             <button
               type="button"
               onClick={()=>setPayoutRulesOpen(v=>!v)}
@@ -1571,7 +1945,7 @@ export default function Home(){
             </button>
             {payoutRulesOpen&&<div className="px-3 pb-3 pt-2 border-t border-white/[0.04] space-y-3">
               <div>
-                <div className="font-mono text-[11px] text-white/70 bg-white/[0.03] rounded-lg px-3 py-2 leading-relaxed">{t("home.payout.formula")}</div>
+                <div className="dashboard-room-subcard font-mono text-[11px] text-white/70 px-3 py-2 leading-relaxed">{t("home.payout.formula")}</div>
                 <div className="mt-1.5 text-[10px] text-white/40 leading-relaxed">{t("home.payout.legend")}</div>
               </div>
               <div className="pt-2 border-t border-white/[0.04]">
@@ -1587,6 +1961,7 @@ export default function Home(){
       </div>
 
       </div>
+      <RoomTransition visible={createTransitioning||joinTransitioning} onComplete={handleRoomTransitionComplete}/>
     </div>
   );
 }

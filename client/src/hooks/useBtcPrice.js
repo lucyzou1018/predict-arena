@@ -16,11 +16,11 @@ export function useBtcPrice(){
     return()=>{socket.off("connect",sub);unPrice();clearTimeout(retryTimer);};
   },[on,emit,socket]);
 
-  // REST fallback: poll until we get a price from either socket or REST
+  // REST fallback: keep polling so the UI can recover if the socket stream stalls
   useEffect(()=>{
     const poll=()=>{fetch(`${SERVER_URL}/api/price`).then(r=>r.json()).then(d=>{if(d.price>0){setPrice(d.price);gotPrice.current=true;}}).catch(()=>{});};
     poll();
-    const iv=setInterval(()=>{if(!gotPrice.current)poll();else clearInterval(iv);},10000);
+    const iv=setInterval(poll,10000);
     return()=>clearInterval(iv);
   },[]);
 

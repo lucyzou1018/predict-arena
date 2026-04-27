@@ -5,8 +5,8 @@ import { useGame } from "../context/GameContext";
 import { useContract } from "../hooks/useContract";
 import { useWallet } from "../context/WalletContext";
 import { useT } from "../context/LangContext";
-import { PredictButtons, CountdownRing, SettlementReveal } from "../components";
-import { PREDICT_TIMEOUT, PREDICT_SAFE_BUFFER, SERVER_URL, SETTLE_DELAY } from "../config/constants";
+import { PredictButtons, CountdownRing } from "../components";
+import { ENTRY_FEE, PREDICT_TIMEOUT, PREDICT_SAFE_BUFFER, SERVER_URL, SETTLE_DELAY } from "../config/constants";
 
 const SHARE_TEXT = "Got a differentiated BTC view? Compare it on AlphaMatch. 📈📉 https://predict-arena-test.vercel.app/arena";
 const predictionStorageKey = (gameId, wallet) => `predict-arena:prediction:${gameId}:${wallet?.toLowerCase?.()}`;
@@ -45,7 +45,23 @@ function isSettlementSyncMessage(message) {
   );
 }
 
-export default function GamePlay() {
+function buildPlayerPredictionState(players = [], playerPredictions = {}) {
+  const nextState = {};
+  for (const player of Array.isArray(players) ? players : []) {
+    const wallet = player?.toLowerCase?.();
+    if (!wallet) continue;
+    const prediction = Number(playerPredictions?.[wallet] || 0);
+    nextState[wallet] = {
+      prediction,
+      hasPaid: false,
+      reward: 0,
+      claimed: false,
+    };
+  }
+  return nextState;
+}
+
+export default function GamePlay({ embedded = false, layout = "modal", centerContent = null }) {
   const nav = useNavigate();
   const t = useT();
   const { on, emit } = useSocket();
@@ -69,6 +85,7 @@ export default function GamePlay() {
   const [basePrice, setBasePrice] = useState(gameState.basePrice || 0);
   const [currentPrice, setCurrentPrice] = useState(gameState.currentPrice || gameState.basePrice || 0);
   const [result, setResult] = useState(gameState.result || null);
+  const [playerStates, setPlayerStates] = useState({});
   const [gameId, setGameId] = useState(gameState.gameId);
   const [chainGameId, setChainGameId] = useState(gameState.chainGameId || gameState.gameId);
   const [totalPlayers, setTotalPlayers] = useState(gameState.players?.length || 0);
@@ -78,6 +95,9 @@ export default function GamePlay() {
   const [failureMessage, setFailureMessage] = useState(gameState.failureMessage || null);
   const [predictSafeBuffer, setPredictSafeBuffer] = useState(PREDICT_SAFE_BUFFER);
   const [predictionDeadline, setPredictionDeadline] = useState(gameState.predictionDeadline || null);
+  const [predictionCueActive, setPredictionCueActive] = useState(false);
+  const [celebrationKey, setCelebrationKey] = useState(null);
+  const [dismissedResultCompletionKey, setDismissedResultCompletionKey] = useState(null);
   const currentGameId = useMemo(
     () => gameId || result?.gameId || gameState.gameId,
     [gameId, result, gameState.gameId],
@@ -348,6 +368,7 @@ export default function GamePlay() {
         const nextPlayers = data.players || [];
         const nextCountdown = Math.round((data.predictTimeout || 30000) / 1000);
         const nextPredictSafeBuffer = Math.round((data.predictSafeBuffer || PREDICT_SAFE_BUFFER * 1000) / 1000);
+        const nextTotalPredicted = Number(data.totalPredicted || Object.keys(data.playerPredictions || {}).length || 0);
         setGameId(nextGameId);
         setChainGameId(nextChainGameId);
         setBasePrice(data.basePrice);
@@ -359,7 +380,8 @@ export default function GamePlay() {
         setPredictionDeadline(data.predictionDeadline || null);
         setMyPrediction(null);
         setPendingPrediction(null);
-        setPredictedCount(0);
+        setPredictedCount(nextTotalPredicted);
+        setPlayerStates(buildPlayerPredictionState(nextPlayers, data.playerPredictions));
         setResult(null);
         setFailureMessage(null);
         setClaimStatus(null);
@@ -374,7 +396,7 @@ export default function GamePlay() {
           countdown: nextCountdown,
           predictSafeBuffer: nextPredictSafeBuffer,
           predictionDeadline: data.predictionDeadline || null,
-          predictedCount: 0,
+          predictedCount: nextTotalPredicted,
           result: null,
           failureMessage: null,
         });
@@ -396,6 +418,7 @@ export default function GamePlay() {
         setPredictSafeBuffer(nextPredictSafeBuffer);
         setPredictionDeadline(data.predictionDeadline || null);
         setPredictedCount(data.totalPredicted || 0);
+        setPlayerStates(buildPlayerPredictionState(nextPlayers, data.playerPredictions));
         setResult(null);
         setFailureMessage(null);
         setClaimStatus(null);
@@ -422,6 +445,16 @@ export default function GamePlay() {
       }),
       on("game:prediction", (data) => {
         setPredictedCount(data.totalPredicted);
+        if (data?.wallet) {
+          const normalizedWallet = data.wallet.toLowerCase();
+          setPlayerStates((previous) => ({
+            ...previous,
+            [normalizedWallet]: {
+              ...(previous[normalizedWallet] || { hasPaid: false, reward: 0, claimed: false }),
+              prediction: Number(data.prediction || 0),
+            },
+          }));
+        }
         updateGame({ predictedCount: data.totalPredicted });
       }),
       on("game:predicted", (data) => {
@@ -543,7 +576,7 @@ export default function GamePlay() {
   const predict = async (prediction) => {
     try {
       setPredictionError(null);
-      if (secondsUntilDeadline <= effectivePredictSafeBuffer) {
+      if (secondsUntilLocalLock <= effectivePredictSafeBuffer) {
         return;
       }
       const targetChainGameId = chainGameId || gameState.chainGameId || gameId || gameState.gameId;
@@ -558,9 +591,7 @@ export default function GamePlay() {
     } catch (error) {
       setPendingPrediction(null);
       const message = error?.message || "Prediction failed. Please try again.";
-      const bufferNowActive = predictionDeadline
-        ? Math.max(0, predictionDeadline - Math.floor(Date.now() / 1000)) <= effectivePredictSafeBuffer
-        : countdown <= effectivePredictSafeBuffer;
+      const bufferNowActive = secondsUntilLocalLock <= effectivePredictSafeBuffer;
       if ((bufferNowActive || /prediction window closed/i.test(message)) && !displayedPrediction) {
         setPredictionError(null);
         return;
@@ -569,19 +600,20 @@ export default function GamePlay() {
     }
   };
 
-  const handleClaimFunds = async () => {
+  const handleClaimFunds = async ({ dismissOverlayOnSuccess = false } = {}) => {
     const targetChainGameId = currentChainGameId || chainGameId || gameState.chainGameId || gameId;
     try {
       setClaimState({ claimed: false, error: null, success: null });
       const payout = await claimGameFunds(targetChainGameId, wallet);
       const latestStatus = await refreshClaimStatus(targetChainGameId, true);
+      const isRefundLikeClaim = payout?.type === "refund" || (!!result?.myResult && !result.myResult.isCorrect);
       const claimedAmount = payout?.type === "refund"
         ? latestStatus?.entryFee ?? claimStatus?.entryFee
         : latestStatus?.reward ?? rewardAmount;
       setClaimState({
         claimed: true,
         error: null,
-        success: payout?.type === "refund"
+        success: isRefundLikeClaim
           ? `Refund claimed to wallet${claimedAmount ? `: ${claimedAmount.toFixed(4)} USDC` : "."}`
           : `Reward claimed to wallet${claimedAmount ? `: +${claimedAmount.toFixed(4)} USDC` : "."}`,
       });
@@ -590,6 +622,9 @@ export default function GamePlay() {
           ...previous,
           myResult: previous.myResult ? { ...previous.myResult, claimed: true } : previous.myResult,
         }) : previous);
+      }
+      if (dismissOverlayOnSuccess && resultCompletionKey) {
+        setDismissedResultCompletionKey(resultCompletionKey);
       }
     } catch (error) {
       setClaimState({ claimed: false, error: error?.message || "Claim failed. Please try again.", success: null });
@@ -602,12 +637,17 @@ export default function GamePlay() {
     window.open(shareUrl, "_blank", "noopener,noreferrer");
   };
 
+  const exitToArena = useCallback(() => {
+    clearStoredPrediction(currentChainGameId, wallet);
+    resetGame();
+    nav("/arena", { replace: true });
+  }, [currentChainGameId, nav, resetGame, wallet]);
+
   const rewardAmount = Number(result?.myResult?.reward || 0);
   const canClaimReward = phase === "result" && rewardAmount > 0 && !claimState.claimed && !result?.myResult?.claimed;
   const effectivePredictSafeBuffer = predictSafeBuffer;
-  const secondsUntilDeadline = predictionDeadline
-    ? Math.max(0, predictionDeadline - Math.floor(Date.now() / 1000))
-    : countdown;
+  const predictionBufferNoticeThreshold = Math.max(10, effectivePredictSafeBuffer);
+  const secondsUntilLocalLock = countdown;
 
   const diff = currentPrice && basePrice ? currentPrice - basePrice : 0;
   const percent = basePrice ? ((diff / basePrice) * 100).toFixed(3) : "0";
@@ -623,6 +663,7 @@ export default function GamePlay() {
     [gameState.players],
   );
   const currentWallet = wallet?.toLowerCase?.() || null;
+  const shortWallet = useCallback((address) => !address ? "Unknown" : `${address.slice(0, 6)}...${address.slice(-4)}`, []);
   const hostWallet = normalizedPlayers[0] || null;
   const viewerRole = !currentWallet || normalizedPlayers.length === 0
     ? null
@@ -631,30 +672,511 @@ export default function GamePlay() {
       : normalizedPlayers.includes(currentWallet)
         ? "Participant"
         : "Viewer";
-  const predictionBufferActive = phase === "predicting" && !displayedPrediction && secondsUntilDeadline <= effectivePredictSafeBuffer;
+  const predictionBufferNoticeActive = phase === "predicting" && !displayedPrediction && secondsUntilLocalLock <= predictionBufferNoticeThreshold;
+  const predictionBufferLocked = phase === "predicting" && !displayedPrediction && secondsUntilLocalLock <= effectivePredictSafeBuffer;
+  const predictionBufferMessage = predictionBufferLocked
+    ? `Final ${effectivePredictSafeBuffer}s are reserved locally for on-chain confirmation. Predictions are now locked for this round.`
+    : `Final ${effectivePredictSafeBuffer}s are reserved locally for on-chain confirmation. You can still choose a side before they begin.`;
+  const predictionNeedsAttention = phase === "predicting" && !displayedPrediction && !predictionBufferLocked;
+  const predictionPromptTitle = t("game.turnPromptTitle");
+  const predictionPromptHint = t("game.turnPromptHint");
+  const chooseSideTitle = t("game.chooseSide");
+  const predictionZoneClass = predictionCueActive && predictionNeedsAttention ? " prediction-zone-flash" : "";
   const resultPrediction = result?.myResult?.prediction || displayedPrediction;
   const resultPredictionLabel = formatPredictionLabel(resultPrediction);
   const refundWaitSeconds = claimStatus?.refundUnlockAt ? Math.max(0, claimStatus.refundUnlockAt - Math.floor(Date.now() / 1000)) : null;
   const canClaimFailedFunds = !!(claimStatus?.canClaimReward || claimStatus?.canClaimRefund || claimStatus?.canForceRefund);
   const failedClaimLabel = claimStatus?.canClaimReward ? "Claim Reward" : "Claim Refund";
+  const formatUsd = (value) => `$${Number(value || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const modalPriceClass = "min-w-0 whitespace-nowrap text-[clamp(0.95rem,3.4vw,1.35rem)] leading-none font-mono font-black tabular-nums";
+  const resultBasePrice = Number(result?.basePrice || 0);
+  const resultSettlementPrice = Number(result?.settlementPrice || 0);
+  const resultDiff = resultBasePrice ? resultSettlementPrice - resultBasePrice : 0;
+  const resultPercent = resultBasePrice ? ((resultDiff / resultBasePrice) * 100).toFixed(3) : "0.000";
+  const resultOutcomeLabel = result?.direction === "up" ? "LONG" : result?.direction === "down" ? "SHORT" : result?.direction === "flat" ? "FLAT" : "PENDING";
+  const resultOutcomeTone = result?.direction === "up" ? "text-emerald-300" : result?.direction === "down" ? "text-rose-300" : "text-white/72";
+  const resultOutcomeChipClass = result?.direction === "up"
+    ? "!border-emerald-500/20 !bg-emerald-500/[0.08] !text-emerald-300"
+    : result?.direction === "down"
+      ? "!border-rose-500/20 !bg-rose-500/[0.08] !text-rose-300"
+      : "!border-white/10 !bg-white/[0.05] !text-white/72";
+  const resultOutcomeCopy = result?.direction === "up"
+    ? "BTC closed above the base price."
+    : result?.direction === "down"
+      ? "BTC closed below the base price."
+      : "BTC closed exactly at the base price.";
+  const resultEntryAmount = Number(result?.myResult?.entryFee || claimStatus?.entryFee || ENTRY_FEE);
+  const hasPlayerResult = !!result?.myResult;
+  const resultNetAmount = hasPlayerResult ? rewardAmount - resultEntryAmount : 0;
+  const hasRefundLikePayout = hasPlayerResult && rewardAmount > 0 && resultNetAmount <= 0;
+  const didWinRound = !!(result?.myResult?.isCorrect && resultNetAmount > 0);
+  const resultHeadline = result?.myResult
+    ? didWinRound ? "Forecast Confirmed" : hasRefundLikePayout ? "Round Refunded" : "Forecast Missed"
+    : "Round Complete";
+  const resultHeadlineTone = didWinRound ? "text-emerald-300" : hasRefundLikePayout ? "text-amber-200" : result?.myResult ? "text-rose-300" : "text-white/82";
+  const formatSignedAmount = (value) => `${value > 0 ? "+" : ""}${value.toFixed(4)}`;
+  const resultAmountText = hasPlayerResult
+    ? formatSignedAmount(resultNetAmount)
+    : "0.0000";
+  const resultAmountTone = resultNetAmount > 0 ? "text-emerald-400" : resultNetAmount < 0 ? "text-rose-400" : "text-white/72";
+  const resultCompletionKey = phase === "result" && result?.myResult
+    ? `${result?.gameId || currentGameId || "result"}:${result?.myResult?.wallet || currentWallet || "player"}`
+    : null;
+  const showResultCompletionOverlay = !!resultCompletionKey && dismissedResultCompletionKey !== resultCompletionKey;
+  const showResultCelebration = didWinRound && celebrationKey === resultCompletionKey;
+  const resultCompletionTitle = didWinRound ? t("game.endModal.winTitle") : t("game.endModal.loseTitle");
+  const resultClaimableAmount = Math.max(0, rewardAmount);
+  const hasClaimableAmount = resultClaimableAmount > 0;
+  const resultClaimableTone = hasClaimableAmount ? "text-emerald-300" : "text-white/76";
+  const resultClaimableText = resultClaimableAmount.toFixed(4);
+  const confettiPieces = useMemo(
+    () => Array.from({ length: 64 }, (_, index) => ({
+      left: 2 + (index * 7.37) % 96,
+      delay: (index % 16) * 0.045,
+      duration: 2.35 + (index % 7) * 0.14,
+      drift: (index % 2 === 0 ? -1 : 1) * (34 + (index % 6) * 13),
+      rotate: -72 + index * 23,
+      width: 7 + (index % 4) * 2,
+      height: 16 + (index % 5) * 4,
+      color: ["#f472b6", "#34d399", "#facc15", "#22d3ee", "#c084fc"][index % 5],
+    })),
+    [],
+  );
+  const inBattlePhase = phase === "predicting" || phase === "settling" || phase === "result" || phase === "failed";
+  const teammateStates = useMemo(
+    () => normalizedPlayers
+      .filter((address) => address !== currentWallet)
+      .map((address, index) => {
+        const state = playerStates[address] || null;
+        const predictionLabel = state?.prediction === 1 ? "LONG" : state?.prediction === 2 ? "SHORT" : null;
+        const predictionTone = state?.prediction === 1 ? "text-emerald-300" : state?.prediction === 2 ? "text-rose-300" : "text-white/42";
+        let statusLabel = "Waiting";
+        let statusTone = "text-white/38";
+        if (phase === "predicting") {
+          statusLabel = predictionLabel ? "Locked in" : "Waiting";
+          statusTone = predictionLabel ? "text-cyan-200" : "text-white/38";
+        } else if (phase === "settling") {
+          statusLabel = predictionLabel ? "Submitted" : "No position";
+          statusTone = predictionLabel ? "text-fuchsia-200" : "text-white/38";
+        } else if (phase === "result") {
+          if (!predictionLabel) {
+            statusLabel = "No position";
+            statusTone = "text-white/38";
+          } else if (result?.direction === "flat") {
+            statusLabel = "Settled flat";
+            statusTone = "text-white/62";
+          } else if ((state?.prediction === 1 && result?.direction === "up") || (state?.prediction === 2 && result?.direction === "down")) {
+            statusLabel = "Correct";
+            statusTone = "text-emerald-300";
+          } else {
+            statusLabel = "Missed";
+            statusTone = "text-rose-300";
+          }
+        } else if (phase === "failed") {
+          statusLabel = predictionLabel ? "Recovery pending" : "No position";
+          statusTone = predictionLabel ? "text-amber-200" : "text-white/38";
+        }
+        return {
+          address,
+          label: address === hostWallet ? "Host" : `Player ${index + 2}`,
+          short: shortWallet(address),
+          predictionLabel,
+          predictionTone,
+          statusLabel,
+          statusTone,
+          reward: Number(state?.reward || 0),
+          claimed: !!state?.claimed,
+        };
+      }),
+    [normalizedPlayers, currentWallet, playerStates, phase, result?.direction, hostWallet, shortWallet],
+  );
 
   useEffect(() => {
-    if (predictionBufferActive) {
+    if (predictionBufferLocked) {
       setPredictionError(null);
     }
-  }, [predictionBufferActive]);
+  }, [predictionBufferLocked]);
+
+  useEffect(() => {
+    if (!resultCompletionKey || !didWinRound) return undefined;
+    setCelebrationKey(resultCompletionKey);
+    const timeoutId = setTimeout(() => {
+      setCelebrationKey((current) => (current === resultCompletionKey ? null : current));
+    }, 2200);
+    return () => clearTimeout(timeoutId);
+  }, [didWinRound, resultCompletionKey]);
+
+  useEffect(() => {
+    if (!predictionNeedsAttention) {
+      setPredictionCueActive(false);
+      return undefined;
+    }
+    setPredictionCueActive(true);
+    const timeoutId = setTimeout(() => {
+      setPredictionCueActive(false);
+    }, 2200);
+    return () => clearTimeout(timeoutId);
+  }, [predictionNeedsAttention, currentChainGameId, currentGameId]);
 
   useEffect(() => {
     const hasResolvedPlayers = normalizedPlayers.length > 0;
-    const inBattlePhase = phase === "predicting" || phase === "settling" || phase === "result" || phase === "failed";
     if (!currentWallet || !hasResolvedPlayers || !inBattlePhase) return;
     if (normalizedPlayers.includes(currentWallet)) return;
     resetGame();
     nav("/", { replace: true });
   }, [currentWallet, normalizedPlayers, phase, nav, resetGame]);
 
+  useEffect(() => {
+    if (!currentChainGameId || normalizedPlayers.length === 0 || !inBattlePhase) {
+      setPlayerStates({});
+      return undefined;
+    }
+    if (phase === "predicting") return undefined;
+    let cancelled = false;
+    const syncPlayers = async () => {
+      const entries = await Promise.all(
+        normalizedPlayers.map(async (address) => {
+          try {
+            const state = await getPlayerState(currentChainGameId, address);
+            return [address, state];
+          } catch {
+            return [address, null];
+          }
+        }),
+      );
+      if (cancelled) return;
+      setPlayerStates((previous) => {
+        const next = { ...previous };
+        for (const [address, state] of entries) {
+          const prior = previous[address] || null;
+          next[address] = state ? {
+            ...state,
+            prediction: Number(state.prediction || prior?.prediction || 0),
+          } : prior;
+        }
+        return next;
+      });
+    };
+    void syncPlayers();
+    const intervalId = setInterval(() => { void syncPlayers(); }, 3500);
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+    };
+  }, [currentChainGameId, normalizedPlayers, getPlayerState, inBattlePhase, phase]);
+
+  const resultCompletionOverlay = showResultCompletionOverlay ? (
+    <>
+      {showResultCelebration ? (
+        <div className="game-end-confetti" aria-hidden="true">
+          {confettiPieces.map((piece, index) => (
+            <span
+              key={`confetti-${index}`}
+              className="game-end-confetti-piece"
+              style={{
+                left: `${piece.left}%`,
+                backgroundColor: piece.color,
+                animationDelay: `${piece.delay}s`,
+                animationDuration: `${piece.duration}s`,
+                "--confetti-drift": `${piece.drift}px`,
+                "--confetti-rotate-start": `${piece.rotate}deg`,
+                "--confetti-width": `${piece.width}px`,
+                "--confetti-height": `${piece.height}px`,
+              }}
+            />
+          ))}
+        </div>
+      ) : null}
+      <div className="game-end-overlay" role="dialog" aria-modal="true" aria-label={resultCompletionTitle}>
+        <div className="game-end-shell dashboard-modal-card animate-slideUp overflow-hidden px-4 py-5 sm:px-5 sm:py-5.5">
+          <div className="text-center">
+            <h3 className={`text-[1.5rem] sm:text-[1.72rem] font-black tracking-[-0.05em] ${didWinRound ? "text-emerald-200" : "text-white"}`}>
+              {resultCompletionTitle}
+            </h3>
+          </div>
+
+          <div className="mt-4 grid gap-3">
+            <div className={`game-end-metric flex items-center justify-between gap-3 px-4 py-4 sm:px-4.5 sm:py-4.5 ${didWinRound ? "!border-emerald-500/18 !bg-emerald-500/[0.06]" : ""}`}>
+              <p className="min-w-0 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/34">
+                Claimable
+              </p>
+              <p className={`shrink-0 text-[1.05rem] sm:text-[1.14rem] leading-none font-mono font-black ${resultClaimableTone}`}>
+                {resultClaimableText}
+                <span className="ml-2 text-[0.72rem] sm:text-[0.76rem] font-semibold tracking-[0.14em] text-white/34">USDC</span>
+              </p>
+            </div>
+            <div className="game-end-metric px-4 py-4 sm:px-4.5 sm:py-4.5">
+              <div className="game-end-dual-metric text-center">
+                <div className="min-w-0">
+                  <p className="text-[9px] font-semibold uppercase tracking-[0.12em] text-white/34">{t("game.yourCall")}</p>
+                  <p className={`mt-3 text-[0.95rem] sm:text-[1rem] font-black whitespace-nowrap ${resultPrediction === "up" ? "text-emerald-300" : resultPrediction === "down" ? "text-rose-300" : "text-white/70"}`}>
+                    {resultPredictionLabel || t("game.noPos")}
+                  </p>
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[9px] font-semibold uppercase tracking-[0.12em] text-white/34">{t("game.endModal.settled")}</p>
+                  <p className={`mt-3 text-[0.95rem] sm:text-[1rem] font-black whitespace-nowrap ${resultOutcomeTone}`}>
+                    {resultOutcomeLabel}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {hasClaimableAmount ? (
+            <div className="mt-5 grid grid-cols-2 gap-2.5">
+              <button
+                onClick={exitToArena}
+                className="dashboard-secondary-btn py-3 text-[0.94rem] font-bold !text-white/74 hover:!text-white"
+              >
+                {t("result.confirm")}
+              </button>
+              <button
+                onClick={() => handleClaimFunds({ dismissOverlayOnSuccess: true })}
+                disabled={!canClaimReward || claiming}
+                className="dashboard-primary-btn py-3 text-[0.94rem] font-bold disabled:opacity-45 disabled:cursor-not-allowed"
+              >
+                {claimState.claimed || result?.myResult?.claimed ? "Claimed" : claiming ? "Claiming..." : "Claim Reward"}
+              </button>
+            </div>
+          ) : (
+            <div className="mt-5 grid grid-cols-2 gap-2.5">
+              <button
+                onClick={exitToArena}
+                className="dashboard-secondary-btn py-3 text-[0.94rem] font-bold !text-white/74 hover:!text-white"
+              >
+                {t("result.confirm")}
+              </button>
+              <button
+                onClick={exitToArena}
+                className="dashboard-primary-btn py-3 text-[0.94rem] font-bold"
+              >
+                {t("result.playAgain")}
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </>
+  ) : null;
+
+  if (layout === "room" && inBattlePhase) {
+    const myStatusLabel = phase === "predicting"
+      ? displayedPrediction ? "Prediction locked" : predictionPromptTitle
+      : phase === "settling"
+        ? "Settlement in progress"
+        : phase === "result"
+          ? resultHeadline
+          : "Recovery";
+
+    return (
+      <>
+        <div className={embedded ? "w-full" : "page-container !max-w-[90rem]"}>
+          <div className="w-full grid gap-4 xl:grid-cols-[minmax(16rem,19rem)_minmax(0,1fr)_minmax(18rem,22rem)] items-start">
+          <aside className="order-2 xl:order-1">
+            <div className="dashboard-modal-card overflow-hidden p-3 sm:p-3.5">
+              <div className="flex items-start justify-between gap-2.5 mb-3">
+                <div className="min-w-0">
+                  <span className="dashboard-room-chip inline-flex items-center gap-2 px-3 py-1.5 text-[9px] font-semibold uppercase tracking-[0.2em] text-fuchsia-100/82">
+                    {phase === "result" ? "Team Result" : phase === "settling" ? "Team Calls" : "Team Board"}
+                  </span>
+                  <h3 className="mt-2.5 text-[1rem] font-black tracking-[-0.04em] text-white leading-[1.08]">Room Players</h3>
+                  <p className="mt-1 text-[10px] text-white/44 leading-5">Watch how the rest of the room is positioning.</p>
+                </div>
+                <div className="dashboard-room-chip px-3 py-1.5 text-[10px] font-mono text-white/70">{teammateStates.length}</div>
+              </div>
+
+              <div className="space-y-2.5">
+                {teammateStates.length === 0 ? (
+                  <div className="dashboard-modal-row px-3 py-3 text-center">
+                    <p className="text-white/42 text-[11px]">No teammates are attached to this room.</p>
+                  </div>
+                ) : teammateStates.map((player) => (
+                  <div key={player.address} className="dashboard-modal-row px-3 py-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-white text-[11px] font-semibold">{player.label}</p>
+                        <p className="text-white/32 text-[9px] font-mono mt-1">{player.short}</p>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <p className={`text-[0.95rem] font-black ${player.predictionTone}`}>{player.predictionLabel || "..."}</p>
+                        <p className={`text-[9px] mt-1 ${player.statusTone}`}>{player.statusLabel}</p>
+                      </div>
+                    </div>
+                    {phase === "result" && player.reward > 0 ? (
+                      <div className="mt-2 pt-2 border-t border-white/[0.06] flex items-center justify-between gap-2">
+                        <span className="text-white/26 text-[9px] uppercase tracking-[0.18em]">Reward</span>
+                        <span className="text-emerald-300 text-[10px] font-mono font-black">{player.reward.toFixed(4)} USDC</span>
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </aside>
+
+          <section className="order-1 xl:order-2 min-w-0">
+            {centerContent}
+          </section>
+
+          <aside className="order-3">
+            <div className="dashboard-modal-card overflow-hidden p-3 sm:p-3.5">
+              <div className="flex items-start justify-between gap-2.5 mb-3">
+                <div className="min-w-0">
+                  <span className="dashboard-room-chip inline-flex items-center gap-2 px-3 py-1.5 text-[9px] font-semibold uppercase tracking-[0.2em] text-fuchsia-100/82">
+                    {phase === "predicting" ? "Your Console" : phase === "settling" ? "Your Position" : phase === "result" ? "Your Result" : "Recovery"}
+                  </span>
+                  <h3 className="mt-2.5 text-[1rem] font-black tracking-[-0.04em] text-white leading-[1.08]">{phase === "predicting" && !displayedPrediction ? chooseSideTitle : myStatusLabel}</h3>
+                  <p className="mt-1 text-[10px] text-white/44 leading-5">
+                    {phase === "predicting"
+                      ? displayedPrediction ? "Your call is locked in for this round." : t("game.descLongShort")
+                      : phase === "settling"
+                        ? "Your call is locked while the oracle finalizes the round."
+                        : phase === "result"
+                          ? "Your room stays visible while the final payout and share action remain here."
+                          : "If settlement is interrupted, recovery stays attached to this room."}
+                  </p>
+                </div>
+                {phase === "predicting" || phase === "settling" ? (
+                  <div className="dashboard-room-subcard shrink-0 px-2.5 py-2.5">
+                    <CountdownRing total={phase === "predicting" ? PREDICT_TIMEOUT : SETTLE_DELAY} remaining={countdown} label={phase === "predicting" ? "Time Left" : "Reveal"} size="sm" />
+                  </div>
+                ) : (
+                  <div className={`dashboard-room-chip px-3 py-1.5 text-[10px] ${phase === "result" ? resultOutcomeChipClass : "!border-amber-500/20 !bg-amber-500/[0.08] !text-amber-200"}`}>
+                    {phase === "result" ? resultOutcomeLabel : "Pending"}
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-2.5">
+                {(phase === "predicting" || phase === "settling") && (
+                  <>
+                    <div className="grid grid-cols-1 gap-2.5">
+                      <div className="dashboard-modal-row min-w-0 px-3 py-2.5 text-center">
+                        <p className="text-white/24 text-[9px] uppercase tracking-[0.2em] mb-1.5">Base Price</p>
+                        <p className={`${modalPriceClass} text-gradient`}>{formatUsd(basePrice)}</p>
+                      </div>
+                      <div className="dashboard-modal-row min-w-0 px-3 py-2.5 text-center">
+                        <p className="text-white/24 text-[9px] uppercase tracking-[0.2em] mb-1.5">{phase === "predicting" ? "Live Price" : "Current Price"}</p>
+                        <p className={`${modalPriceClass} ${priceColor}`}>{formatUsd(currentPrice)}</p>
+                        <p className={`text-[9px] font-mono mt-1 ${priceColor}`}>{diff >= 0 ? "+" : ""}{diff.toFixed(2)} ({percent}%)</p>
+                      </div>
+                    </div>
+
+                    {phase === "predicting" ? (
+                      <div className={`dashboard-modal-row px-3 py-3${predictionZoneClass}`}>
+                        <div className="flex items-center justify-between mb-2.5">
+                          <div>
+                            <p className="text-white/24 text-[9px] uppercase tracking-[0.2em]">Your Call</p>
+                            {displayedPrediction ? <p className="text-white/46 text-[10px] mt-1">Position selected.</p> : null}
+	                          </div>
+	                          <div className="dashboard-room-chip px-3 py-1.5 text-[10px] font-mono text-white/70">{predictedCount}/{totalPlayers}</div>
+	                        </div>
+	                        {!displayedPrediction ? <div className="prediction-action-banner mb-2.5">Select LONG or SHORT to lock your prediction</div> : null}
+	                        <PredictButtons onPredict={predict} myPrediction={displayedPrediction} disabled={predicting || predictionBufferLocked} attention={predictionNeedsAttention} />
+	                      </div>
+                    ) : (
+                      <div className="dashboard-modal-row px-3 py-3 text-center">
+                        <p className="text-white/24 text-[9px] uppercase tracking-[0.2em] mb-1.5">Locked Position</p>
+                        <p className={`text-[1.05rem] font-black ${displayedPrediction === "up" ? "text-emerald-300" : displayedPrediction === "down" ? "text-rose-300" : "text-white/42"}`}>
+                          {displayedPrediction === "up" ? "LONG" : displayedPrediction === "down" ? "SHORT" : "NO POSITION"}
+                        </p>
+                      </div>
+                    )}
+
+                    {predictionBufferNoticeActive ? <div className="rounded-[18px] border border-fuchsia-500/15 bg-fuchsia-500/10 text-fuchsia-200 text-[11px] px-4 py-3">{predictionBufferMessage}</div> : null}
+                    {predictionError ? <div className="rounded-[18px] border border-rose-500/15 bg-rose-500/10 text-rose-300 text-[11px] px-4 py-3">{predictionError}</div> : null}
+                    {predicting ? <div className="rounded-[18px] border border-cyan-500/15 bg-cyan-500/10 text-cyan-200 text-[11px] px-4 py-3">Confirm the signature in your wallet to lock this prediction.</div> : null}
+                  </>
+                )}
+
+                {phase === "result" && (
+                  <>
+                    <div className="grid grid-cols-1 gap-2.5">
+                      <div className="dashboard-modal-row px-3 py-2.5 text-center">
+                        <p className="text-white/24 text-[9px] uppercase tracking-[0.2em] mb-1.5">Your Call</p>
+                        <p className={`${resultPrediction === "up" ? "text-emerald-300" : resultPrediction === "down" ? "text-rose-300" : "text-white/72"} text-[1rem] font-black`}>
+                          {resultPredictionLabel || "NO POSITION"}
+                        </p>
+                      </div>
+                      <div className="dashboard-modal-row px-3 py-3">
+                        <div className="flex items-end justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className={`text-[10px] font-bold uppercase tracking-[0.2em] ${resultHeadlineTone}`}>{resultHeadline}</p>
+                            <p className="text-white/40 text-[10px] mt-1">{resultOutcomeCopy}</p>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <p className="text-white/24 text-[9px] uppercase tracking-[0.2em] mb-1">Net</p>
+                            <p className={`text-[1.4rem] font-black font-mono ${resultAmountTone}`}>{resultAmountText}</p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {claimState.error ? <div className="rounded-[16px] border border-rose-500/15 bg-rose-500/10 text-rose-300 px-3 py-2 text-[11px]">{claimState.error}</div> : null}
+                    {claimState.success ? <div className="rounded-[16px] border border-emerald-500/15 bg-emerald-500/10 text-emerald-300 px-3 py-2 text-[11px]">{claimState.success}</div> : null}
+
+                    {rewardAmount > 0 ? (
+                      <button
+                        onClick={handleClaimFunds}
+                        disabled={!canClaimReward || claiming}
+                        className={`w-full py-2.5 rounded-[18px] font-black text-sm transition ${
+                          claimState.claimed || result?.myResult?.claimed
+                            ? "bg-emerald-500/15 border border-emerald-500/20 text-emerald-300 cursor-default"
+                            : "bg-gradient-to-r from-emerald-500 to-teal-500 text-white shadow-lg shadow-emerald-500/20 hover:shadow-emerald-500/30 disabled:opacity-40"
+                        }`}
+                      >
+                        {claimState.claimed || result?.myResult?.claimed
+                          ? hasRefundLikePayout ? "Refund Claimed" : "Reward Claimed"
+                          : claiming ? hasRefundLikePayout ? "Claiming Refund..." : "Claiming Reward..."
+                            : hasRefundLikePayout ? "Claim Refund" : "Claim Reward"}
+                      </button>
+                    ) : null}
+                    <button onClick={handleShareToX} className="w-full dashboard-action-primary !py-2.5 font-black !text-sm">Share to 𝕏</button>
+                  </>
+                )}
+
+                {phase === "failed" && (
+                  <>
+                    <div className="dashboard-modal-row px-3 py-3">
+                      <p className="text-white/24 text-[9px] uppercase tracking-[0.2em] mb-1.5">Recovery Status</p>
+                      <p className="text-white/72 text-[11px] leading-5">{failureMessage || "Settlement was interrupted. Funds remain safe on-chain while recovery options load."}</p>
+                    </div>
+                    {claimState.error ? <div className="rounded-[16px] border border-rose-500/15 bg-rose-500/10 text-rose-300 px-3 py-2 text-[11px]">{claimState.error}</div> : null}
+                    {claimState.success ? <div className="rounded-[16px] border border-emerald-500/15 bg-emerald-500/10 text-emerald-300 px-3 py-2 text-[11px]">{claimState.success}</div> : null}
+                    {claimStatusLoading ? (
+                      <div className="dashboard-modal-row px-3 py-3 text-[11px] text-white/44">Checking on-chain recovery status...</div>
+                    ) : canClaimFailedFunds ? (
+                      <button
+                        onClick={handleClaimFunds}
+                        disabled={!canClaimFailedFunds || claiming}
+                        className="w-full py-2.5 rounded-[18px] font-black text-sm bg-gradient-to-r from-emerald-500 to-teal-500 text-white shadow-lg shadow-emerald-500/20 hover:shadow-emerald-500/30 disabled:opacity-40"
+                      >
+                        {claiming ? "Claiming..." : failedClaimLabel}
+                      </button>
+                    ) : (
+                      <div className="dashboard-modal-row px-3 py-3 text-[11px] text-white/44">
+                        {claimStatus?.state === 2 && refundWaitSeconds !== null
+                          ? `Settlement is still syncing. Refund path may unlock in about ${refundWaitSeconds}s.`
+                          : "Recovery is still syncing. Stay in the room or check back shortly."}
+                      </div>
+                    )}
+                    <button onClick={handleShareToX} className="w-full dashboard-action-primary !py-2.5 font-black !text-sm">Share to 𝕏</button>
+                  </>
+                )}
+              </div>
+            </div>
+          </aside>
+          </div>
+        </div>
+        {resultCompletionOverlay}
+      </>
+    );
+  }
+
   return (
-    <div className="page-container flex flex-col items-center">
+    <>
+      <div className={embedded ? "w-full flex flex-col items-center" : "page-container !max-w-[44rem] flex flex-col items-center"}>
       {phase === "waiting" && (
         <div className="text-center pt-12 animate-slideUp">
           <div className="text-5xl mb-3 animate-float">⚔️</div>
@@ -664,41 +1186,50 @@ export default function GamePlay() {
       )}
 
       {phase === "predicting" && (
-        <div className="w-full max-w-3xl animate-slideUp">
-          <div className="landing-story-card !p-5 sm:!p-6 mb-4">
-            <div className="flex items-start justify-between gap-4 mb-4">
-              <div>
-                <p className="text-white/20 text-[10px] uppercase tracking-[0.25em] mb-1">Match In Progress</p>
-                <h3 className="text-lg font-black">Make your prediction</h3>
-                <p className="text-white/35 text-xs mt-1">Choose LONG if you think BTC will finish above the base price, or SHORT if you think it will finish below.</p>
+        <div className="w-full max-w-[40rem] animate-slideUp">
+          <div className="dashboard-modal-card overflow-hidden p-3 sm:p-3.5">
+            <div className="flex items-start justify-between gap-2.5 mb-3">
+              <div className="min-w-0 max-w-[26rem]">
+                <span className="dashboard-room-chip inline-flex items-center gap-2 px-3 py-1.5 text-[9px] font-semibold uppercase tracking-[0.2em] text-fuchsia-100/82">Match In Progress</span>
+                <h3 className="mt-2.5 text-[1.12rem] sm:text-[1.32rem] font-black tracking-[-0.04em] text-white leading-[1.06]">{displayedPrediction ? t("game.makePrediction") : chooseSideTitle}</h3>
+                <p className="mt-1.5 text-[10px] sm:text-[11px] leading-5 text-white/46">{displayedPrediction ? "Your call is locked in for this round." : t("game.descLongShort")}</p>
               </div>
-              <CountdownRing total={PREDICT_TIMEOUT} remaining={countdown} label="Time Left" size="lg" />
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
-              <div className="arena-mech-panel p-4 text-center">
-                <p className="text-white/20 text-[10px] uppercase tracking-[0.2em] mb-1">Base Price</p>
-                <p className="text-2xl font-mono font-black text-gradient">${basePrice.toLocaleString("en-US", { minimumFractionDigits: 2 })}</p>
-              </div>
-              <div className="arena-mech-panel p-4 text-center">
-                <p className="text-white/20 text-[10px] uppercase tracking-[0.2em] mb-1">Live Price</p>
-                <p className={`text-2xl font-mono font-black ${priceColor}`}>${currentPrice.toLocaleString("en-US", { minimumFractionDigits: 2 })}</p>
-                <p className={`text-[11px] font-mono mt-1 ${priceColor}`}>{diff >= 0 ? "+" : ""}{diff.toFixed(2)} ({percent}%)</p>
+              <div className="dashboard-room-subcard shrink-0 px-2.5 py-2.5">
+                <CountdownRing total={PREDICT_TIMEOUT} remaining={countdown} label="Time Left" size="sm" />
               </div>
             </div>
-            <div className="arena-mech-panel p-4 mb-4">
-              <div className="flex items-center justify-between mb-3">
-                <p className="text-white/25 text-xs">Players ready</p>
-                <p className="text-white/40 text-xs font-mono">{predictedCount}/{totalPlayers}</p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 mb-3">
+              <div className="dashboard-modal-row min-w-0 px-3 py-2.5 text-center">
+                <p className="text-white/24 text-[9px] uppercase tracking-[0.2em] mb-1.5">Base Price</p>
+                <p className={`${modalPriceClass} text-gradient`}>{formatUsd(basePrice)}</p>
               </div>
-              <PredictButtons onPredict={predict} myPrediction={displayedPrediction} disabled={predicting || predictionBufferActive} />
+              <div className="dashboard-modal-row min-w-0 px-3 py-2.5 text-center">
+                <p className="text-white/24 text-[9px] uppercase tracking-[0.2em] mb-1.5">Live Price</p>
+                <p className={`${modalPriceClass} ${priceColor}`}>{formatUsd(currentPrice)}</p>
+                <p className={`text-[9px] font-mono mt-1 ${priceColor}`}>{diff >= 0 ? "+" : ""}{diff.toFixed(2)} ({percent}%)</p>
+              </div>
             </div>
-            {predictionBufferActive && <div className="rounded-2xl border border-fuchsia-500/15 bg-fuchsia-500/10 text-fuchsia-200 text-xs px-4 py-3 mb-4">Final {effectivePredictSafeBuffer}s are reserved locally for on-chain confirmation. Predictions are locked for this round.</div>}
-            {predictionError && <div className="rounded-2xl border border-rose-500/15 bg-rose-500/10 text-rose-300 text-xs px-4 py-3 mb-4">{predictionError}</div>}
-            {predicting && <div className="rounded-2xl border border-cyan-500/15 bg-cyan-500/10 text-cyan-200 text-xs px-4 py-3 mb-4">Confirm the signature in your wallet to lock this prediction for on-chain submission.</div>}
+
+            <div className={`dashboard-modal-row px-3 py-2.5 mb-3${predictionZoneClass}`}>
+              <div className="flex items-center justify-between mb-2.5">
+                <div>
+                  <p className="text-white/24 text-[9px] uppercase tracking-[0.2em]">Players Ready</p>
+                  <p className="text-white/46 text-[10px] mt-1">{displayedPrediction ? "Predictions confirmed on-chain" : "Choose one direction below."}</p>
+	                </div>
+	                <div className="dashboard-room-chip px-3 py-1.5 text-[10px] font-mono text-white/70">{predictedCount}/{totalPlayers}</div>
+	              </div>
+	              {!displayedPrediction ? <div className="prediction-action-banner mb-2.5">Select LONG or SHORT to lock your prediction</div> : null}
+	              <PredictButtons onPredict={predict} myPrediction={displayedPrediction} disabled={predicting || predictionBufferLocked} attention={predictionNeedsAttention} />
+	            </div>
+
+            {predictionBufferNoticeActive && <div className="rounded-[18px] border border-fuchsia-500/15 bg-fuchsia-500/10 text-fuchsia-200 text-[11px] px-4 py-3 mb-3">{predictionBufferMessage}</div>}
+            {predictionError && <div className="rounded-[18px] border border-rose-500/15 bg-rose-500/10 text-rose-300 text-[11px] px-4 py-3 mb-3">{predictionError}</div>}
+            {predicting && <div className="rounded-[18px] border border-cyan-500/15 bg-cyan-500/10 text-cyan-200 text-[11px] px-4 py-3 mb-3">Confirm the signature in your wallet to lock this prediction for on-chain submission.</div>}
             {displayedPrediction && (
-              <div className={`rounded-2xl border p-4 text-center ${displayedPrediction === "up" ? "bg-emerald-500/[0.06] border-emerald-500/20" : "bg-rose-500/[0.06] border-rose-500/20"}`}>
-                <p className="text-white/25 text-[10px] uppercase tracking-[0.2em] mb-1">Your Position</p>
-                <p className={`text-2xl font-black ${displayedPrediction === "up" ? "text-emerald-400" : "text-rose-400"}`}>{displayedPrediction === "up" ? "📈 LONG" : "📉 SHORT"}</p>
+              <div className={`dashboard-room-subcard px-3 py-2 text-center ${displayedPrediction === "up" ? "!border-emerald-500/20 !bg-emerald-500/[0.06]" : "!border-rose-500/20 !bg-rose-500/[0.06]"}`}>
+                <p className="text-white/24 text-[9px] uppercase tracking-[0.2em] mb-1.5">Your Position</p>
+                <p className={`text-[1rem] font-black tracking-[-0.03em] ${displayedPrediction === "up" ? "text-emerald-400" : "text-rose-400"}`}>{displayedPrediction === "up" ? "LONG" : "SHORT"}</p>
               </div>
             )}
           </div>
@@ -706,38 +1237,38 @@ export default function GamePlay() {
       )}
 
       {phase === "settling" && (
-        <div className="w-full max-w-2xl animate-slideUp">
-          <div className="landing-story-card !p-5 sm:!p-6 text-center">
-            <div className="text-4xl mb-3 animate-float">{countdown > 0 ? "⏳" : "🔗"}</div>
-            <h3 className="text-lg font-black text-white/80 mb-1">{countdown > 0 ? "Settling..." : "Finalizing on-chain..."}</h3>
-            {countdown <= 0 && <p className="text-white/35 text-xs mb-3">Waiting for the settlement transaction to confirm. This usually takes a few seconds.</p>}
-            <div className={`flex justify-center ${countdown>0?"mb-4":"mb-4 opacity-60"}`}>
-              {countdown > 0
-                ? <CountdownRing total={SETTLE_DELAY} remaining={countdown} label="Reveal" size="lg" />
-                : <div className="flex items-center justify-center w-24 h-24 rounded-full border border-fuchsia-500/25 bg-fuchsia-500/[0.06]"><span className="w-6 h-6 rounded-full border-2 border-fuchsia-300/60 border-t-transparent animate-spin"/></div>
-              }
+        <div className="w-full max-w-[40rem] animate-slideUp">
+          <div className="dashboard-modal-card overflow-hidden p-3 sm:p-3.5">
+            <div className="flex items-start justify-between gap-2.5 mb-3">
+              <div className="min-w-0 max-w-[26rem]">
+                <span className="dashboard-room-chip inline-flex items-center gap-2 px-3 py-1.5 text-[9px] font-semibold uppercase tracking-[0.2em] text-fuchsia-100/82">Settlement</span>
+                <h3 className="mt-2.5 text-[1.08rem] sm:text-[1.26rem] font-black tracking-[-0.04em] text-white leading-[1.06]">{countdown > 0 ? t("game.settling") : "Finalizing on-chain..."}</h3>
+                <p className="mt-1.5 text-[10px] sm:text-[11px] leading-5 text-white/46">{countdown > 0 ? "The oracle is preparing the settlement reveal for this round." : "Waiting for the settlement transaction to confirm. This usually takes a few seconds."}</p>
+              </div>
+              <div className="dashboard-room-subcard shrink-0 px-2.5 py-2.5">
+                {countdown > 0
+                  ? <CountdownRing total={SETTLE_DELAY} remaining={countdown} label="Reveal" size="sm" />
+                  : <div className="flex flex-col items-center justify-center w-24 h-24 rounded-full border border-fuchsia-500/20 bg-fuchsia-500/[0.06]"><span className="w-6 h-6 rounded-full border-2 border-fuchsia-300/60 border-t-transparent animate-spin"/><span className="mt-2 text-[9px] uppercase tracking-[0.2em] text-white/35">Syncing</span></div>
+                }
+              </div>
             </div>
-            {viewerRole && (
-              <div className="arena-mech-panel mt-4 p-3">
-                <p className="text-white/25 text-[10px] uppercase tracking-[0.2em] mb-1">Viewing As</p>
-                <p className="text-white/75 font-semibold">{viewerRole}</p>
+
+            {(viewerRole || displayedPrediction) && (
+              <div className="flex flex-wrap gap-2 mb-2.5">
+                {viewerRole && <div className="dashboard-room-chip px-3 py-1.5 text-[10px] text-white/72">Viewing As: {viewerRole}</div>}
+                {displayedPrediction && <div className={`dashboard-room-chip px-3 py-1.5 text-[10px] ${displayedPrediction === "up" ? "!border-emerald-500/20 !bg-emerald-500/[0.08] !text-emerald-300" : "!border-rose-500/20 !bg-rose-500/[0.08] !text-rose-300"}`}>Your Call: {displayedPrediction === "up" ? "LONG" : "SHORT"}</div>}
               </div>
             )}
-            {displayedPrediction && (
-              <div className="arena-mech-panel mt-4 p-3">
-                <p className="text-white/25 text-[10px] uppercase tracking-[0.2em] mb-1">Your Call</p>
-                <p className={displayedPrediction === "up" ? "text-emerald-400 font-black" : "text-rose-400 font-black"}>{displayedPrediction === "up" ? "LONG" : "SHORT"}</p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <div className="dashboard-modal-row min-w-0 px-3 py-2.5 text-center">
+                <p className="text-white/24 text-[9px] uppercase tracking-[0.2em] mb-1.5">Base Price</p>
+                <p className={`${modalPriceClass} text-white/84`}>{formatUsd(basePrice)}</p>
               </div>
-            )}
-            <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="arena-mech-panel p-4 text-center">
-                <p className="text-white/20 text-[10px] uppercase tracking-[0.2em] mb-1">Base Price</p>
-                <p className="text-2xl font-mono font-black text-white/80">${basePrice.toLocaleString("en-US", { minimumFractionDigits: 2 })}</p>
-              </div>
-              <div className="arena-mech-panel p-4 text-center">
-                <p className="text-white/20 text-[10px] uppercase tracking-[0.2em] mb-1">Current Price</p>
-                <p className={`text-2xl font-mono font-black ${priceColor}`}>${currentPrice.toLocaleString("en-US", { minimumFractionDigits: 2 })}</p>
-                <p className={`text-[11px] font-mono mt-1 ${priceColor}`}>{diff >= 0 ? "+" : ""}{diff.toFixed(2)} ({percent}%)</p>
+              <div className="dashboard-modal-row min-w-0 px-3 py-2.5 text-center">
+                <p className="text-white/24 text-[9px] uppercase tracking-[0.2em] mb-1.5">Current Price</p>
+                <p className={`${modalPriceClass} ${priceColor}`}>{formatUsd(currentPrice)}</p>
+                <p className={`text-[9px] font-mono mt-1 ${priceColor}`}>{diff >= 0 ? "+" : ""}{diff.toFixed(2)} ({percent}%)</p>
               </div>
             </div>
           </div>
@@ -745,68 +1276,67 @@ export default function GamePlay() {
       )}
 
       {phase === "failed" && (
-        <div className="w-full max-w-2xl animate-slideUp">
-          <div className="landing-story-card !p-5 sm:!p-6">
-            <div className="text-center">
-              <div className="text-4xl mb-3">⚠️</div>
-              <h3 className="text-lg font-black text-white/85">Settlement Interrupted</h3>
-              <p className="text-white/45 text-xs mt-2 leading-relaxed">
-                {failureMessage || "Settlement was interrupted. Funds remain safe on-chain while recovery options load."}
-              </p>
-              {currentChainGameId ? (
-                <p className="text-white/15 text-[10px] mt-3 font-mono">Chain Game #{currentChainGameId}</p>
-              ) : null}
-            </div>
-
-            {displayedPrediction && (
-              <div className="arena-mech-panel mt-4 p-4 text-center">
-                <p className="text-white/25 text-[10px] uppercase tracking-[0.2em] mb-1">Your Call</p>
-                <p className={displayedPrediction === "up" ? "text-emerald-400 font-black text-xl" : "text-rose-400 font-black text-xl"}>
-                  {displayedPrediction === "up" ? "LONG" : "SHORT"}
+        <div className="w-full max-w-[40rem] animate-slideUp">
+          <div className="dashboard-modal-card overflow-hidden p-3 sm:p-3.5">
+            <div className="flex items-start justify-between gap-2.5 mb-3">
+              <div className="min-w-0 max-w-[26rem]">
+                <span className="dashboard-room-chip inline-flex items-center gap-2 px-3 py-1.5 text-[9px] font-semibold uppercase tracking-[0.2em] text-fuchsia-100/82">Recovery</span>
+                <h3 className="mt-2.5 text-[1.08rem] sm:text-[1.26rem] font-black tracking-[-0.04em] text-white leading-[1.06]">Settlement Interrupted</h3>
+                <p className="mt-1.5 text-[10px] sm:text-[11px] leading-5 text-white/46">
+                  {failureMessage || "Settlement was interrupted. Funds remain safe on-chain while recovery options load."}
                 </p>
               </div>
-            )}
-
-            <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="arena-mech-panel p-4 text-center">
-                <p className="text-white/20 text-[10px] uppercase tracking-[0.2em] mb-1">Base Price</p>
-                <p className="text-2xl font-mono font-black text-white/80">${basePrice.toLocaleString("en-US", { minimumFractionDigits: 2 })}</p>
-              </div>
-              <div className="arena-mech-panel p-4 text-center">
-                <p className="text-white/20 text-[10px] uppercase tracking-[0.2em] mb-1">Current Price</p>
-                <p className={`text-2xl font-mono font-black ${priceColor}`}>${currentPrice.toLocaleString("en-US", { minimumFractionDigits: 2 })}</p>
-                <p className={`text-[11px] font-mono mt-1 ${priceColor}`}>{diff >= 0 ? "+" : ""}{diff.toFixed(2)} ({percent}%)</p>
+              <div className="dashboard-room-subcard shrink-0 px-3 py-2.5 text-center min-w-[5.75rem]">
+                <p className="text-white/24 text-[9px] uppercase tracking-[0.2em] mb-1">Status</p>
+                <p className="text-[1rem] font-black text-amber-300">Syncing</p>
               </div>
             </div>
 
-            <div className="arena-mech-panel mt-4 p-4">
-              <div className="flex items-center justify-between gap-3 mb-3">
+            <div className="flex flex-wrap gap-2 mb-2.5">
+              {currentChainGameId ? <div className="dashboard-room-chip px-3 py-1.5 text-[10px] font-mono text-white/72">Chain Game #{currentChainGameId}</div> : null}
+              {displayedPrediction ? <div className={`dashboard-room-chip px-3 py-1.5 text-[10px] ${displayedPrediction === "up" ? "!border-emerald-500/20 !bg-emerald-500/[0.08] !text-emerald-300" : "!border-rose-500/20 !bg-rose-500/[0.08] !text-rose-300"}`}>Your Call: {displayedPrediction === "up" ? "LONG" : "SHORT"}</div> : null}
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 mb-3">
+              <div className="dashboard-modal-row min-w-0 px-3 py-2.5 text-center">
+                <p className="text-white/24 text-[9px] uppercase tracking-[0.2em] mb-1.5">Base Price</p>
+                <p className={`${modalPriceClass} text-white/84`}>{formatUsd(basePrice)}</p>
+              </div>
+              <div className="dashboard-modal-row min-w-0 px-3 py-2.5 text-center">
+                <p className="text-white/24 text-[9px] uppercase tracking-[0.2em] mb-1.5">Current Price</p>
+                <p className={`${modalPriceClass} ${priceColor}`}>{formatUsd(currentPrice)}</p>
+                <p className={`text-[9px] font-mono mt-1 ${priceColor}`}>{diff >= 0 ? "+" : ""}{diff.toFixed(2)} ({percent}%)</p>
+              </div>
+            </div>
+
+            <div className="dashboard-modal-row px-3 py-3 mb-3">
+              <div className="flex items-start justify-between gap-3 mb-2.5">
                 <div>
-                  <p className="text-fuchsia-300 text-xs font-bold uppercase tracking-[0.2em]">Recovery</p>
-                  <p className="text-white/40 text-xs mt-1">We keep checking the contract so you can claim the correct outcome from this page.</p>
+                  <p className="text-fuchsia-200 text-[10px] font-bold uppercase tracking-[0.2em]">Recovery</p>
+                  <p className="text-white/40 text-[10px] mt-1">We keep checking the contract so you can claim the correct outcome from this page.</p>
                 </div>
-                {claimStatus?.state === 3 && claimStatus?.reward > 0 && (
-                  <div className="text-right">
-                    <p className="text-white/20 text-[10px] uppercase tracking-[0.2em]">On-Chain Reward</p>
-                    <p className="text-emerald-400 font-mono font-black text-lg">{claimStatus.reward.toFixed(4)} USDC</p>
+                {claimStatus?.state === 3 && claimStatus?.reward > 0 ? (
+                  <div className="text-right shrink-0">
+                    <p className="text-white/20 text-[9px] uppercase tracking-[0.2em]">On-Chain Reward</p>
+                    <p className="text-emerald-400 font-mono font-black text-[1rem]">{claimStatus.reward.toFixed(4)} USDC</p>
                   </div>
-                )}
+                ) : null}
               </div>
 
-              {claimState.error && <div className="bg-rose-500/10 border border-rose-500/15 text-rose-300 px-3 py-2 rounded-xl text-xs mb-3">{claimState.error}</div>}
-              {claimState.success && <div className="bg-emerald-500/10 border border-emerald-500/15 text-emerald-300 px-3 py-2 rounded-xl text-xs mb-3">{claimState.success}</div>}
+              {claimState.error ? <div className="rounded-[16px] border border-rose-500/15 bg-rose-500/10 text-rose-300 px-3 py-2 text-[11px] mb-2.5">{claimState.error}</div> : null}
+              {claimState.success ? <div className="rounded-[16px] border border-emerald-500/15 bg-emerald-500/10 text-emerald-300 px-3 py-2 text-[11px] mb-2.5">{claimState.success}</div> : null}
 
               {claimStatusLoading ? (
-                <p className="text-white/40 text-xs">Checking on-chain recovery status...</p>
+                <p className="text-white/40 text-[11px]">Checking on-chain recovery status...</p>
               ) : !wallet ? (
-                <p className="text-white/40 text-xs">Reconnect your wallet to see recovery options.</p>
+                <p className="text-white/40 text-[11px]">Reconnect your wallet to see recovery options.</p>
               ) : !claimStatus ? (
-                <p className="text-white/40 text-xs">Recovery status is temporarily unavailable. Refresh in a moment.</p>
+                <p className="text-white/40 text-[11px]">Recovery status is temporarily unavailable. Refresh in a moment.</p>
               ) : claimStatus.claimed || claimState.claimed ? (
-                <p className="text-emerald-300 text-xs">Funds for this round have already been claimed to your wallet.</p>
+                <p className="text-emerald-300 text-[11px]">Funds for this round have already been claimed to your wallet.</p>
               ) : canClaimFailedFunds ? (
                 <div className="space-y-2">
-                  <p className="text-white/50 text-xs">
+                  <p className="text-white/50 text-[11px]">
                     {claimStatus.canClaimReward
                       ? "The round has already settled on-chain. You can claim your reward now."
                       : claimStatus.canForceRefund
@@ -816,96 +1346,134 @@ export default function GamePlay() {
                   <button
                     onClick={handleClaimFunds}
                     disabled={!canClaimFailedFunds || claiming}
-                    className="w-full py-3 rounded-xl font-black text-sm bg-gradient-to-r from-emerald-500 to-teal-500 text-white shadow-lg shadow-emerald-500/20 hover:shadow-emerald-500/30 disabled:opacity-40"
+                    className="w-full py-2.5 rounded-[18px] font-black text-sm bg-gradient-to-r from-emerald-500 to-teal-500 text-white shadow-lg shadow-emerald-500/20 hover:shadow-emerald-500/30 disabled:opacity-40"
                   >
                     {claiming ? "Claiming..." : failedClaimLabel}
                   </button>
                 </div>
               ) : claimStatus.state === 3 ? (
-                <p className="text-white/45 text-xs">The round is settled on-chain, but this wallet has no claimable reward for this outcome.</p>
+                <p className="text-white/45 text-[11px]">The round is settled on-chain, but this wallet has no claimable reward for this outcome.</p>
               ) : claimStatus.state === 2 && refundWaitSeconds !== null ? (
-                <p className="text-white/45 text-xs">
+                <p className="text-white/45 text-[11px]">
                   Settlement is still syncing. If the oracle does not finish first, the refund path unlocks in about {refundWaitSeconds}s.
                 </p>
               ) : (
-                <p className="text-white/45 text-xs">Recovery is still syncing. You can also return to the home page and check history later.</p>
+                <p className="text-white/45 text-[11px]">Recovery is still syncing. You can also return to the home page and check history later.</p>
               )}
             </div>
 
-            <div className="flex gap-2 mt-4">
-              <button onClick={() => nav("/")} className="flex-1 py-2.5 rounded-xl bg-fuchsia-500/[0.06] border border-fuchsia-500/15 hover:bg-fuchsia-500/[0.1] transition text-xs text-white/60">Home</button>
-              <button onClick={handleShareToX} className="flex-1 btn-primary !py-2.5 font-black !text-sm">Share to 𝕏</button>
+            <div className="flex gap-2">
+              <button onClick={() => nav("/")} className="flex-1 py-2.5 rounded-[18px] bg-fuchsia-500/[0.06] border border-fuchsia-500/15 hover:bg-fuchsia-500/[0.1] transition text-xs text-white/60">Home</button>
+              <button onClick={handleShareToX} className="flex-1 dashboard-action-primary !py-2.5 font-black !text-sm">Share to 𝕏</button>
             </div>
           </div>
         </div>
       )}
 
       {phase === "result" && result && (
-        <div className="w-full max-w-2xl animate-slideUp">
-          <div className="landing-story-card !p-5 sm:!p-6">
-            <div className="arena-mech-panel p-4 mb-4">
-              <SettlementReveal basePrice={result.basePrice} settlementPrice={result.settlementPrice} direction={result.direction} />
+        <div className="w-full max-w-[40rem] animate-slideUp">
+          <div className="dashboard-modal-card overflow-hidden p-3 sm:p-3.5">
+            <div className="flex items-start justify-between gap-2.5 mb-3">
+              <div className="min-w-0 max-w-[26rem]">
+                <span className="dashboard-room-chip inline-flex items-center gap-2 px-3 py-1.5 text-[9px] font-semibold uppercase tracking-[0.2em] text-fuchsia-100/82">Round Result</span>
+                <h3 className={`mt-2.5 text-[1.08rem] sm:text-[1.26rem] font-black tracking-[-0.04em] leading-[1.06] ${resultHeadlineTone}`}>{resultHeadline}</h3>
+                <p className="mt-1.5 text-[10px] sm:text-[11px] leading-5 text-white/46">{resultOutcomeCopy}</p>
+              </div>
+              <div className="dashboard-room-subcard shrink-0 px-3 py-2.5 text-center min-w-[6.25rem]">
+                <p className="text-white/24 text-[9px] uppercase tracking-[0.2em] mb-1">Outcome</p>
+                <p className={`text-[1rem] font-black ${resultOutcomeTone}`}>{resultOutcomeLabel}</p>
+              </div>
             </div>
 
-            {result.myResult && (
-              <div className="arena-mech-panel p-5 text-center">
-                <div className="text-4xl mb-2">{result.myResult.isCorrect ? "🏆" : "💀"}</div>
-                <h3 className={`text-xl font-black ${result.myResult.isCorrect ? "text-emerald-400" : "text-rose-400"}`}>{result.myResult.isCorrect ? "Forecast Confirmed" : "Forecast Missed"}</h3>
-                <p className="text-white/20 text-[10px] mt-1 mb-2">You predicted {result.myResult.prediction === "up" ? "LONG" : result.myResult.prediction === "down" ? "SHORT" : "NO POSITION"}</p>
-                <div className={`text-3xl font-black font-mono ${rewardAmount > 0 ? "text-emerald-400" : "text-rose-400"}`}>{rewardAmount > 0 ? `+${rewardAmount.toFixed(4)}` : "-1.0000"} <span className="text-sm text-white/20">USDC</span></div>
-                <p className="text-white/30 text-[11px] mt-3">
-                  {rewardAmount > 0 ? "Your reward is ready on-chain. Claim it to return funds to your wallet." : "This round has no claimable reward for your wallet."}
-                </p>
-                {currentChainGameId ? (
-                  <p className="text-white/15 text-[10px] mt-2 font-mono">Chain Game #{currentChainGameId}</p>
-                ) : null}
-              </div>
-            )}
+            <div className="flex flex-wrap gap-2 mb-2.5">
+              {currentChainGameId ? <div className="dashboard-room-chip px-3 py-1.5 text-[10px] font-mono text-white/72">Chain Game #{currentChainGameId}</div> : null}
+              {resultPredictionLabel ? <div className={`dashboard-room-chip px-3 py-1.5 text-[10px] ${resultPrediction === "up" ? "!border-emerald-500/20 !bg-emerald-500/[0.08] !text-emerald-300" : "!border-rose-500/20 !bg-rose-500/[0.08] !text-rose-300"}`}>Your Call: {resultPredictionLabel}</div> : null}
+              <div className={`dashboard-room-chip px-3 py-1.5 text-[10px] ${resultOutcomeChipClass}`}>Settled: {resultOutcomeLabel}</div>
+            </div>
 
-            {resultPredictionLabel && (
-              <div className="arena-mech-panel mt-4 p-4 text-center">
-                <p className="text-white/25 text-[10px] uppercase tracking-[0.2em] mb-1">Your Call</p>
-                <p className={resultPrediction === "up" ? "text-emerald-400 font-black text-xl" : "text-rose-400 font-black text-xl"}>{resultPredictionLabel}</p>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 mb-3">
+              <div className="dashboard-modal-row min-w-0 px-3 py-2.5 text-center">
+                <p className="text-white/24 text-[9px] uppercase tracking-[0.2em] mb-1.5">Base Price</p>
+                <p className={`${modalPriceClass} text-white/84`}>{formatUsd(resultBasePrice)}</p>
               </div>
-            )}
+              <div className="dashboard-modal-row min-w-0 px-3 py-2.5 text-center">
+                <p className="text-white/24 text-[9px] uppercase tracking-[0.2em] mb-1.5">Settlement Price</p>
+                <p className={`${modalPriceClass} ${resultOutcomeTone}`}>{formatUsd(resultSettlementPrice)}</p>
+              </div>
+              <div className="dashboard-modal-row min-w-0 px-3 py-2.5 text-center">
+                <p className="text-white/24 text-[9px] uppercase tracking-[0.2em] mb-1.5">Price Change</p>
+                <p className={`text-[1.1rem] leading-none font-mono font-black ${resultOutcomeTone}`}>{resultDiff >= 0 ? "+" : ""}{resultDiff.toFixed(2)}</p>
+                <p className={`text-[9px] font-mono mt-1 ${resultOutcomeTone}`}>{resultDiff >= 0 ? "+" : ""}{resultPercent}%</p>
+              </div>
+            </div>
 
-            {rewardAmount > 0 && (
-              <div className="arena-mech-panel mt-4 p-4">
-                <div className="flex items-center justify-between gap-3 mb-3">
-                  <div>
-                    <p className="text-emerald-300 text-xs font-bold uppercase tracking-[0.2em]">Reward Claim</p>
-                    <p className="text-white/40 text-xs mt-1">Winning funds are finalized on-chain after you confirm the claim transaction.</p>
+            {result.myResult ? (
+              <div className="dashboard-modal-row px-3 py-3 mb-3">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className={`text-[10px] font-bold uppercase tracking-[0.2em] ${resultHeadlineTone}`}>{resultHeadline}</p>
+                    <p className="text-white/40 text-[10px] mt-1">
+                      {rewardAmount > 0
+                        ? hasRefundLikePayout
+                          ? "No winning side this round. The refundable balance is ready on-chain."
+                          : "Your reward is ready on-chain. Claim it to return funds to your wallet."
+                        : "This round has no claimable reward for this wallet."}
+                    </p>
                   </div>
-                  <div className="text-right">
-                    <p className="text-white/20 text-[10px] uppercase tracking-[0.2em]">Claimable</p>
-                    <p className="text-emerald-400 font-mono font-black text-lg">{rewardAmount.toFixed(4)} USDC</p>
+                  <div className="text-left sm:text-right shrink-0">
+                    <p className="text-white/24 text-[9px] uppercase tracking-[0.2em] mb-1">Net Result</p>
+                    <p className={`text-[1.6rem] font-black font-mono ${resultAmountTone}`}>{resultAmountText} <span className="text-[0.8rem] text-white/30">USDC</span></p>
                   </div>
                 </div>
+              </div>
+            ) : null}
 
-                {claimState.error && <div className="bg-rose-500/10 border border-rose-500/15 text-rose-300 px-3 py-2 rounded-xl text-xs mb-3">{claimState.error}</div>}
-                {claimState.success && <div className="bg-emerald-500/10 border border-emerald-500/15 text-emerald-300 px-3 py-2 rounded-xl text-xs mb-3">{claimState.success}</div>}
+            {claimState.error ? <div className="rounded-[16px] border border-rose-500/15 bg-rose-500/10 text-rose-300 px-3 py-2 text-[11px] mb-2.5">{claimState.error}</div> : null}
+            {claimState.success ? <div className="rounded-[16px] border border-emerald-500/15 bg-emerald-500/10 text-emerald-300 px-3 py-2 text-[11px] mb-2.5">{claimState.success}</div> : null}
+
+            {rewardAmount > 0 ? (
+              <div className="dashboard-modal-row px-3 py-3 mb-3">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-emerald-300 text-[10px] font-bold uppercase tracking-[0.2em]">{hasRefundLikePayout ? "Refund Claim" : "Reward Claim"}</p>
+                    <p className="text-white/40 text-[10px] mt-1">
+                      {hasRefundLikePayout
+                        ? "No winner took the pool, so you can claim the returned balance from this round."
+                        : "Winning funds are finalized on-chain after you confirm the claim transaction."}
+                    </p>
+                  </div>
+                  <div className="text-left sm:text-right shrink-0">
+                    <p className="text-white/20 text-[9px] uppercase tracking-[0.2em] mb-1">{hasRefundLikePayout ? "Refundable" : "Claimable"}</p>
+                    <p className="text-emerald-400 font-mono font-black text-[1rem]">{rewardAmount.toFixed(4)} USDC</p>
+                  </div>
+                </div>
 
                 <button
                   onClick={handleClaimFunds}
                   disabled={!canClaimReward || claiming}
-                  className={`w-full py-3 rounded-xl font-black text-sm transition ${
-                    claimState.claimed
+                  className={`w-full mt-3 py-2.5 rounded-[18px] font-black text-sm transition ${
+                    claimState.claimed || result?.myResult?.claimed
                       ? "bg-emerald-500/15 border border-emerald-500/20 text-emerald-300 cursor-default"
                       : "bg-gradient-to-r from-emerald-500 to-teal-500 text-white shadow-lg shadow-emerald-500/20 hover:shadow-emerald-500/30 disabled:opacity-40"
                   }`}
                 >
-                  {claimState.claimed || result?.myResult?.claimed ? "Reward Claimed" : claiming ? "Claiming Reward..." : "Claim Reward"}
+                  {claimState.claimed || result?.myResult?.claimed
+                    ? hasRefundLikePayout ? "Refund Claimed" : "Reward Claimed"
+                    : claiming ? hasRefundLikePayout ? "Claiming Refund..." : "Claiming Reward..."
+                      : hasRefundLikePayout ? "Claim Refund" : "Claim Reward"}
                 </button>
               </div>
-            )}
+            ) : null}
 
-            <div className="flex gap-2 mt-4">
-              <button onClick={() => nav("/arena")} className="flex-1 py-2.5 rounded-xl bg-fuchsia-500/[0.06] border border-fuchsia-500/15 hover:bg-fuchsia-500/[0.1] transition text-xs text-white/60">{t("result.confirm")}</button>
-              <button onClick={handleShareToX} className="flex-1 btn-primary !py-2.5 font-black !text-sm">Share to 𝕏</button>
+            <div className="flex gap-2">
+              <button onClick={() => nav("/arena")} className="flex-1 py-2.5 rounded-[18px] bg-fuchsia-500/[0.06] border border-fuchsia-500/15 hover:bg-fuchsia-500/[0.1] transition text-xs text-white/60">{t("result.confirm")}</button>
+              <button onClick={handleShareToX} className="flex-1 dashboard-action-primary !py-2.5 font-black !text-sm">Share to 𝕏</button>
             </div>
           </div>
         </div>
       )}
-    </div>
+      </div>
+      {resultCompletionOverlay}
+    </>
   );
 }

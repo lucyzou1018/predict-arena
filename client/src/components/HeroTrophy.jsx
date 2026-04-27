@@ -23,8 +23,15 @@ export default function HeroTrophy() {
         className="absolute inset-0 rounded-full blur-3xl"
         style={{
           background:
-            "radial-gradient(circle at 50% 45%, rgba(236,72,173,0.45), rgba(168,85,247,0.25) 42%, transparent 72%)",
-          opacity: 0.85,
+            "radial-gradient(circle at 52% 46%, rgba(236,72,153,0.34), rgba(192,75,211,0.18) 40%, transparent 72%)",
+          opacity: 0.78,
+        }}
+      />
+      <div
+        className="absolute inset-x-[12%] bottom-[8%] h-[36%] rounded-full blur-[46px]"
+        style={{
+          background:
+            "radial-gradient(circle, rgba(244,114,182,0.22) 0%, rgba(168,85,247,0.12) 48%, transparent 74%)",
         }}
       />
 
@@ -53,8 +60,8 @@ export default function HeroTrophy() {
           className="w-full h-full object-contain"
           style={{
             filter:
-              "drop-shadow(0 18px 40px rgba(180,40,130,0.45)) drop-shadow(0 0 50px rgba(217,70,239,0.25))",
-          }}
+              "saturate(0.72) hue-rotate(10deg) brightness(1.02) contrast(1.02) drop-shadow(0 20px 40px rgba(139,31,94,0.26)) drop-shadow(0 0 34px rgba(236,72,153,0.12))",
+            }}
         />
       </div>
     </div>

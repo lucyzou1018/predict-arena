@@ -93,6 +93,40 @@ class GameService {
     return Math.ceil(Math.max(0, config.game.predictTimeout - (Date.now() - game.startedAt)) / 1000);
   }
 
+  _normalizePredictionValue(prediction) {
+    if (prediction === 1 || prediction === "1" || prediction === "up") return 1;
+    if (prediction === 2 || prediction === "2" || prediction === "down") return 2;
+    return 0;
+  }
+
+  _buildPredictionSnapshot(game) {
+    const snapshot = {};
+    for (const [wallet, prediction] of Object.entries(game?.predictions || {})) {
+      const normalizedWallet = wallet?.toLowerCase?.();
+      if (!normalizedWallet) continue;
+      const normalizedPrediction = this._normalizePredictionValue(prediction);
+      if (normalizedPrediction) snapshot[normalizedWallet] = normalizedPrediction;
+    }
+    return snapshot;
+  }
+
+  async _hydrateGamePredictions(gameId, predictions = {}) {
+    const rows = await query(
+      `SELECT wallet_address, prediction
+       FROM game_players
+       WHERE game_id = $1`,
+      [gameId],
+    );
+    const nextPredictions = { ...predictions };
+    for (const row of rows.rows) {
+      const wallet = row.wallet_address?.toLowerCase?.();
+      const prediction = this._normalizePredictionValue(row.prediction);
+      if (!wallet || !prediction) continue;
+      nextPredictions[wallet] = prediction;
+    }
+    return nextPredictions;
+  }
+
   _buildActiveGameSnapshot(game) {
     if (!game) return null;
     return {
@@ -104,6 +138,7 @@ class GameService {
       players: game.players.map((player) => player.wallet),
       totalPlayers: game.players.length,
       totalPredicted: Object.keys(game.predictions || {}).length,
+      playerPredictions: this._buildPredictionSnapshot(game),
       remaining: this._getActiveGameRemaining(game),
       predictTimeout: config.game.predictTimeout,
       predictSafeBuffer: config.game.predictSafeBuffer,
@@ -472,6 +507,7 @@ class GameService {
       startedAt,
       predictionDeadline: Number(predictionDeadline),
     };
+    game.predictions = await this._hydrateGamePredictions(gameId, game.predictions);
 
     this._cleanupActiveGame(gameId);
     this.activeGames[gameId] = game;
@@ -492,6 +528,8 @@ class GameService {
       chainGameId,
       basePrice: game.basePrice,
       players: resolvedPlayers.map((p) => p.wallet),
+      totalPredicted: Object.keys(game.predictions || {}).length,
+      playerPredictions: this._buildPredictionSnapshot(game),
       predictTimeout: config.game.predictTimeout,
       predictSafeBuffer: config.game.predictSafeBuffer,
       predictionDeadline: game.predictionDeadline,
@@ -618,7 +656,13 @@ class GameService {
        WHERE game_id = $4 AND LOWER(wallet_address) = LOWER($5)`,
       [normalizedPrediction, signature, Number(deadline), gameId, wallet],
     );
-    this.io?.to(`game:${gameId}`).emit("game:prediction", { wallet, predicted: true, totalPredicted: Object.keys(g.predictions).length, totalPlayers: g.players.length });
+    this.io?.to(`game:${gameId}`).emit("game:prediction", {
+      wallet,
+      prediction: this._normalizePredictionValue(normalizedPrediction),
+      predicted: true,
+      totalPredicted: Object.keys(g.predictions).length,
+      totalPlayers: g.players.length,
+    });
     if (Object.keys(g.predictions).length === g.players.length) {
       clearTimeout(g.predictTimer);
       clearInterval(g.countdownInterval);

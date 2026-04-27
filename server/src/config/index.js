@@ -22,5 +22,5 @@ export default {
       .map((value) => value.trim())
       .filter(Boolean),
   },
-  game: { matchTimeout: 15000, predictTimeout: 30000, predictSafeBuffer: 5000, settleDelay: 30000, roomExpiry: 300000, paymentTimeout: 180000, entryFee: 1_000_000, feeRate: 0.05 },
+  game: { matchTimeout: 60000, predictTimeout: 30000, predictSafeBuffer: 5000, settleDelay: 30000, roomExpiry: 300000, paymentTimeout: 180000, entryFee: 1_000_000, feeRate: 0.05 },
 };

@@ -7,7 +7,7 @@ export default function RandomMatch(){
   const{mockMode,wallet,connect}=useWallet();const{payForGame,mockPay,loading,shouldUseMockPayment}=useContract();
   const t=useT();
   const[phase,setPhase]=useState("select");const[sz,setSz]=useState(2);
-  const[match,setMatch]=useState({current:0});const[cd,setCd]=useState(15);
+  const[match,setMatch]=useState({current:0});const[cd,setCd]=useState(60);
   const[pending,setPending]=useState(null);const[err,setErr]=useState(null);
   const szRef=useRef(sz);szRef.current=sz;
   const phaseRef=useRef(phase);phaseRef.current=phase;
@@ -20,12 +20,12 @@ export default function RandomMatch(){
     setErr(message);
   },[emit]);
 
-  useEffect(()=>{if(phase!=="matching")return;setCd(15);const t=setInterval(()=>setCd(c=>{if(c<=1){clearInterval(t);return 0}return c-1}),1000);return()=>clearInterval(t)},[phase]);
+  useEffect(()=>{if(phase!=="matching")return;setCd(60);const t=setInterval(()=>setCd(c=>{if(c<=1){clearInterval(t);return 0}return c-1}),1000);return()=>clearInterval(t)},[phase]);
 
   useEffect(()=>{const u=[
     on("match:update",d=>{setMatch({current:d.current});if(typeof d.remaining==="number")setCd(d.remaining)}),
     on("match:full",d=>{setErr(null);setMatch({current:d.current||d.total||szRef.current});setPhase("preparing")}),
-    on("match:found",d=>{setPending(d);if(shouldUseMockPayment){mockPay().then(()=>{updateGame({gameId:d.gameId,chainGameId:d.chainGameId,mode:"random",teamSize:d.teamSize||szRef.current,players:d.players,phase:"predicting"});nav("/game");})}else setPhase("payment")}),
+    on("match:found",d=>{if(d.inviteCode){nav(`/room/${d.inviteCode}`,{state:{fromQuickMatch:true,teamSize:d.teamSize||szRef.current,players:d.players||[],current:d.teamSize||szRef.current,inviteCode:d.inviteCode,gameId:d.gameId,chainGameId:d.chainGameId,readyForPayment:true}});return;}setPending(d);if(shouldUseMockPayment){mockPay().then(()=>{updateGame({gameId:d.gameId,chainGameId:d.chainGameId,mode:"random",teamSize:d.teamSize||szRef.current,players:d.players,phase:"predicting"});nav("/game");})}else setPhase("payment")}),
     on("match:failed",()=>resetMatch(t("random.err.noOpponents"))),
     on("match:error",d=>resetMatch(d.message)),
     on("disconnect",()=>{

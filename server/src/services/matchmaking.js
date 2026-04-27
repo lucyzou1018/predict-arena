@@ -1,5 +1,6 @@
 import config from "../config/index.js";
 import { query } from "../config/database.js";
+import { generateInviteCode } from "../utils/inviteCode.js";
 import contractService from "./contract.js";
 
 class MatchmakingService {
@@ -90,8 +91,9 @@ class MatchmakingService {
     this._clearTimer(teamSize);
     this._clearDeadline(teamSize);
     const list = players.map(p => ({ wallet: p.wallet, socketId: p.socketId }));
+    const inviteCode = generateInviteCode();
     for (const p of players) {
-      this.io?.to(p.socketId).emit("match:full", { current: teamSize, total: teamSize, players: list.map(pl => pl.wallet), teamSize });
+      this.io?.to(p.socketId).emit("match:full", { current: teamSize, total: teamSize, players: list.map(pl => pl.wallet), teamSize, inviteCode });
     }
     let gameId = null;
     try {
@@ -108,7 +110,7 @@ class MatchmakingService {
       const chainGameId = await contractService.ownerCreateGame(teamSize, players[0].wallet) || gameId;
       for (const p of players.slice(1)) await contractService.ownerJoinGame(chainGameId, p.wallet);
       await query(`UPDATE games SET chain_game_id = $1 WHERE id = $2`, [chainGameId, gameId]);
-      for (const p of players) { this.io?.to(p.socketId).emit("match:found", { gameId, chainGameId, players: list.map(pl => pl.wallet), teamSize }); }
+      for (const p of players) { this.io?.to(p.socketId).emit("match:found", { gameId, chainGameId, players: list.map(pl => pl.wallet), teamSize, inviteCode }); }
       return { status: "matched", gameId, chainGameId, players: list };
     } catch (error) {
       if (gameId) {
