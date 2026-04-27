@@ -97,7 +97,6 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
   const [predictionDeadline, setPredictionDeadline] = useState(gameState.predictionDeadline || null);
   const [predictionCueActive, setPredictionCueActive] = useState(false);
   const [celebrationKey, setCelebrationKey] = useState(null);
-  const [dismissedResultCompletionKey, setDismissedResultCompletionKey] = useState(null);
   const currentGameId = useMemo(
     () => gameId || result?.gameId || gameState.gameId,
     [gameId, result, gameState.gameId],
@@ -600,7 +599,7 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
     }
   };
 
-  const handleClaimFunds = async ({ dismissOverlayOnSuccess = false } = {}) => {
+  const handleClaimFunds = async ({ returnToDashboardOnSuccess = false } = {}) => {
     const targetChainGameId = currentChainGameId || chainGameId || gameState.chainGameId || gameId;
     try {
       setClaimState({ claimed: false, error: null, success: null });
@@ -623,8 +622,10 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
           myResult: previous.myResult ? { ...previous.myResult, claimed: true } : previous.myResult,
         }) : previous);
       }
-      if (dismissOverlayOnSuccess && resultCompletionKey) {
-        setDismissedResultCompletionKey(resultCompletionKey);
+      if (returnToDashboardOnSuccess) {
+        clearStoredPrediction(targetChainGameId, wallet);
+        resetGame();
+        nav("/arena", { replace: true });
       }
     } catch (error) {
       setClaimState({ claimed: false, error: error?.message || "Claim failed. Please try again.", success: null });
@@ -722,7 +723,7 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
   const resultCompletionKey = phase === "result" && result?.myResult
     ? `${result?.gameId || currentGameId || "result"}:${result?.myResult?.wallet || currentWallet || "player"}`
     : null;
-  const showResultCompletionOverlay = !!resultCompletionKey && dismissedResultCompletionKey !== resultCompletionKey;
+  const showResultCompletionOverlay = !!resultCompletionKey;
   const showResultCelebration = didWinRound && celebrationKey === resultCompletionKey;
   const resultCompletionTitle = didWinRound ? t("game.endModal.winTitle") : t("game.endModal.loseTitle");
   const resultClaimableAmount = Math.max(0, rewardAmount);
@@ -932,7 +933,7 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
                 {t("result.confirm")}
               </button>
               <button
-                onClick={() => handleClaimFunds({ dismissOverlayOnSuccess: true })}
+                onClick={() => handleClaimFunds({ returnToDashboardOnSuccess: true })}
                 disabled={!canClaimReward || claiming}
                 className="dashboard-primary-btn py-3 text-[0.94rem] font-bold disabled:opacity-45 disabled:cursor-not-allowed"
               >

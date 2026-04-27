@@ -26,16 +26,16 @@ export function Header(){
           <button onClick={()=>nav("/")} className="hover:opacity-85 transition shrink-0 text-white/95">
             <Logo className="h-4 sm:h-5 w-auto" active={loc.pathname==="/"} />
           </button>
-          <button onClick={()=>nav("/how-to-play")} className={`${navBtnBase} ${loc.pathname==="/how-to-play"?navBtnActive:navBtnIdle}`}>
+          <button onClick={()=>nav("/how-to-play")} className={`hidden md:inline-flex ${navBtnBase} ${loc.pathname==="/how-to-play"?navBtnActive:navBtnIdle}`}>
             <span className={loc.pathname==="/how-to-play"?navLabelActive:""}>{t("nav.howToPlay")}</span>
           </button>
-          <button onClick={goFaq} className={`${navBtnBase} ${faqActive?navBtnActive:navBtnIdle}`}>
+          <button onClick={goFaq} className={`hidden md:inline-flex ${navBtnBase} ${faqActive?navBtnActive:navBtnIdle}`}>
             <span className={faqActive?navLabelActive:""}>{t("nav.faq")}</span>
           </button>
-          <button onClick={goDashboard} className={`${navBtnBase} ${loc.pathname==="/arena"?navBtnActive:navBtnIdle}`}>
+          <button onClick={goDashboard} className={`hidden md:inline-flex ${navBtnBase} ${loc.pathname==="/arena"?navBtnActive:navBtnIdle}`}>
             <span className={loc.pathname==="/arena"?navLabelActive:""}>{t("nav.dashboard")}</span>
           </button>
-          <button onClick={goLeaderboard} className={`${navBtnBase} ${loc.pathname==="/leaderboard"?navBtnActive:navBtnIdle}`}>
+          <button onClick={goLeaderboard} className={`hidden md:inline-flex ${navBtnBase} ${loc.pathname==="/leaderboard"?navBtnActive:navBtnIdle}`}>
             <span className={loc.pathname==="/leaderboard"?navLabelActive:""}>{t("nav.leaderboard")}</span>
           </button>
         </div>

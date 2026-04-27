@@ -110,6 +110,7 @@ export default function RoomLobby(){
   const walletSwitchedRef=useRef(false);
   const seatScrollerRef=useRef(null);
   const[seatScrollState,setSeatScrollState]=useState({canLeft:false,canRight:false});
+  const codeHoverTimeoutRef=useRef(null);
 
   const isPaymentClosureReason=useCallback((reason="")=>/timed out|timeout|window closed|did not complete payment|room has been dissolved/i.test(String(reason)),[]);
   const isOwner=!!wallet&&!!roomOwner&&roomOwner.toLowerCase()===wallet.toLowerCase();
@@ -170,6 +171,8 @@ export default function RoomLobby(){
     setPaymentTimeoutError(null);
     setRoomExitDialog(null);
   },[]);
+
+  useEffect(()=>()=>{if(codeHoverTimeoutRef.current)clearTimeout(codeHoverTimeoutRef.current);},[]);
 
   const openPayment=useCallback((d={})=>{
     const total=Number(d?.total||d?.players?.length||0);
@@ -456,7 +459,17 @@ export default function RoomLobby(){
     setPaymentTimeoutError(null);
     confirmLobbyExit();
   },[confirmLobbyExit]);
+  const hideCodeHintSoon=useCallback(()=>{
+    if(codeHoverTimeoutRef.current)clearTimeout(codeHoverTimeoutRef.current);
+    codeHoverTimeoutRef.current=setTimeout(()=>setCodeHovered(false),60);
+  },[]);
   const copyCode=useCallback(()=>{navigator.clipboard.writeText(code);setCopied(true);setTimeout(()=>setCopied(false),2000);},[code]);
+  const shareToX=useCallback(()=>{
+    if(typeof window==="undefined")return;
+    const roomUrl=`${window.location.origin}/room/${code}`;
+    const text=t("home.share.text",{code,url:roomUrl});
+    window.open(`https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}`,"_blank","noopener,noreferrer");
+  },[code,t]);
 
   const seats=useMemo(()=>{
     const size=teamSize||Math.max(room.current,2);
@@ -552,7 +565,7 @@ export default function RoomLobby(){
   },[syncSeatScrollState,seats.length]);
   const lobbyCenterContent=(
     <>
-      <div style={{textAlign:'center',width:'100%',maxWidth:760,padding:'0 20px',boxSizing:'border-box',marginTop:0,marginBottom:12}}>
+      <div className="room-lobby-hero-copy" style={{textAlign:'center',width:'100%',maxWidth:760,padding:'0 20px',boxSizing:'border-box',marginTop:0,marginBottom:12}}>
         <div style={{fontSize:10,letterSpacing:'0.32em',color:'rgba(255,255,255,0.24)',fontFamily:'monospace',marginBottom:10,textTransform:'uppercase'}}>
           {fromQuickMatch?"Live Match Lobby":"Private Arena Lobby"}
         </div>
@@ -564,15 +577,15 @@ export default function RoomLobby(){
         </p>
       </div>
 
-      <div style={{width:'min(1080px,100%)',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:18,marginTop:scrollSeatLayout?26:34,marginBottom:12}}>
+      <div className="room-lobby-seats-area" style={{width:'min(1080px,100%)',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:18,marginTop:scrollSeatLayout?26:34,marginBottom:12}}>
         {seatRows.map((row,rowIndex)=>(
-          <div key={rowIndex} style={{position:'relative',width:'100%',maxWidth:scrollSeatLayout?'576px':'100%',display:'flex',alignItems:'center',justifyContent:'center'}}>
+          <div key={rowIndex} className="room-lobby-seat-row" style={{position:'relative',width:'100%',maxWidth:scrollSeatLayout?'576px':'100%',display:'flex',alignItems:'center',justifyContent:'center'}}>
             {scrollSeatLayout&&seatScrollState.canLeft&&(
               <button type="button" aria-label="Previous players" onClick={()=>scrollSeats(-1)} style={{position:'absolute',left:-44,top:'50%',transform:'translateY(-50%)',width:34,height:34,borderRadius:999,border:'1px solid rgba(244,114,182,0.22)',background:'rgba(12,10,24,0.72)',color:'rgba(255,255,255,0.82)',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',backdropFilter:'blur(10px)',boxShadow:'0 12px 24px rgba(4,6,20,0.28)',zIndex:2}}>
                 <ChevronLeft size={18} strokeWidth={2.4}/>
               </button>
             )}
-            <div ref={rowIndex===0?seatScrollerRef:null} className="hide-scrollbar" style={{display:'flex',alignItems:'flex-start',justifyContent:scrollSeatLayout?'flex-start':'center',gap:18,flexWrap:'nowrap',width:'100%',maxWidth:'100%',overflowX:scrollSeatLayout?'auto':'visible',overflowY:'visible',padding:'0 0 10px',scrollSnapType:scrollSeatLayout?'x mandatory':undefined,WebkitOverflowScrolling:'touch',boxSizing:'border-box'}}>
+            <div ref={rowIndex===0?seatScrollerRef:null} className="room-lobby-seat-strip hide-scrollbar" style={{display:'flex',alignItems:'flex-start',justifyContent:scrollSeatLayout?'flex-start':'center',gap:18,flexWrap:'nowrap',width:'100%',maxWidth:'100%',overflowX:scrollSeatLayout?'auto':'visible',overflowY:'visible',padding:'0 0 10px',scrollSnapType:scrollSeatLayout?'x mandatory':undefined,WebkitOverflowScrolling:'touch',boxSizing:'border-box'}}>
               {row.map(({seat,index})=>renderPod(seat,index,scrollSeatLayout))}
             </div>
             {scrollSeatLayout&&seatScrollState.canRight&&(
@@ -619,7 +632,7 @@ export default function RoomLobby(){
         ? "linear-gradient(180deg,rgba(255,255,255,0.015) 0%,rgba(7,8,20,0.78) 55%)"
         : "linear-gradient(180deg,rgba(255,255,255,0.02) 0%,rgba(7,8,20,0.82) 55%)";
     return(
-      <div key={i} style={{position:'relative',width:'min(180px,28vw)',minWidth:144,flex:'0 0 auto',scrollSnapAlign:scrollable?'center':undefined,display:'flex',flexDirection:'column',alignItems:'center',padding:'20px 14px 18px',borderRadius:20,background:cardBg,border:`1px solid ${borderColor}`,backdropFilter:'blur(10px)',boxShadow:cardShadow,animation:'rlSeatIn 0.45s cubic-bezier(0.22,1,0.36,1) both'}}
+      <div key={i} className="room-lobby-player-pod" style={{position:'relative',width:'min(180px,28vw)',minWidth:144,flex:'0 0 auto',scrollSnapAlign:scrollable?'center':undefined,display:'flex',flexDirection:'column',alignItems:'center',padding:'20px 14px 18px',borderRadius:20,background:cardBg,border:`1px solid ${borderColor}`,backdropFilter:'blur(10px)',boxShadow:cardShadow,animation:'rlSeatIn 0.45s cubic-bezier(0.22,1,0.36,1) both'}}
         onMouseEnter={e=>{
           e.currentTarget.style.transform='translateY(-3px)';
           e.currentTarget.style.borderColor=filled?accent:'rgba(255,255,255,0.16)';
@@ -656,18 +669,19 @@ export default function RoomLobby(){
   }
 
   return(
-    <div style={{minHeight:'100vh',background:'#06060f',display:'flex',flexDirection:'column',position:'relative',overflow:'hidden'}}>
+    <div className="room-lobby-page" style={{minHeight:'100vh',background:'#06060f',display:'flex',flexDirection:'column',position:'relative',overflow:'hidden'}}>
       <div style={roomLobbyBgLayer}/>
 
-      <header style={{position:'relative',zIndex:10,display:'flex',alignItems:'center',justifyContent:'space-between',gap:16,padding:'24px 28px 0',flexWrap:'wrap'}}>
-        <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
-          <div style={{...topPillBaseStyle,border:'1px solid rgba(244,114,182,0.34)',background:'rgba(52,18,34,0.44)'}}>
+      <header className="room-lobby-topbar" style={{position:'relative',zIndex:10,display:'flex',alignItems:'center',justifyContent:'space-between',gap:16,padding:'24px 28px 0',flexWrap:'wrap'}}>
+        <div className="room-lobby-topbar-left" style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+          <div className="room-lobby-top-pill" style={{...topPillBaseStyle,border:'1px solid rgba(244,114,182,0.34)',background:'rgba(52,18,34,0.44)'}}>
             <Users style={topPillIconStyle} strokeWidth={2.1}/>
             <span style={{fontFamily:'monospace',fontSize:11,letterSpacing:'0.18em',textTransform:'uppercase',color:'rgba(255,255,255,0.92)'}}>
               {progressText}
             </span>
           </div>
           <button
+            className="room-lobby-top-pill room-lobby-action-pill"
             type="button"
             onClick={handleTopAction}
             disabled={isEmbeddedGame}
@@ -679,29 +693,48 @@ export default function RoomLobby(){
             {topActionLabel}
           </button>
         </div>
-        <div style={{display:'flex',alignItems:'center',justifyContent:'flex-end',gap:10,marginLeft:'auto',flexWrap:'wrap'}}>
+        <div className="room-lobby-topbar-right" style={{display:'flex',alignItems:'center',justifyContent:'flex-end',gap:10,marginLeft:'auto',flexWrap:'wrap'}}>
           {!fromQuickMatch?(
-            <div style={{position:'relative'}}>
+            <div className="room-lobby-code-wrap" style={{position:'relative'}}>
               <div
+                className="room-lobby-top-pill room-lobby-code-pill"
                 style={{...topPillBaseStyle,padding:'8px 10px 8px 14px'}}
-                onMouseEnter={e=>{setCodeHovered(true);e.currentTarget.style.borderColor='rgba(244,114,182,0.42)';e.currentTarget.style.background='rgba(62,18,40,0.52)';}}
-                onMouseLeave={e=>{setCodeHovered(false);e.currentTarget.style.borderColor='rgba(244,114,182,0.34)';e.currentTarget.style.background='rgba(52,18,34,0.44)';}}
+                onMouseLeave={e=>{hideCodeHintSoon();e.currentTarget.style.borderColor='rgba(244,114,182,0.34)';e.currentTarget.style.background='rgba(52,18,34,0.44)';}}
               >
                 <KeyRound style={topPillIconStyle} strokeWidth={2.1}/>
-                <div style={{display:'flex',flexDirection:'column',alignItems:'flex-start',gap:2,minWidth:0}}>
+                <div
+                  style={{display:'flex',flexDirection:'column',alignItems:'flex-start',gap:2,minWidth:0}}
+                  onMouseEnter={()=>{if(codeHoverTimeoutRef.current)clearTimeout(codeHoverTimeoutRef.current);setCodeHovered(true);}}
+                  onMouseLeave={hideCodeHintSoon}
+                  onFocus={()=>setCodeHovered(true)}
+                  onBlur={hideCodeHintSoon}
+                  tabIndex={0}
+                >
                   <span style={{color:'rgba(255,255,255,0.56)',fontSize:8,fontFamily:'monospace',letterSpacing:'0.18em',textTransform:'uppercase',lineHeight:1.1}}>Arena Code</span>
                   <span style={{color:'rgba(255,255,255,0.92)',fontSize:12,fontFamily:'monospace',letterSpacing:'0.24em',fontWeight:700,lineHeight:1.1}}>{code||"······"}</span>
                 </div>
-                <button
-                  type="button"
-                  aria-label={copied?"Copied":"Copy arena code"}
-                  onClick={copyCode}
-                  onFocus={()=>setCodeHovered(true)}
-                  onBlur={()=>setCodeHovered(false)}
-                  style={{marginLeft:6,width:30,height:30,display:'flex',alignItems:'center',justifyContent:'center',borderRadius:999,border:'1px solid rgba(255,255,255,0.12)',background:copied?'rgba(34,197,94,0.12)':'rgba(255,255,255,0.05)',color:copied?'#86efac':'rgba(255,255,255,0.78)',cursor:'pointer',flexShrink:0}}
-                >
-                  {copied?<Check size={14} strokeWidth={2.4}/>:<Copy size={14} strokeWidth={2.1}/>}
-                </button>
+                <div className="room-lobby-code-actions" style={{marginLeft:6,display:'flex',alignItems:'center',gap:6,flexShrink:0}}>
+                  <button
+                    type="button"
+                    aria-label="Share room code to X"
+                    onClick={shareToX}
+                    onMouseEnter={()=>setCodeHovered(false)}
+                    onFocus={()=>setCodeHovered(false)}
+                    style={{width:30,height:30,display:'flex',alignItems:'center',justifyContent:'center',borderRadius:999,border:'1px solid rgba(255,255,255,0.12)',background:'rgba(255,255,255,0.05)',color:'rgba(255,255,255,0.78)',cursor:'pointer',flexShrink:0,fontSize:13,fontWeight:900,fontFamily:'monospace'}}
+                  >
+                    𝕏
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={copied?"Copied":"Copy arena code"}
+                    onClick={copyCode}
+                    onMouseEnter={()=>setCodeHovered(false)}
+                    onFocus={()=>setCodeHovered(false)}
+                    style={{width:30,height:30,display:'flex',alignItems:'center',justifyContent:'center',borderRadius:999,border:'1px solid rgba(255,255,255,0.12)',background:copied?'rgba(34,197,94,0.12)':'rgba(255,255,255,0.05)',color:copied?'#86efac':'rgba(255,255,255,0.78)',cursor:'pointer',flexShrink:0}}
+                  >
+                    {copied?<Check size={14} strokeWidth={2.4}/>:<Copy size={14} strokeWidth={2.1}/>}
+                  </button>
+                </div>
               </div>
               {codeHovered&&phase==="waiting"&&(
                 <div style={{position:'absolute',top:'calc(100% + 10px)',right:0,width:'min(320px,60vw)',padding:'10px 12px',borderRadius:12,background:'rgba(9,10,24,0.92)',border:'1px solid rgba(168,85,247,0.22)',boxShadow:'0 14px 30px rgba(4,6,20,0.35)',color:'rgba(255,255,255,0.72)',fontSize:11,lineHeight:1.55,textAlign:'left',backdropFilter:'blur(10px)',pointerEvents:'none'}}>
@@ -710,12 +743,12 @@ export default function RoomLobby(){
               )}
             </div>
           ):(
-            <div style={{color:'rgba(255,255,255,0.24)',fontSize:10,fontFamily:'monospace',letterSpacing:'0.24em',textTransform:'uppercase'}}>Auto-matched lobby</div>
+            <div className="room-lobby-auto-label" style={{color:'rgba(255,255,255,0.24)',fontSize:10,fontFamily:'monospace',letterSpacing:'0.24em',textTransform:'uppercase'}}>Auto-matched lobby</div>
           )}
           {(showRoomCountdown||showPaymentCountdown||showExpiredRoomCountdown)&&(
-            <div style={{display:'flex',flexWrap:'wrap',alignItems:'center',justifyContent:'flex-end',gap:10}}>
+            <div className="room-lobby-countdown-wrap" style={{display:'flex',flexWrap:'wrap',alignItems:'center',justifyContent:'flex-end',gap:10}}>
               {(showRoomCountdown||showExpiredRoomCountdown)&&(
-                <div style={{...topPillBaseStyle,gap:8,border:showExpiredRoomCountdown?'1px solid rgba(244,63,94,0.42)':'1px solid rgba(244,114,182,0.34)',background:showExpiredRoomCountdown?'rgba(72,18,24,0.52)':'rgba(52,18,34,0.44)'}}>
+                <div className="room-lobby-top-pill room-lobby-timer-pill" style={{...topPillBaseStyle,gap:8,border:showExpiredRoomCountdown?'1px solid rgba(244,63,94,0.42)':'1px solid rgba(244,114,182,0.34)',background:showExpiredRoomCountdown?'rgba(72,18,24,0.52)':'rgba(52,18,34,0.44)'}}>
                   <Clock3 style={{...topPillIconStyle,color:showExpiredRoomCountdown||roomCountdown<=30?'#fca5a5':'rgba(255,245,249,0.95)'}} strokeWidth={2.1}/>
                   {showExpiredRoomCountdown?(
                     <span style={{fontSize:13,fontFamily:'monospace',fontWeight:700,color:'#fca5a5',letterSpacing:'0.08em',textTransform:'uppercase'}}>
@@ -734,7 +767,7 @@ export default function RoomLobby(){
                 </div>
               )}
               {showPaymentCountdown&&(
-                <div style={{...topPillBaseStyle,gap:8}}>
+                <div className="room-lobby-top-pill room-lobby-timer-pill" style={{...topPillBaseStyle,gap:8}}>
                   <Clock3 style={{...topPillIconStyle,color:paymentCountdown<=10?'#fca5a5':'rgba(255,245,249,0.95)'}} strokeWidth={2.1}/>
                   <span style={{fontSize:13,fontFamily:'monospace',fontWeight:700,color:paymentCountdown<=10?'#fca5a5':'rgba(255,255,255,0.92)'}}>{paymentCountdown}s</span>
                   <span style={{fontSize:9,color:'rgba(255,255,255,0.82)',letterSpacing:'0.18em',textTransform:'uppercase'}}>{t("create.payment.countdown")}</span>
@@ -746,13 +779,13 @@ export default function RoomLobby(){
       </header>
 
       {(err||hint)&&(
-        <div style={{position:'relative',zIndex:10,padding:'12px 28px 0',display:'flex',flexDirection:'column',gap:8}}>
+        <div className="room-lobby-notices" style={{position:'relative',zIndex:10,padding:'12px 28px 0',display:'flex',flexDirection:'column',gap:8}}>
           {err&&<div style={{border:'1px solid rgba(244,63,94,0.25)',background:'rgba(244,63,94,0.07)',padding:'10px 16px',borderRadius:10,color:'rgba(252,165,165,0.9)',fontSize:11}}>{err}</div>}
           {hint&&<div style={{border:'1px solid rgba(255,255,255,0.07)',background:'rgba(255,255,255,0.02)',padding:'10px 16px',borderRadius:10,color:'rgba(255,255,255,0.4)',fontSize:11}}>{hint}</div>}
         </div>
       )}
 
-      <main style={{position:'relative',zIndex:10,flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'flex-start',padding:isEmbeddedGame?'18px 28px 24px':'28px 28px 24px'}}>
+      <main className="room-lobby-content" style={{position:'relative',zIndex:10,flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'flex-start',padding:isEmbeddedGame?'18px 28px 24px':'28px 28px 24px'}}>
         {isEmbeddedGame?(
           <div style={{width:'min(1380px,100%)',display:'flex',justifyContent:'center'}}>
             <GamePlay embedded layout="room" centerContent={lobbyCenterContent}/>
