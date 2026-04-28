@@ -6,6 +6,7 @@ import HeroTrophy from "../components/HeroTrophy";
 import WalletMenu from "../components/WalletMenu";
 import { NavActions } from "../components/NavActions";
 import { Logo } from "../components/Logo";
+import { PrimaryNavMenu } from "../components/PrimaryNavMenu";
 import { Users, Calculator, Zap, Layers, ShieldCheck, BarChart2 } from "lucide-react";
 
 const ADV_ICONS = [Users, Calculator, Zap, Layers, ShieldCheck, BarChart2];
@@ -24,11 +25,10 @@ export default function Landing() {
   const { wallet, connecting, mockMode, balance, showWalletMenu, setShowWalletMenu } = useWallet();
   const short = wallet ? `${wallet.slice(0, 6)}...${wallet.slice(-4)}` : "";
   const [openFaq, setOpenFaq] = useState(0);
-  const navBtnBase = "text-xs px-2.5 sm:px-4 py-1.5 min-h-8 rounded-xl transition font-semibold whitespace-nowrap";
+  const navBtnBase = "text-xs px-2.5 xl:px-4 py-1.5 min-h-8 rounded-xl transition font-semibold whitespace-nowrap";
   const navBtnIdle = "text-white/58 hover:text-white/88 hover:bg-white/[0.04] border border-transparent hover:border-white/8";
   const navBtnActive = "text-white font-bold";
   const navLabelActive = "nav-active-label";
-
   const handleEnter = () => {
     if (wallet) nav("/dashboard");
     else nav("/login?next=/dashboard");
@@ -42,6 +42,12 @@ export default function Landing() {
   const goLeaderboard = () => nav("/leaderboard");
   const goFaq = () => nav({ pathname: "/", hash: "#faq" });
   const faqActive = loc.pathname === "/" && loc.hash === "#faq";
+  const primaryNavItems = [
+    { key: "howToPlay", label: t("nav.howToPlay"), active: loc.pathname === "/how-to-play", onClick: () => nav("/how-to-play") },
+    { key: "faq", label: t("nav.faq"), active: faqActive, onClick: goFaq },
+    { key: "dashboard", label: t("nav.dashboard"), active: loc.pathname === "/dashboard", onClick: goDashboard },
+    { key: "leaderboard", label: t("nav.leaderboard"), active: loc.pathname === "/leaderboard", onClick: goLeaderboard },
+  ];
 
   useEffect(() => {
     if (loc.pathname !== "/" || loc.hash !== "#faq") return;
@@ -93,37 +99,38 @@ export default function Landing() {
         className="fixed inset-x-0 top-0 z-50 border-b border-white/[0.06] bg-[linear-gradient(180deg,rgba(11,10,23,0.9),rgba(8,8,18,0.78))] backdrop-blur-2xl"
         style={{ paddingTop: "var(--safe-top)" }}
       >
-        <div className="max-w-7xl mx-auto px-3 sm:px-6 py-3 flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2 sm:gap-6 min-w-0">
+        <div className="w-full px-3 sm:px-5 lg:px-8 py-3 flex items-center justify-between gap-2">
+          <div className="flex flex-1 items-center gap-2 lg:gap-4 xl:gap-6 min-w-0">
             <button onClick={() => nav("/")} className="hover:opacity-80 transition text-white shrink-0">
               <Logo className="h-4 sm:h-6 w-auto" active={loc.pathname === "/"} />
             </button>
+            <PrimaryNavMenu items={primaryNavItems} />
             <button
               onClick={() => nav("/how-to-play")}
-              className={`hidden md:inline-flex ${navBtnBase} ${loc.pathname === "/how-to-play" ? navBtnActive : navBtnIdle} shrink-0`}
+              className={`hidden lg:inline-flex ${navBtnBase} ${loc.pathname === "/how-to-play" ? navBtnActive : navBtnIdle} shrink-0`}
             >
               <span className={loc.pathname === "/how-to-play" ? navLabelActive : ""}>{t("nav.howToPlay")}</span>
             </button>
             <button
               onClick={goFaq}
-              className={`hidden md:inline-flex ${navBtnBase} ${faqActive ? navBtnActive : navBtnIdle} shrink-0`}
+              className={`hidden lg:inline-flex ${navBtnBase} ${faqActive ? navBtnActive : navBtnIdle} shrink-0`}
             >
               <span className={faqActive ? navLabelActive : ""}>{t("nav.faq")}</span>
             </button>
             <button
               onClick={goDashboard}
-              className={`hidden md:inline-flex ${navBtnBase} ${loc.pathname === "/dashboard" ? navBtnActive : navBtnIdle} shrink-0`}
+              className={`hidden lg:inline-flex ${navBtnBase} ${loc.pathname === "/dashboard" ? navBtnActive : navBtnIdle} shrink-0`}
             >
               <span className={loc.pathname === "/dashboard" ? navLabelActive : ""}>{t("nav.dashboard")}</span>
             </button>
             <button
               onClick={goLeaderboard}
-              className={`hidden md:inline-flex ${navBtnBase} ${loc.pathname === "/leaderboard" ? navBtnActive : navBtnIdle} shrink-0`}
+              className={`hidden lg:inline-flex ${navBtnBase} ${loc.pathname === "/leaderboard" ? navBtnActive : navBtnIdle} shrink-0`}
             >
               <span className={loc.pathname === "/leaderboard" ? navLabelActive : ""}>{t("nav.leaderboard")}</span>
             </button>
           </div>
-          <div className="flex items-center gap-1.5 shrink-0">
+          <div className="flex min-w-0 shrink-0 items-center justify-end gap-1.5">
             <NavActions />
             <div className="relative">
               {wallet ? (
@@ -145,11 +152,11 @@ export default function Landing() {
                     </svg>
                   </span>
                   {mockMode && (
-                    <span className="text-[9px] bg-fuchsia-500/10 border border-fuchsia-500/20 text-fuchsia-300 px-1.5 py-0.5 rounded-full font-mono font-bold">
+                    <span className="hidden xl:inline text-[9px] bg-fuchsia-500/10 border border-fuchsia-500/20 text-fuchsia-300 px-1.5 py-0.5 rounded-full font-mono font-bold">
                       {balance}
                     </span>
                   )}
-                  <span className="font-mono">{short}</span>
+                  <span className="font-mono hidden xl:inline">{short}</span>
                   <svg
                     width="10"
                     height="10"

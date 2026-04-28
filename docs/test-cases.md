@@ -1,6 +1,6 @@
 # Predict Arena 测试用例
 
-> 配置参数：房间有效期 5min | 支付超时 60s | 预测时间 30s | 结算等待 30s | 入场费 1 USDC | 平台费率 5%
+> 配置参数：房间有效期 5min | 支付超时 90s | 预测时间 60s | 结算等待 30s | 入场费 1 USDC | 平台费率 5%
 
 ---
 
@@ -12,10 +12,10 @@
 |------|------|---------|
 | 1 | A 创建2人房间 | 返回6位邀请码，DB 创建 game(mode=room, state=waiting)，链上 ownerCreateRoom 成功 |
 | 2 | B 输入邀请码验证 | 收到 room:valid，显示房间信息 |
-| 3 | B 确认加入 | 房间满员，A/B 都收到 room:full，进入支付阶段，60s倒计时开始 |
+| 3 | B 确认加入 | 房间满员，A/B 都收到 room:full，进入支付阶段，90s倒计时开始 |
 | 4 | A 支付 | 链上确认支付，A/B 收到 room:payment:update (paidCount=1/2) |
 | 5 | B 支付 | 链上确认支付，allPaid=true，游戏开始 |
-| 6 | A/B 收到 game:start | 显示 basePrice，进入30s预测阶段 |
+| 6 | A/B 收到 game:start | 显示 basePrice，进入60s预测阶段 |
 | 7 | A 预测 LONG，B 预测 SHORT | 各自收到 game:predicted 确认 |
 | 8 | 预测阶段结束 | 进入 settling 阶段，30s倒计时 |
 | 9 | 结算 | 根据价格涨跌判定胜负，赢家获得 1.9 USDC，输家获得 0，链上 settleGame，DB 更新 |
@@ -117,12 +117,12 @@
 
 ## 三、房间模式 — 支付阶段（Payment Phase）
 
-### TC-R-20 所有人支付超时（60s内无人支付）
+### TC-R-20 所有人支付超时（90s内无人支付）
 
 | 步骤 | 操作 | 预期结果 |
 |------|------|---------|
 | 1 | A 创建2人房间，B 加入，满员 | 进入支付阶段 |
-| 2 | 60秒内 A/B 都不支付 | 支付超时触发 |
+| 2 | 90秒内 A/B 都不支付 | 支付超时触发 |
 | 3 | - | DB state=failed，A/B 收到 room:payment:failed，_dissolve 触发（DB state=cancelled 覆盖 failed），链上 cancelGame |
 | **关注点** | DB 状态被写了两次（先 failed 再 cancelled），应只写一次 | |
 
@@ -130,9 +130,9 @@
 
 | 步骤 | 操作 | 预期结果 |
 |------|------|---------|
-| 1 | 2人房间满员，进入支付 | 60s 倒计时 |
+| 1 | 2人房间满员，进入支付 | 90s 倒计时 |
 | 2 | A 支付成功 | room:payment:update (paidCount=1/2, allPaid=false) |
-| 3 | B 不支付，60秒超时 | DB state=failed → _dissolve → state=cancelled |
+| 3 | B 不支付，90秒超时 | DB state=failed → _dissolve → state=cancelled |
 | 4 | 链上 cancelGame | 遍历已支付玩家，A 的入场费被退还 |
 | **关注点** | A 的资金安全（链上有退款机制） | |
 
@@ -140,11 +140,11 @@
 
 | 步骤 | 操作 | 预期结果 |
 |------|------|---------|
-| 1 | 2人房间满员，进入支付 | 60s 倒计时 |
+| 1 | 2人房间满员，进入支付 | 90s 倒计时 |
 | 2 | A 支付成功 | paidCount=1/2 |
 | 3 | B 发送 room:leave | B 从内存 players 移除，A 收到 room:update |
-| 4 | **问题**：A 只收到 room:update（人数变化），不知道支付阶段已无法继续 | A 需要等到60秒超时 |
-| 5 | 60秒超时触发 | 解散房间，链上退款给 A |
+| 4 | **问题**：A 只收到 room:update（人数变化），不知道支付阶段已无法继续 | A 需要等到90秒超时 |
+| 5 | 90秒超时触发 | 解散房间，链上退款给 A |
 | **Bug** | 1. 无快速失败机制：B走后应立即取消<br>2. A 无明确通知对手已退出<br>3. B 的 game_players 记录未清理 |
 
 ### TC-R-23 A已支付，B断线
@@ -153,7 +153,7 @@
 |------|------|---------|
 | 1 | 2人房间满员，A 已支付 | paidCount=1/2 |
 | 2 | B 断线 | leaveBySocket 移除 B |
-| 3 | 同 TC-R-22 | A 仍需等60秒，链上最终退款 |
+| 3 | 同 TC-R-22 | A 仍需等90秒，链上最终退款 |
 | **Bug** | 同 TC-R-22 |
 
 ### TC-R-24 房主A已支付，房主A断线
@@ -189,7 +189,7 @@
 |------|------|---------|
 | 1 | 3人房间满员 | 进入支付 |
 | 2 | A/B 支付，C 不支付 | paidCount=2/3 |
-| 3 | 60秒超时 | DB state=failed → _dissolve → cancelled，链上 cancelGame，A/B 入场费被退还 |
+| 3 | 90秒超时 | DB state=failed → _dissolve → cancelled，链上 cancelGame，A/B 入场费被退还 |
 
 ### TC-R-28 多人房间（3人），2人不支付，1人支付后离开
 
@@ -208,8 +208,8 @@
 
 | 步骤 | 操作 | 预期结果 |
 |------|------|---------|
-| 1 | 游戏开始，30s 预测阶段 | |
-| 2 | A 预测 LONG，B 不预测 | 30s 后 _endPredict 触发 |
+| 1 | 游戏开始，60s 预测阶段 | |
+| 2 | A 预测 LONG，B 不预测 | 60s 后 _endPredict 触发 |
 | 3 | 进入结算 | B 的 prediction=null → isCorrect=false → B 判负 |
 | 4 | 结算完成 | A 赢（如果方向正确），B 必定输 |
 | **关注点** | 不预测 = 自动判负，这是设计预期行为 |
@@ -218,7 +218,7 @@
 
 | 步骤 | 操作 | 预期结果 |
 |------|------|---------|
-| 1 | 30s 预测超时 | A/B 都没有预测 |
+| 1 | 60s 预测超时 | A/B 都没有预测 |
 | 2 | 结算 | 两人 prediction=null，都 isCorrect=false |
 | 3 | - | losers.length=2, winners.length=0 → 全输=全退（每人得 0.95 USDC） |
 
@@ -341,7 +341,7 @@
 | 步骤 | 操作 | 预期结果 |
 |------|------|---------|
 | 1 | A/B 匹配成功 | 进入支付阶段 |
-| 2 | A 支付，B 不支付 | 60秒超时 |
+| 2 | A 支付，B 不支付 | 90秒超时 |
 | 3 | - | DB state=failed，A/B 收到 match:error("Payment timeout") |
 | **问题** | 1. 随机匹配支付超时只设了 state=failed，没有调用 _dissolve 或 cancelGame<br>2. A 的链上支付**没有退款机制**（与房间模式不同！） |
 
@@ -351,7 +351,7 @@
 |------|------|---------|
 | 1 | A/B 匹配成功 | |
 | 2 | B 断线 | disconnect → matchmakingService.removeBySocket（但B已不在队列中）+ roomService.leaveBySocket（但B不在房间中） |
-| 3 | 无人处理支付阶段的断线 | 只能等60秒超时 |
+| 3 | 无人处理支付阶段的断线 | 只能等90秒超时 |
 | **Bug** | 匹配成功后的断线完全没有处理逻辑 |
 
 ---
@@ -464,7 +464,7 @@
 |----|---------|------|---------|
 | BUG-01 | **高** | 随机匹配支付超时不调用 cancelGame，已支付用户资金无法退还 | TC-M-13 |
 | BUG-02 | **高** | _settle 无 try-catch，链上调用失败导致游戏卡死 | TC-R-42 |
-| BUG-03 | **中** | 支付阶段玩家退出无快速失败，对手需等60秒超时 | TC-R-22/23 |
+| BUG-03 | **中** | 支付阶段玩家退出无快速失败，对手需等90秒超时 | TC-R-22/23 |
 | BUG-04 | **中** | 房间满员后 5min 计时器被清除不恢复，玩家退出后房间可能永久挂起 | TC-R-26 |
 | BUG-05 | **中** | 房间/匹配之间无互斥，玩家可同时参与两个游戏 | TC-X-01/02 |
 | BUG-06 | **中** | 支付超时回调先写 state=failed 再 _dissolve 写 state=cancelled，重复写 | TC-R-20 |

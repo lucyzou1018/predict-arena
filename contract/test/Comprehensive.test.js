@@ -500,8 +500,8 @@ describe("BtcPredictArena - Comprehensive Tests", function () {
       const tx = await arena.startGame(gid, BASE_PRICE);
       const block = await tx.getBlock();
       const deadline = await arena.predictionDeadline(gid);
-      // predictionDuration(30) - predictionBuffer(5) = 25
-      expect(deadline).to.equal(BigInt(block.timestamp) + 25n);
+      // predictionDuration(60) - predictionBuffer(5) = 55
+      expect(deadline).to.equal(BigInt(block.timestamp) + 55n);
     });
 
     it("emits GameStarted event", async function () {

@@ -79,6 +79,11 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
 
   const [phase, setPhase] = useState(initialPhase);
   const [countdown, setCountdown] = useState(gameState.countdown || PREDICT_TIMEOUT);
+  const [settlementFinalizing, setSettlementFinalizing] = useState(() => {
+    if (gameState.countdown === null || gameState.countdown === undefined) return false;
+    const storedCountdown = Number(gameState.countdown);
+    return initialPhase === "settling" && Number.isFinite(storedCountdown) && storedCountdown <= 0;
+  });
   const [myPrediction, setMyPrediction] = useState(null);
   const [pendingPrediction, setPendingPrediction] = useState(null);
   const [predictedCount, setPredictedCount] = useState(gameState.predictedCount || 0);
@@ -148,6 +153,7 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
         setCurrentPrice(nextSettlementPrice || nextBasePrice);
         setTotalPlayers(playerWallets.length);
         setPhase("result");
+        setSettlementFinalizing(false);
         setCountdown(0);
         setResult(restoredResult);
         setFailureMessage(null);
@@ -175,6 +181,7 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
         setCurrentPrice(nextBasePrice);
         setTotalPlayers(playerWallets.length);
         setPhase("failed");
+        setSettlementFinalizing(false);
         setCountdown(0);
         setFailureMessage(message);
         setResult(null);
@@ -201,6 +208,7 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
         setCurrentPrice((previous) => previous || nextBasePrice);
         setTotalPlayers(playerWallets.length);
         setPhase(nextPhase);
+        setSettlementFinalizing(false);
         updateGame({
           gameId: nextGameId,
           chainGameId: nextChainGameId,
@@ -242,7 +250,24 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
       setCurrentPrice(gameState.currentPrice || gameState.basePrice);
       setTotalPlayers(gameState.players?.length || 0);
       setPhase(gameState.phase);
-      setCountdown(gameState.countdown || PREDICT_TIMEOUT);
+      if (gameState.phase === "settling") {
+        const hasStoredCountdown = gameState.countdown !== null && gameState.countdown !== undefined;
+        const storedCountdown = Number(gameState.countdown);
+        setSettlementFinalizing(hasStoredCountdown && Number.isFinite(storedCountdown) && storedCountdown <= 0);
+      } else {
+        setSettlementFinalizing(false);
+      }
+      setCountdown((previous) => {
+        const hasStoredCountdown = gameState.countdown !== null && gameState.countdown !== undefined;
+        const nextCountdown = hasStoredCountdown && Number.isFinite(Number(gameState.countdown)) ? Number(gameState.countdown) : PREDICT_TIMEOUT;
+        const sameLiveGame =
+          gameState.phase === phase &&
+          (gameState.gameId === gameId || gameState.chainGameId === chainGameId);
+        if (sameLiveGame && previous > 0 && nextCountdown > previous) {
+          return previous;
+        }
+        return nextCountdown;
+      });
       setPredictSafeBuffer(gameState.predictSafeBuffer || PREDICT_SAFE_BUFFER);
       setPredictionDeadline(gameState.predictionDeadline || null);
       setPredictedCount(gameState.predictedCount || 0);
@@ -255,6 +280,7 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
     if (gameState.phase === "result" && gameState.result) {
       setGameId(gameState.gameId || gameState.result.gameId);
       setPhase("result");
+      setSettlementFinalizing(false);
       setResult(gameState.result);
       setChainGameId(gameState.chainGameId || gameState.result.chainGameId || gameState.gameId);
       setBasePrice(gameState.result.basePrice || gameState.basePrice || 0);
@@ -272,6 +298,7 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
       setCurrentPrice(gameState.currentPrice || gameState.basePrice || 0);
       setTotalPlayers(gameState.players?.length || 0);
       setPhase("failed");
+      setSettlementFinalizing(false);
       setCountdown(0);
       setPendingPrediction(null);
       setFailureMessage(gameState.failureMessage || t("game.err.settlementInterrupted"));
@@ -365,7 +392,7 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
         const nextGameId = data.gameId || gameState.gameId;
         const nextChainGameId = data.chainGameId || gameState.chainGameId || data.gameId || gameState.gameId;
         const nextPlayers = data.players || [];
-        const nextCountdown = Math.round((data.predictTimeout || 30000) / 1000);
+        const nextCountdown = Math.round((data.predictTimeout || PREDICT_TIMEOUT * 1000) / 1000);
         const nextPredictSafeBuffer = Math.round((data.predictSafeBuffer || PREDICT_SAFE_BUFFER * 1000) / 1000);
         const nextTotalPredicted = Number(data.totalPredicted || Object.keys(data.playerPredictions || {}).length || 0);
         setGameId(nextGameId);
@@ -374,6 +401,7 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
         setCurrentPrice(data.basePrice);
         setTotalPlayers(nextPlayers.length || 0);
         setPhase("predicting");
+        setSettlementFinalizing(false);
         setCountdown(nextCountdown);
         setPredictSafeBuffer(nextPredictSafeBuffer);
         setPredictionDeadline(data.predictionDeadline || null);
@@ -405,7 +433,7 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
         const nextGameId = data.gameId || gameState.gameId;
         const nextChainGameId = data.chainGameId || gameState.chainGameId || data.gameId || gameState.gameId;
         const nextPlayers = data.players || gameState.players || [];
-        const nextCountdown = Number.isFinite(data.remaining) ? data.remaining : Math.round((data.predictTimeout || 30000) / 1000);
+        const nextCountdown = Number.isFinite(data.remaining) ? data.remaining : Math.round((data.predictTimeout || PREDICT_TIMEOUT * 1000) / 1000);
         const nextPredictSafeBuffer = Math.round((data.predictSafeBuffer || PREDICT_SAFE_BUFFER * 1000) / 1000);
         setGameId(nextGameId);
         setChainGameId(nextChainGameId);
@@ -413,6 +441,7 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
         setCurrentPrice(data.currentPrice || data.basePrice || 0);
         setTotalPlayers(data.totalPlayers || nextPlayers.length || 0);
         setPhase(nextPhase);
+        setSettlementFinalizing(nextPhase === "settling" && nextCountdown <= 0);
         setCountdown(nextCountdown);
         setPredictSafeBuffer(nextPredictSafeBuffer);
         setPredictionDeadline(data.predictionDeadline || null);
@@ -438,6 +467,10 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
         });
       }),
       on("game:countdown", (data) => {
+        if (data.phase === "settling") {
+          const nextRemaining = Number(data.remaining);
+          setSettlementFinalizing(Number.isFinite(nextRemaining) && nextRemaining <= 0);
+        }
         setCountdown(data.remaining);
         if (data.currentPrice) setCurrentPrice(data.currentPrice);
         if (data.phase === "settling" && phase !== "settling" && phase !== "result") setPhase("settling");
@@ -465,15 +498,18 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
       }),
       on("game:phase", (data) => {
         if (data.phase === "settling") {
+          const nextCountdown = Math.round((data.settleDelay || 10000) / 1000);
+          setSettlementFinalizing(false);
+          setCountdown(nextCountdown);
           setPhase("settling");
-          setCountdown(Math.round((data.settleDelay || 10000) / 1000));
-          updateGame({ phase: "settling", countdown: Math.round((data.settleDelay || 10000) / 1000) });
+          updateGame({ phase: "settling", countdown: nextCountdown });
         }
       }),
       on("game:result", (data) => {
         const nextGameId = data.gameId || gameState.gameId;
         const nextChainGameId = data.chainGameId || gameState.chainGameId || data.gameId;
         setPhase("result");
+        setSettlementFinalizing(false);
         setResult(data);
         setGameId(nextGameId);
         setChainGameId(nextChainGameId);
@@ -498,6 +534,7 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
         const nextGameId = data.gameId || gameState.gameId;
         const nextChainGameId = data.chainGameId || gameState.chainGameId || data.gameId;
         setPhase("failed");
+        setSettlementFinalizing(false);
         setCountdown(0);
         setPendingPrediction(null);
         setGameId(nextGameId);
@@ -525,6 +562,7 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
         }
         if ((phase === "settling" || phase === "failed") && isSettlementSyncMessage(message)) {
           setPhase("settling");
+          setSettlementFinalizing(true);
           setFailureMessage(null);
           updateGame({
             gameId: gameId || gameState.gameId,
@@ -538,6 +576,7 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
         }
         if ((phase === "settling" || phase === "failed") && message.toLowerCase().includes("settlement")) {
           setPhase("failed");
+          setSettlementFinalizing(false);
           setCountdown(0);
           setFailureMessage(message);
           setClaimState({ claimed: false, error: null, success: null });
@@ -647,7 +686,7 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
   const rewardAmount = Number(result?.myResult?.reward || 0);
   const canClaimReward = phase === "result" && rewardAmount > 0 && !claimState.claimed && !result?.myResult?.claimed;
   const effectivePredictSafeBuffer = predictSafeBuffer;
-  const predictionBufferNoticeThreshold = Math.max(10, effectivePredictSafeBuffer);
+  const predictionBufferNoticeThreshold = Math.max(30, effectivePredictSafeBuffer);
   const secondsUntilLocalLock = countdown;
 
   const diff = currentPrice && basePrice ? currentPrice - basePrice : 0;
@@ -709,6 +748,19 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
   const resultEntryAmount = Number(result?.myResult?.entryFee || claimStatus?.entryFee || ENTRY_FEE);
   const hasPlayerResult = !!result?.myResult;
   const resultNetAmount = hasPlayerResult ? rewardAmount - resultEntryAmount : 0;
+  const settlementCountdownActive = !settlementFinalizing;
+  const settlementCountdownValue = settlementFinalizing ? 0 : countdown > 0 ? countdown : SETTLE_DELAY;
+  const renderSettlementCountdown = () => (
+    <CountdownRing
+      total={SETTLE_DELAY}
+      remaining={settlementCountdownValue}
+      label={settlementFinalizing ? t("game.syncing") : t("game.reveal")}
+      size="sm"
+      animated={false}
+      revealing={settlementFinalizing}
+      loading={settlementFinalizing}
+    />
+  );
   const hasRefundLikePayout = hasPlayerResult && rewardAmount > 0 && resultNetAmount <= 0;
   const didWinRound = !!(result?.myResult?.isCorrect && resultNetAmount > 0);
   const resultHeadline = result?.myResult
@@ -1040,7 +1092,14 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
                 </div>
                 {phase === "predicting" || phase === "settling" ? (
                   <div className="dashboard-room-subcard shrink-0 px-2.5 py-2.5">
-                    <CountdownRing total={phase === "predicting" ? PREDICT_TIMEOUT : SETTLE_DELAY} remaining={countdown} label={phase === "predicting" ? t("game.timeLeft") : t("game.reveal")} size="sm" />
+                    {phase === "predicting" ? (
+                      <CountdownRing
+                        total={PREDICT_TIMEOUT}
+                        remaining={countdown}
+                        label={t("game.timeLeft")}
+                        size="sm"
+                      />
+                    ) : renderSettlementCountdown()}
                   </div>
                 ) : (
                   <div className={`dashboard-room-chip px-3 py-1.5 text-[10px] ${phase === "result" ? resultOutcomeChipClass : "!border-amber-500/20 !bg-amber-500/[0.08] !text-amber-200"}`}>
@@ -1085,7 +1144,7 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
                       </div>
                     )}
 
-                    {predictionBufferNoticeActive ? <div className="rounded-[18px] border border-fuchsia-500/15 bg-fuchsia-500/10 text-fuchsia-200 text-[11px] px-4 py-3">{predictionBufferMessage}</div> : null}
+                    {predictionBufferNoticeActive ? <div className="prediction-buffer-notice-flash rounded-[18px] border border-fuchsia-500/15 bg-fuchsia-500/10 text-fuchsia-200 text-[11px] px-4 py-3">{predictionBufferMessage}</div> : null}
                     {predictionError ? <div className="rounded-[18px] border border-rose-500/15 bg-rose-500/10 text-rose-300 text-[11px] px-4 py-3">{predictionError}</div> : null}
                     {predicting ? <div className="rounded-[18px] border border-cyan-500/15 bg-cyan-500/10 text-cyan-200 text-[11px] px-4 py-3">{t("game.signingNote")}</div> : null}
                   </>
@@ -1224,7 +1283,7 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
 	              <PredictButtons onPredict={predict} myPrediction={displayedPrediction} disabled={predicting || predictionBufferLocked} attention={predictionNeedsAttention} />
 	            </div>
 
-            {predictionBufferNoticeActive && <div className="rounded-[18px] border border-fuchsia-500/15 bg-fuchsia-500/10 text-fuchsia-200 text-[11px] px-4 py-3 mb-3">{predictionBufferMessage}</div>}
+            {predictionBufferNoticeActive && <div className="prediction-buffer-notice-flash rounded-[18px] border border-fuchsia-500/15 bg-fuchsia-500/10 text-fuchsia-200 text-[11px] px-4 py-3 mb-3">{predictionBufferMessage}</div>}
             {predictionError && <div className="rounded-[18px] border border-rose-500/15 bg-rose-500/10 text-rose-300 text-[11px] px-4 py-3 mb-3">{predictionError}</div>}
 	            {predicting && <div className="rounded-[18px] border border-cyan-500/15 bg-cyan-500/10 text-cyan-200 text-[11px] px-4 py-3 mb-3">{t("game.signingNote")}</div>}
             {displayedPrediction && (
@@ -1238,19 +1297,16 @@ export default function GamePlay({ embedded = false, layout = "modal", centerCon
       )}
 
       {phase === "settling" && (
-        <div className="w-full max-w-[40rem] animate-slideUp">
+        <div className="w-full max-w-[40rem]">
           <div className="dashboard-modal-card overflow-hidden p-3 sm:p-3.5">
             <div className="flex items-start justify-between gap-2.5 mb-3">
               <div className="min-w-0 max-w-[26rem]">
 	                <span className="dashboard-room-chip inline-flex items-center gap-2 px-3 py-1.5 text-[9px] font-semibold uppercase tracking-[0.2em] text-fuchsia-100/82">{t("game.settlement")}</span>
-	                <h3 className="mt-2.5 text-[1.08rem] sm:text-[1.26rem] font-black tracking-[-0.04em] text-white leading-[1.06]">{countdown > 0 ? t("game.settling") : t("game.finalizingOnchain")}</h3>
-	                <p className="mt-1.5 text-[10px] sm:text-[11px] leading-5 text-white/46">{countdown > 0 ? t("game.oraclePreparing") : t("game.waitingSettlementTx")}</p>
+	                <h3 className="mt-2.5 text-[1.08rem] sm:text-[1.26rem] font-black tracking-[-0.04em] text-white leading-[1.06]">{settlementCountdownActive ? t("game.settling") : t("game.finalizingOnchain")}</h3>
+	                <p className="mt-1.5 text-[10px] sm:text-[11px] leading-5 text-white/46">{settlementCountdownActive ? t("game.oraclePreparing") : t("game.waitingSettlementTx")}</p>
               </div>
               <div className="dashboard-room-subcard shrink-0 px-2.5 py-2.5">
-                {countdown > 0
-	                  ? <CountdownRing total={SETTLE_DELAY} remaining={countdown} label={t("game.reveal")} size="sm" />
-	                  : <div className="flex flex-col items-center justify-center w-24 h-24 rounded-full border border-fuchsia-500/20 bg-fuchsia-500/[0.06]"><span className="w-6 h-6 rounded-full border-2 border-fuchsia-300/60 border-t-transparent animate-spin"/><span className="mt-2 text-[9px] uppercase tracking-[0.2em] text-white/35">{t("game.syncing")}</span></div>
-                }
+                {renderSettlementCountdown()}
               </div>
             </div>
 

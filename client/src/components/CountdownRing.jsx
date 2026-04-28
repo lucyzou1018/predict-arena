@@ -1,7 +1,7 @@
-export function CountdownRing({ total, remaining, label, size = "md" }) {
+export function CountdownRing({ total, remaining, label, size = "md", animated = true, revealing = false, loading = false }) {
   const safeTotal = Math.max(1, Number(total || 1));
   const safeRemaining = Math.max(0, Number(remaining || 0));
-  const isRevealing = label === "Reveal" && safeRemaining <= 0;
+  const isRevealing = revealing && loading && safeRemaining <= 0;
   const pct = Math.min(1, safeRemaining / safeTotal);
   const off = isRevealing ? 72 : 283 * (1 - pct);
   const color = isRevealing ? "#f472b6" : safeRemaining <= 5 ? "#f43f5e" : safeRemaining <= 10 ? "#f59e0b" : "#10b981";
@@ -26,8 +26,8 @@ export function CountdownRing({ total, remaining, label, size = "md" }) {
             strokeDasharray={isRevealing ? "168 115" : "283"}
             strokeDashoffset={off}
             style={{
-              transition: isRevealing ? "stroke 0.5s" : "stroke-dashoffset 0.5s,stroke 0.5s",
-              filter: `drop-shadow(0 0 6px ${color}30)`,
+              transition: animated ? (isRevealing ? "stroke 0.5s" : "stroke-dashoffset 0.5s,stroke 0.5s") : "none",
+              filter: animated ? `drop-shadow(0 0 6px ${color}30)` : "none",
             }}
           />
         </svg>

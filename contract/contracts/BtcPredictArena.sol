@@ -10,8 +10,8 @@ contract BtcPredictArena {
     uint256 public feeRate = 500;
     uint256 public entryFee = 1e6;
     uint256 public totalFees;
-    uint256 public paymentTimeout = 60;
-    uint256 public predictionDuration = 30;
+    uint256 public paymentTimeout = 90;
+    uint256 public predictionDuration = 60;
     uint256 public predictionBuffer = 5;
     uint256 public refundGracePeriod = 300;
 

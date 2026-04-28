@@ -84,7 +84,7 @@ export default function WalletMenu() {
 
   return (
     <div ref={menuRef} className="absolute right-0 top-full mt-2 w-56 bg-[#12121f] border border-white/[0.08] rounded-xl shadow-2xl overflow-hidden z-[80]">
-      <div className="md:hidden border-b border-white/[0.06]">
+      <div className="lg:hidden border-b border-white/[0.06]">
         {mobileNavItems.map((item) => {
           const Icon = item.icon;
           return (
