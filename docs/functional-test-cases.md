@@ -127,17 +127,17 @@
 | PY-04 | [需手动] | USDC 已授权 | 额度充足 | 跳过 approve，直接调用 `payForGame` |
 | PY-05 | [需手动] | USDC 需授权 | 额度不足 | 先 approve 交易，再 `payForGame` 交易（两次钱包确认） |
 | PY-06 | [需手动] | 支付进度显示 | 玩家 A 支付后，玩家 B 看到更新 | `room:payment:update` 返回 `paidCount=1, total=2` |
-| PY-07 | [需手动] | 全部支付完成 | 两个玩家在 60 秒内均支付完成 | 触发 `game:start`，跳转到 /game，开始预测阶段 |
+| PY-07 | [需手动] | 全部支付完成 | 两个玩家在 90 秒内均支付完成 | 触发 `game:start`，跳转到 /game，开始预测阶段 |
 | PY-08 | [需手动] | 支付确认重试 | 链上支付成功但服务端验证较慢 | 服务端最多重试 5 次（每次间隔 800ms）验证链上支付 |
 
 ### 5.2 支付超时与取消
 
 | ID | 状态 | 场景 | 操作步骤 | 预期结果 |
 |----|------|------|----------|----------|
-| PY-09 | [需手动] | 房间支付超时（60 秒） | 双方均未在 60 秒内支付 | `room:payment:failed`，房间关闭，数据库：`state='failed'`，链上游戏取消 |
-| PY-10 | [需手动] | 匹配支付超时（60 秒） | 双方均未在 60 秒内支付 | `match:error`："Payment timeout"，数据库：`state='cancelled'`，链上游戏取消 |
-| PY-11 | [部分覆盖] | 房间部分支付超时 | 玩家 A 已支付，玩家 B 60 秒内未支付 | `room:payment:failed`，玩家 A 通过链上 cancelGame 获得退款，房间关闭 |
-| PY-12 | [部分覆盖] | 匹配部分支付超时 | 玩家 A 已支付，玩家 B 60 秒内未支付 | `match:error`："Payment timeout"，玩家 A 通过 cancelGame 获得退款 |
+| PY-09 | [需手动] | 房间支付超时（90 秒） | 双方均未在 90 秒内支付 | `room:payment:failed`，房间关闭，数据库：`state='failed'`，链上游戏取消 |
+| PY-10 | [需手动] | 匹配支付超时（90 秒） | 双方均未在 90 秒内支付 | `match:error`："Payment timeout"，数据库：`state='cancelled'`，链上游戏取消 |
+| PY-11 | [部分覆盖] | 房间部分支付超时 | 玩家 A 已支付，玩家 B 90 秒内未支付 | `room:payment:failed`，玩家 A 通过链上 cancelGame 获得退款，房间关闭 |
+| PY-12 | [部分覆盖] | 匹配部分支付超时 | 玩家 A 已支付，玩家 B 90 秒内未支付 | `match:error`："Payment timeout"，玩家 A 通过 cancelGame 获得退款 |
 | PY-13 | [需手动] | 房主取消支付 | 房主在支付阶段点击取消 | 房间解散，`room:dissolved` 发送给所有人，已支付玩家获得退款 |
 | PY-14 | [需手动] | 加入者取消支付 | 加入者在支付阶段点击取消/离开 | 调用 `_abortPaymentRoom`，房间关闭 `state='failed'`，`room:payment:failed` 发送给所有人 |
 | PY-15 | [需手动] | 取消匹配支付 | 玩家在匹配支付阶段点击取消 | 匹配取消，已支付玩家获得退款 |
@@ -162,12 +162,12 @@
 
 | ID | 状态 | 场景 | 操作步骤 | 预期结果 |
 |----|------|------|----------|----------|
-| GP-01 | [部分覆盖] | 游戏开始 | 全部支付完成后 500ms | 触发 `game:start`，包含 basePrice、predictTimeout=30s、predictionDeadline，跳转到 /game |
+| GP-01 | [部分覆盖] | 游戏开始 | 全部支付完成后 500ms | 触发 `game:start`，包含 basePrice、predictTimeout=60s、predictionDeadline，跳转到 /game |
 | GP-02 | [已自动化] | 预测涨（链上） | 玩家调用 predict(gameId, 1) | 链上记录预测，触发 PredictionMade 事件 |
 | GP-03 | [已自动化] | 预测跌（链上） | 玩家调用 predict(gameId, 2) | 链上记录预测，触发 PredictionMade 事件 |
 | GP-04 | [需手动] | 预测阶段倒计时 | 观察倒计时 | 每秒触发 `game:countdown`，包含剩余秒数和当前 BTC 价格 |
-| GP-05 | [需手动] | 所有玩家提前预测 | 两人均在 30 秒内预测完成 | 预测阶段立即结束，进入结算阶段 |
-| GP-06 | [需手动] | 预测超时 | 30 秒内未预测 | 自动进入结算阶段，未预测玩家视为弃权（Prediction.None） |
+| GP-05 | [需手动] | 所有玩家提前预测 | 两人均在 55 秒提交窗口内预测完成 | 预测阶段立即结束，进入结算阶段 |
+| GP-06 | [需手动] | 预测超时 | 60 秒预测窗口内未预测 | 自动进入结算阶段，未预测玩家视为弃权（Prediction.None） |
 | GP-07 | [需手动] | 结算阶段倒计时 | 预测阶段结束后 | `game:phase` 返回 phase="settling"，30 秒倒计时开始 |
 | GP-08 | [需手动] | 结算完成 | 30 秒结算延迟结束 | `game:result` 包含 basePrice、settlementPrice、direction、myResult、platformFee |
 
@@ -267,7 +267,7 @@
 | DC-03 | [需手动] | 活跃游戏断连 | 预测阶段关闭标签 | Socket 断开，游戏继续进行（其他玩家不受影响） |
 | DC-04 | [需手动] | 活跃游戏重连 | 重新打开页面，钱包重新认证 | `rebindPlayerSocket` 恢复 socket，`game:resume` 发送当前游戏状态 |
 | DC-05 | [需手动] | 等待房间重连 | 断开后重新打开页面 | `rebindPlayerSocket` 恢复 socketId，房间状态保持 |
-| DC-06 | [需手动] | 支付阶段重连 | 60 秒支付期间重新打开页面 | `rebindPlayerSocket` 同时恢复房间和支付会话中的 socket |
+| DC-06 | [需手动] | 支付阶段重连 | 90 秒支付期间重新打开页面 | `rebindPlayerSocket` 同时恢复房间和支付会话中的 socket |
 | DC-07 | [需手动] | 游戏恢复请求 | 页面加载时有活跃游戏 | 发送 `game:resume:request`，服务端返回游戏快照（如有活跃游戏） |
 | DC-08 | [需手动] | 开放房间恢复 | 页面加载时有等待中的房间 | 请求 `/api/users/{wallet}/open-room`，恢复 create/join 阶段和倒计时 |
 | DC-09 | [需手动] | 恢复已过期房间 | 页面加载，但房间已过期 | 显示过期状态和相应错误信息 |
@@ -374,7 +374,7 @@
 |------|------|----------------|------------------|
 | 1 | A 创建，B 加入 | 阶段：payment | 阶段：payment |
 | 2 | A 支付 1 USDC | 阶段：paid_waiting，1/2 已支付 | 看到 1/2 已支付 |
-| 3 | B 60 秒内不操作 | - | - |
+| 3 | B 90 秒内不操作 | - | - |
 | 4 | 超时触发 | `room:payment:failed`，A 链上退款 | `room:payment:failed`，返回选择页 |
 | 5 | 验证 | A 的 USDC 余额恢复 | B 未支付，无变化 |
 
