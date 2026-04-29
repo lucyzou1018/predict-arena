@@ -1,4 +1,9 @@
-export const SERVER_URL = import.meta.env.VITE_API_BASE || "http://localhost:3001";
+const normalizeBaseUrl = (value, fallback) => {
+  const url = `${value || fallback}`.trim();
+  return url.replace(/\/+$/, "");
+};
+
+export const SERVER_URL = normalizeBaseUrl(import.meta.env.VITE_API_BASE, "http://localhost:3001");
 export const LOCAL_CHAIN_MOCK = import.meta.env.VITE_LOCAL_CHAIN_MOCK === "1" || import.meta.env.VITE_LOCAL_CHAIN_MOCK === "true";
 
 export const NETWORK = `${import.meta.env.VITE_NETWORK || "sepolia"}`.toLowerCase() === "mainnet" ? "mainnet" : "sepolia";
