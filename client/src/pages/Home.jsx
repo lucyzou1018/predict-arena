@@ -385,7 +385,7 @@ function QuickMatchSelectorCard({ selectedSize, onSelect, onAction, disabled, bl
 export default function Home(){
   const nav=useNavigate();
   const t=useT();
-  const{wallet,provider,signer,connect,mockMode,refund,pendingAction,setPendingAction}=useWallet();
+  const{wallet,provider,signer,connect,mockMode,refund,pendingAction,setPendingAction,ensureChain}=useWallet();
   const{emit,on}=useSocket();
   const{updateGame}=useGame();
   const{payForGame,payForRoomEntry,claimGameFunds,getGameClaimStatus,loading,claiming,mockPay,shouldUseMockPayment}=useContract();
@@ -1237,10 +1237,11 @@ export default function Home(){
       ?t("home.err.matchBlocked.join")
       :null;
 
-  const createRoom=()=>{
+  const createRoom=async()=>{
     if(isJoinBusy||isMatchBusy){setCreateErr(t("home.err.finishFirst"));return;}
     if(isCreateBusy){setCreateErr(t("home.err.alreadyCreating"));return;}
     if(!mockMode && (!wallet || !provider || !signer)){connect({type:"create-room"});return;}
+    if(!mockMode && !(await ensureChain())){setCreateErr(`Switch wallet to ${CHAIN.chainName} before continuing`);return;}
     createCancelPendingRef.current=false;
     createPhaseBeforeCancelRef.current="select";
     pendingCreatedRoomRef.current=null;
@@ -1321,7 +1322,7 @@ export default function Home(){
   const shareTwitter=()=>{const url=typeof window!=="undefined"?window.location.origin:"";const text=t("home.share.text",{code:roomCode,url});const intent=`https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}`;if(typeof window!=="undefined")window.open(intent,"_blank","noopener,noreferrer");};
 
   // Join flow: confirm dialog (no payment), then join directly
-  const submitJoin=()=>{if(isCreateBusy||isMatchBusy){setJoinErr(t("home.err.finishFirst"));return;}if(isJoinBusy){setJoinErr(t("home.err.alreadyJoin"));return;}if(!mockMode && (!wallet || !provider || !signer)){connect({type:"join-room",code:joinCode});return;}if(joinCode.length<6)return setJoinErr(t("home.err.incompleteCode"));setJoinErr(null);setJoinPhase("validating");if(joinTimeoutRef.current)clearTimeout(joinTimeoutRef.current);joinTimeoutRef.current=setTimeout(()=>{setJoinErr(t("home.err.invalidCode"));setJoinPhase("select");},4000);emit("room:validate",{inviteCode:joinCode.toUpperCase()});};
+  const submitJoin=async()=>{if(isCreateBusy||isMatchBusy){setJoinErr(t("home.err.finishFirst"));return;}if(isJoinBusy){setJoinErr(t("home.err.alreadyJoin"));return;}if(!mockMode && (!wallet || !provider || !signer)){connect({type:"join-room",code:joinCode});return;}if(!mockMode && !(await ensureChain())){setJoinErr(`Switch wallet to ${CHAIN.chainName} before continuing`);return;}if(joinCode.length<6)return setJoinErr(t("home.err.incompleteCode"));setJoinErr(null);setJoinPhase("validating");if(joinTimeoutRef.current)clearTimeout(joinTimeoutRef.current);joinTimeoutRef.current=setTimeout(()=>{setJoinErr(t("home.err.invalidCode"));setJoinPhase("select");},4000);emit("room:validate",{inviteCode:joinCode.toUpperCase()});};
   const confirmJoin=()=>{
     if(joinTimeoutRef.current)clearTimeout(joinTimeoutRef.current);
     joinTimeoutRef.current=setTimeout(()=>{
@@ -1384,7 +1385,7 @@ export default function Home(){
     return()=>clearTimeout(timer);
   },[matchPhase,cd,resetMatchState]);
 
-  const startMatch=()=>{if(isCreateBusy||isJoinBusy){setMatchErr(t("home.err.finishFirst"));return;}if(isMatchBusy){setMatchErr(t("home.err.alreadyMatching"));return;}if(!mockMode && (!wallet || !provider || !signer)){connect({type:"random-match"});return;}clearQuickMatchSession(walletRef.current);setPending(null);setMatchErr(null);setMatchPhase("matching");setMatchInfo({current:1,total:matchTeamSize,teamSize:matchTeamSize,players:walletRef.current?[walletRef.current]:[]});emit("match:join",{teamSize:matchTeamSize});};
+  const startMatch=async()=>{if(isCreateBusy||isJoinBusy){setMatchErr(t("home.err.finishFirst"));return;}if(isMatchBusy){setMatchErr(t("home.err.alreadyMatching"));return;}if(!mockMode && (!wallet || !provider || !signer)){connect({type:"random-match"});return;}if(!mockMode && !(await ensureChain())){setMatchErr(`Switch wallet to ${CHAIN.chainName} before continuing`);return;}clearQuickMatchSession(walletRef.current);setPending(null);setMatchErr(null);setMatchPhase("matching");setMatchInfo({current:1,total:matchTeamSize,teamSize:matchTeamSize,players:walletRef.current?[walletRef.current]:[]});emit("match:join",{teamSize:matchTeamSize});};
   const cancelMatch=()=>resetMatchState(null,{cancelQueue:true});
   const enterMatchedRoom=useCallback(()=>{
     const cached=readQuickMatchSession(walletRef.current)||{};

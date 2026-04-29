@@ -123,11 +123,29 @@ export function WalletProvider({children}){
   },[]);
 
   const switchChain=useCallback(async(eth=activeEthRef.current)=>{
-    if(!eth)return;
-    try{await eth.request({method:"wallet_switchEthereumChain",params:[{chainId:CHAIN.chainId}]})}
-    catch(e){if(e.code===4902)await eth.request({method:"wallet_addEthereumChain",params:[CHAIN]})}
+    if(!eth)return false;
+    try{
+      await eth.request({method:"wallet_switchEthereumChain",params:[{chainId:CHAIN.chainId}]});
+    }catch(e){
+      if(e?.code!==4902)return false;
+      try{
+        await eth.request({method:"wallet_addEthereumChain",params:[CHAIN]});
+        await eth.request({method:"wallet_switchEthereumChain",params:[{chainId:CHAIN.chainId}]});
+      }catch{
+        return false;
+      }
+    }
     return await checkChain(eth);
   },[checkChain]);
+
+  const ensureChain=useCallback(async()=>{
+    if(mockMode)return true;
+    const eth=activeEthRef.current||walletProvider;
+    if(!eth)return false;
+    const ok=await checkChain(eth);
+    if(ok)return true;
+    return await switchChain(eth);
+  },[checkChain,mockMode,switchChain,walletProvider]);
 
   /* ---- Connect flow ---- */
   // Keep track of which raw EIP-1193 provider is actively connected
@@ -184,7 +202,7 @@ export function WalletProvider({children}){
       setWallet(account);setProvider(bp);setWalletProvider(eth);setSigner(s);
       setMockMode(false);setWalletName(walletInfo.name);
       try{localStorage.removeItem(DISCONNECT_KEY);localStorage.setItem(STORAGE_KEY,JSON.stringify({mode:"wallet",wallet:account,walletName:walletInfo.name}))}catch{}
-      await checkChain(eth);
+      await switchChain(eth);
       setShowWalletModal(false);setConnectStep("");
     }catch(e){
       setConnectStep("error");
@@ -242,7 +260,7 @@ export function WalletProvider({children}){
             setWalletName(savedWalletName||detected.name);
             setMockMode(false);
             try{localStorage.setItem(STORAGE_KEY,JSON.stringify({mode:"wallet",wallet:account,walletName:savedWalletName||detected.name}))}catch{}
-            await checkChain(detected.provider);
+            await switchChain(detected.provider);
             break;
           }
         }catch{}
@@ -290,7 +308,7 @@ export function WalletProvider({children}){
   return(
     <Ctx.Provider value={{
       wallet,provider,walletProvider,signer,chainOk,connecting,
-      connect,disconnect,switchChain,
+      connect,disconnect,switchChain,ensureChain,
       mockMode,balance,setBalance,refund,
       walletName,showWalletModal,setShowWalletModal,
       showWalletMenu,setShowWalletMenu,

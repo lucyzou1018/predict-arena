@@ -169,7 +169,7 @@ async function fetchClaimStatus(chainGameId, wallet) {
 }
 
 export function useContract() {
-  const { signer, wallet, walletProvider, walletName, mockMode, chainOk, switchChain, setBalance } = useWallet();
+  const { signer, wallet, walletProvider, walletName, mockMode, ensureChain, setBalance } = useWallet();
   const [loading, setLoading] = useState(false);
   const [claiming, setClaiming] = useState(false);
   const [predicting, setPredicting] = useState(false);
@@ -180,11 +180,9 @@ export function useContract() {
 
   const ensureWalletReady = useCallback(async () => {
     if (!signer || !wallet) throw new Error("Wallet not connected");
-    if (!chainOk) {
-      const switched = await switchChain();
-      if (!switched) throw new Error(`Switch wallet to ${CHAIN.chainName} before continuing`);
-    }
-  }, [signer, wallet, chainOk, switchChain]);
+    const switched = await ensureChain();
+    if (!switched) throw new Error(`Switch wallet to ${CHAIN.chainName} before continuing`);
+  }, [signer, wallet, ensureChain]);
 
   const getArena = useCallback(() => {
     if (!signer || !ethers.isAddress(CONTRACT_ADDRESS)) return null;
