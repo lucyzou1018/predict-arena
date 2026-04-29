@@ -3,7 +3,7 @@ import{createPortal}from"react-dom";
 import{useNavigate}from"react-router-dom";
 import{useWallet}from"../context/WalletContext";
 import{useSocket}from"../hooks/useSocket";
-import{SERVER_URL}from"../config/constants";
+import{CHAIN,SERVER_URL}from"../config/constants";
 import{useGame}from"../context/GameContext";
 import{useContract}from"../hooks/useContract";
 import{useBtcPrice}from"../hooks/useBtcPrice";
@@ -19,7 +19,7 @@ function formatPaymentUiError(message){
   const text=(message||"").toLowerCase();
   if(!text)return null;
   if(text.includes("request timeout")||text.includes("confirmation timed out")||text.includes("econnreset")){
-    return "Base Sepolia RPC timed out while waiting for confirmation. Please retry in a few seconds.";
+    return `${CHAIN.chainName} RPC timed out while waiting for confirmation. Please retry in a few seconds.`;
   }
   if(text.includes("on-chain payment not confirmed")){
     return "Payment was sent, but server confirmation is still catching up. Please wait a few seconds.";

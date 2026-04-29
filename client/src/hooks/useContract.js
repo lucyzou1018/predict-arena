@@ -2,18 +2,17 @@ import { useCallback, useState } from "react";
 import { ethers } from "ethers";
 import { useWallet } from "../context/WalletContext";
 import { ARENA_ABI, ERC20_ABI, CONTRACT_ADDRESS, USDC_ADDRESS, GAME_STATE } from "../config/contract";
-import { BASE_SEPOLIA_FALLBACK_RPC_URLS, CHAIN, ENTRY_FEE, LOCAL_CHAIN_MOCK, SERVER_URL } from "../config/constants";
+import { CHAIN, CHAIN_ID, CHAIN_ID_BIGINT, CHAIN_NETWORK_NAME, ENTRY_FEE, LOCAL_CHAIN_MOCK, READ_RPC_URLS, SERVER_URL } from "../config/constants";
 
-const BASE_SEPOLIA_NETWORK = ethers.Network.from({
-  name: "base-sepolia",
-  chainId: Number.parseInt(CHAIN.chainId, 16),
+const ACTIVE_NETWORK = ethers.Network.from({
+  name: CHAIN_NETWORK_NAME,
+  chainId: CHAIN_ID,
 });
 
-const READ_PROVIDERS = BASE_SEPOLIA_FALLBACK_RPC_URLS.map(
-  (url) => new ethers.JsonRpcProvider(url, BASE_SEPOLIA_NETWORK, { staticNetwork: BASE_SEPOLIA_NETWORK }),
+const READ_PROVIDERS = READ_RPC_URLS.map(
+  (url) => new ethers.JsonRpcProvider(url, ACTIVE_NETWORK, { staticNetwork: ACTIVE_NETWORK }),
 );
 const GAS_BUFFER_BPS = 12000n;
-const BASE_SEPOLIA_CHAIN_ID = BigInt(Number.parseInt(CHAIN.chainId, 16));
 const TX_CONFIRM_TIMEOUT_MS = 90000;
 const TX_PROVIDER_WAIT_TIMEOUT_MS = 20000;
 const TX_CONFIRM_POLL_MS = 1250;
@@ -104,7 +103,7 @@ function mapContractError(err) {
     return "Payment is already on-chain but confirmation is still syncing. Reopen the room in a moment if the UI does not update automatically.";
   }
   if (reason.includes("network") || reason.includes("chain")) {
-    return "Wallet network is incorrect. Switch to Base Sepolia and try again.";
+    return `Wallet network is incorrect. Switch to ${CHAIN.chainName} and try again.`;
   }
   if (reason.includes("transfer amount exceeds") || reason.includes("exceeds balance")) {
     return "Insufficient USDC balance.";
@@ -145,7 +144,7 @@ function mapContractError(err) {
   if (reason.includes("already paid")) {
     return "Payment was already submitted for this game.";
   }
-  // Base Sepolia 对"会 revert"的 tx 在 estimateGas 时统一返回 "intrinsic gas too high"，
+  // Base RPC can mask some reverting estimateGas calls as "intrinsic gas too high";
   // 真实 revert 原因被 RPC 吞掉，ethers 最终表达为 "missing revert data"。
   if (reason.includes("intrinsic gas too high") || reason.includes("missing revert data")) {
     return "Network is rejecting the transaction. Please refresh and retry, or switch RPC in your wallet.";
@@ -183,7 +182,7 @@ export function useContract() {
     if (!signer || !wallet) throw new Error("Wallet not connected");
     if (!chainOk) {
       const switched = await switchChain();
-      if (!switched) throw new Error("Switch wallet to Base Sepolia before continuing");
+      if (!switched) throw new Error(`Switch wallet to ${CHAIN.chainName} before continuing`);
     }
   }, [signer, wallet, chainOk, switchChain]);
 
@@ -270,7 +269,7 @@ export function useContract() {
     }
 
     console.warn(`[tx] ${label} confirmation timed out`, { hash, error: lastError });
-    throw new Error(`${label} confirmation is still syncing on Base Sepolia. Please reopen the room in a moment if the UI does not update automatically.`);
+    throw new Error(`${label} confirmation is still syncing on ${CHAIN.chainName}. Please reopen the room in a moment if the UI does not update automatically.`);
   }, [signer]);
 
   const prepareTransactionRequest = useCallback(async (txRequest, fallbackGasLimit, preferLegacy = false) => {
@@ -280,7 +279,7 @@ export function useContract() {
     const preparedRequest = {
       to: txRequest.to,
       data: txRequest.data || "0x",
-      chainId: BASE_SEPOLIA_CHAIN_ID,
+      chainId: CHAIN_ID_BIGINT,
     };
     if (txRequest.value !== undefined && txRequest.value !== null) preparedRequest.value = txRequest.value;
 

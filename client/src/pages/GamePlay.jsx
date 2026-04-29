@@ -39,8 +39,8 @@ function isSettlementSyncMessage(message) {
   const reason = `${message || ""}`.toLowerCase();
   return (
     reason.includes("settlement is still syncing") ||
-    reason.includes("syncing on base sepolia") ||
-    reason.includes("timed out while waiting for base sepolia") ||
+    reason.includes("syncing on base") ||
+    reason.includes("timed out while waiting for base") ||
     reason.includes("result should appear automatically")
   );
 }
