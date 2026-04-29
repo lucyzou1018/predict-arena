@@ -14,10 +14,17 @@ const clientUrls = `${process.env.CLIENT_URL || "http://localhost:5173"}`
   .split(",")
   .map(normalizeOrigin)
   .filter(Boolean);
+const inferredNetwork = `${process.env.RPC_URL || ""}`.toLowerCase().includes("mainnet")
+  ? "mainnet"
+  : "sepolia";
+const network = `${process.env.NETWORK || process.env.VITE_NETWORK || inferredNetwork}`.toLowerCase() === "mainnet"
+  ? "mainnet"
+  : "sepolia";
 
 export default {
   port: parseInt(process.env.PORT || "3001"),
   env: process.env.NODE_ENV || "development",
+  network,
   db: { url: process.env.DATABASE_URL },
   redis: { url: process.env.REDIS_URL || "redis://localhost:6379" },
   outbound: { proxyUrl: process.env.OUTBOUND_PROXY_URL || process.env.HTTPS_PROXY || process.env.HTTP_PROXY || process.env.ALL_PROXY || "" },

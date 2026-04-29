@@ -15,10 +15,14 @@ const RELAY_NONCE_RETRY_MS = parseInt(process.env.CONTRACT_NONCE_RETRY_MS || "40
 const RELAY_MIN_PRIORITY_FEE = ethers.parseUnits(process.env.CONTRACT_RELAY_MIN_PRIORITY_GWEI || "0.001", "gwei");
 const RELAY_MAX_PRIORITY_FEE = ethers.parseUnits(process.env.CONTRACT_RELAY_MAX_PRIORITY_GWEI || "0.02", "gwei");
 const RELAY_MAX_FEE_MULTIPLIER = BigInt(parseInt(process.env.CONTRACT_RELAY_MAX_FEE_MULTIPLIER || "1", 10));
-const BASE_SEPOLIA_NETWORK = ethers.Network.from({ name: "base-sepolia", chainId: 84532 });
-const DEFAULT_BASE_SEPOLIA_RPC_FALLBACKS = [
-  "https://sepolia.base.org",
-];
+const BASE_NETWORKS = {
+  sepolia: ethers.Network.from({ name: "base-sepolia", chainId: 84532 }),
+  mainnet: ethers.Network.from({ name: "base", chainId: 8453 }),
+};
+const DEFAULT_BASE_RPC_FALLBACKS = {
+  sepolia: ["https://sepolia.base.org"],
+  mainnet: ["https://mainnet.base.org"],
+};
 
 const RELAY_GAS_LIMITS = {
   ownerCreateGame: 220000n,
@@ -121,15 +125,13 @@ const isAlreadyKnownLike = (error) => {
   );
 };
 
-const buildRpcUrls = (primaryUrl) => {
+const buildRpcUrls = (primaryUrl, network = "sepolia") => {
   const explicitFallbacks = `${process.env.RPC_FALLBACK_URLS || ""}`
     .split(",")
     .map((value) => value.trim())
     .filter(Boolean);
 
-  const inferredFallbacks = `${primaryUrl || ""}`.toLowerCase().includes("sepolia")
-    ? DEFAULT_BASE_SEPOLIA_RPC_FALLBACKS
-    : [];
+  const inferredFallbacks = DEFAULT_BASE_RPC_FALLBACKS[network] || [];
 
   return [...new Set([primaryUrl, ...explicitFallbacks, ...inferredFallbacks].filter(Boolean))];
 };
@@ -196,11 +198,12 @@ class ContractService {
       this.mockMode = true;
       return;
     }
-    const rpcUrls = buildRpcUrls(config.rpc.url);
+    const baseNetwork = BASE_NETWORKS[config.network] || BASE_NETWORKS.sepolia;
+    const rpcUrls = buildRpcUrls(config.rpc.url, config.network);
     this.rpcProviders = rpcUrls.map((url) => new ethers.JsonRpcProvider(
       createRpcFetchRequest(url),
-      BASE_SEPOLIA_NETWORK,
-      { staticNetwork: BASE_SEPOLIA_NETWORK },
+      baseNetwork,
+      { staticNetwork: baseNetwork },
     ));
     const txProviderIndex = pickPreferredTxRpcIndex(rpcUrls);
     this.txProvider = this.rpcProviders[txProviderIndex];
@@ -224,6 +227,8 @@ class ContractService {
       console.log("[Contract] RPC tx primary", rpcUrls[txProviderIndex]);
     }
     console.log("[Contract] signer roles", {
+      network: config.network,
+      chainId: this.chainId,
       owner: this.ownerSigner.address,
       executor: this.executorSigner.address,
       oracle: this.authSigner.address,

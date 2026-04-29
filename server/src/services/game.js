@@ -314,17 +314,31 @@ class GameService {
   }
 
   startRoomPayment(gameId, inviteCode, players, owner = null, chainGameId = null, kind = "room") {
+    const startedAt = Date.now();
     this.roomPayments[gameId] = {
       inviteCode,
       owner,
       players,
       chainGameId: chainGameId || null,
       paymentOpen: !!chainGameId,
-      startedAt: Date.now(),
+      startedAt,
       paid: new Set(),
       timer: null,
       kind,
     };
+    query(
+      `UPDATE games
+       SET state = CASE WHEN state IN ('waiting', 'created') THEN 'payment' ELSE state END,
+           payment_started_at = COALESCE(payment_started_at, $2)
+       WHERE id = $1`,
+      [gameId, new Date(startedAt)],
+    ).catch((error) => {
+      console.error("[Game] failed to persist room payment start", {
+        gameId,
+        inviteCode,
+        error: error?.message || error,
+      });
+    });
     return this.roomPayments[gameId];
   }
 

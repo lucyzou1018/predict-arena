@@ -123,6 +123,8 @@ class RoomService {
 
     room.preparing = true;
     room.prepareStartedAt = Date.now();
+    room.expiresAt = null;
+    this._clearRoomTimer(room);
     this.emitRoomPreparing(code, options.timeoutMs || config.game.paymentTimeout);
 
     room._preparePromise = (async () => {

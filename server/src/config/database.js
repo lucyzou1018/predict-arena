@@ -36,6 +36,7 @@ export async function initDB() {
   await query(`CREATE INDEX IF NOT EXISTS idx_games_invite ON games(invite_code)`);
   await query(`ALTER TABLE games ADD COLUMN IF NOT EXISTS error_message TEXT`);
   await query(`ALTER TABLE games ADD COLUMN IF NOT EXISTS failed_at TIMESTAMPTZ`);
+  await query(`ALTER TABLE games ADD COLUMN IF NOT EXISTS payment_started_at TIMESTAMPTZ`);
   await query(`ALTER TABLE game_players ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ`);
   await query(`ALTER TABLE game_players ADD COLUMN IF NOT EXISTS is_owner BOOLEAN DEFAULT false`);
   await query(`ALTER TABLE game_players ADD COLUMN IF NOT EXISTS prediction_signature TEXT`);
