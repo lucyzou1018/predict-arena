@@ -1,4 +1,20 @@
 import "dotenv/config";
+
+function normalizeOrigin(value) {
+  const trimmed = `${value || ""}`.trim().replace(/\/+$/, "");
+  if (!trimmed) return "";
+  try {
+    return new URL(trimmed).origin;
+  } catch {
+    return trimmed;
+  }
+}
+
+const clientUrls = `${process.env.CLIENT_URL || "http://localhost:5173"}`
+  .split(",")
+  .map(normalizeOrigin)
+  .filter(Boolean);
+
 export default {
   port: parseInt(process.env.PORT || "3001"),
   env: process.env.NODE_ENV || "development",
@@ -16,11 +32,8 @@ export default {
   usdc: { address: process.env.USDC_ADDRESS },
   binance: { wsUrl: process.env.BINANCE_WS_URL || "wss://stream.binance.com:9443/ws/btcusdt@ticker" },
   client: {
-    url: process.env.CLIENT_URL || "http://localhost:5173",
-    urls: `${process.env.CLIENT_URL || "http://localhost:5173"}`
-      .split(",")
-      .map((value) => value.trim())
-      .filter(Boolean),
+    url: clientUrls[0] || "http://localhost:5173",
+    urls: [...new Set(clientUrls)],
   },
   game: { matchTimeout: 60000, predictTimeout: 60000, predictSafeBuffer: 5000, settleDelay: 30000, roomExpiry: 300000, paymentTimeout: 90000, entryFee: 1_000_000, feeRate: 0.05 },
 };
