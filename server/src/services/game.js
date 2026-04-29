@@ -684,11 +684,6 @@ class GameService {
       totalPredicted: Object.keys(g.predictions).length,
       totalPlayers: g.players.length,
     });
-    if (Object.keys(g.predictions).length === g.players.length) {
-      clearTimeout(g.predictTimer);
-      clearInterval(g.countdownInterval);
-      this._endPredict(gameId);
-    }
     return { status: "ok" };
   }
 
