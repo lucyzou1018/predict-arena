@@ -808,6 +808,7 @@ export default function Home(){
   const restoreOpenRoomRef=useRef(restoreOpenRoom); restoreOpenRoomRef.current=restoreOpenRoom;
 
   const isPaymentClosureReason=useCallback((reason="")=>/timed out|timeout|window closed|did not complete payment|room has been dissolved/i.test(String(reason)),[]);
+  const isRoomSetupFailureReason=useCallback((reason="")=>/prepare room|room setup|on-chain room setup|preparing.*on-chain|on-chain.*prepar/i.test(String(reason)),[]);
 
   const handleRoomPaymentFailure=useCallback((reason)=>{
     reason = reason || t("home.err.timeoutTeam");
@@ -1167,7 +1168,7 @@ export default function Home(){
         createCancelPendingRef.current=false;
         createPhaseBeforeCancelRef.current="select";
         const reason=d?.reason||"A player did not complete payment. This room has been dissolved.";
-        if(isPaymentClosureReason(reason)){
+        if(!isRoomSetupFailureReason(reason)&&isPaymentClosureReason(reason)){
           handleRoomPaymentFailure(reason);
           return;
         }
@@ -1212,7 +1213,7 @@ export default function Home(){
       }),
     ];
     return()=>u.forEach(f=>f());
-  },[on,updateGame,nav,handleRoomPaymentFailure,isPaymentClosureReason,restoreOpenRoom,failCreateStart,failJoinStart,t]);
+  },[on,updateGame,nav,handleRoomPaymentFailure,isPaymentClosureReason,isRoomSetupFailureReason,restoreOpenRoom,failCreateStart,failJoinStart,t]);
 
   // Check if any mode is currently active (not in idle "select" state)
   const isCreateBusy=createPhase!=="select";

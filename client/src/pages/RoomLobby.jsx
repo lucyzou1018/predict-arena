@@ -114,6 +114,7 @@ export default function RoomLobby(){
   const codeHoverTimeoutRef=useRef(null);
 
   const isPaymentClosureReason=useCallback((reason="")=>/timed out|timeout|window closed|did not complete payment|room has been dissolved/i.test(String(reason)),[]);
+  const isRoomSetupFailureReason=useCallback((reason="")=>/prepare room|room setup|on-chain room setup|preparing.*on-chain|on-chain.*prepar/i.test(String(reason)),[]);
   const isOwner=!!wallet&&!!roomOwner&&roomOwner.toLowerCase()===wallet.toLowerCase();
   const openRoomExitDialog=useCallback((title,subtitle)=>{
     if(expiredRedirectTimerRef.current){
@@ -382,14 +383,14 @@ export default function RoomLobby(){
       on("room:dissolved",d=>{const selfCancelled=cancelPending.current;const reason=d?.reason||null;cancelPending.current=false;phaseBeforeCancel.current="waiting";setHint(null);if(paid){refund(ENTRY_FEE);setPaid(false);}setErr(null);setRoomExpiresAt(null);setRoomCountdown(null);setPaymentStartedAt(null);setPaymentCountdown(null);setRoomFullInfo(null);setPaymentProgress({paidCount:0,total:0});setPhase("dissolved");showClosedDialog(selfCancelled||isPaymentClosureReason(reason)?t("roomLobby.exit.closedSubtitle"):reason||t("roomLobby.exit.closedSubtitle"));}),
       on("room:expired",()=>{setRoomExpiresAt(null);setRoomCountdown(null);setPhase("expired");showExpiredDialog();}),
       on("room:payment:update",d=>{setPaymentProgress({paidCount:d.paidCount,total:d.total});confirmRetryRef.current.tries=0;if(confirmRetryRef.current.timer){clearTimeout(confirmRetryRef.current.timer);confirmRetryRef.current.timer=null;}setHint(null);setErr(null);}),
-      on("room:payment:failed",d=>{const reason=d?.reason||t("create.err.teamDisbanded");if(isPaymentClosureReason(reason)){handlePaymentFailure(reason);return;}setPaymentStartedAt(null);setPaymentCountdown(null);setRoomFullInfo(null);setPaymentProgress({paidCount:0,total:0});setPaymentTimeoutError(null);setHint(null);setErr(null);setPhase("dissolved");showClosedDialog(reason||t("roomLobby.exit.closedSubtitle"));}),
+      on("room:payment:failed",d=>{const reason=d?.reason||t("create.err.teamDisbanded");if(isRoomSetupFailureReason(reason)){setPaymentStartedAt(null);setPaymentCountdown(null);setRoomFullInfo(null);setPaymentProgress({paidCount:0,total:0});setPaymentTimeoutError(null);setHint(null);setErr(null);setPhase("dissolved");showClosedDialog(reason||t("roomLobby.exit.closedSubtitle"));return;}if(isPaymentClosureReason(reason)){handlePaymentFailure(reason);return;}setPaymentStartedAt(null);setPaymentCountdown(null);setRoomFullInfo(null);setPaymentProgress({paidCount:0,total:0});setPaymentTimeoutError(null);setHint(null);setErr(null);setPhase("dissolved");showClosedDialog(reason||t("roomLobby.exit.closedSubtitle"));}),
       on("game:start",d=>{if(inactiveRedirectTimerRef.current){clearTimeout(inactiveRedirectTimerRef.current);inactiveRedirectTimerRef.current=null;}const nextPlayers=Array.isArray(d.players)?d.players:[];const nextTotal=d.players.length;updateGame({gameId:d.gameId,chainGameId:d.chainGameId||d.gameId,mode:"room",teamSize:nextTotal,players:nextPlayers,phase:"predicting",basePrice:d.basePrice,countdown:Math.round((d.predictTimeout||60000)/1000),predictSafeBuffer:Math.round((d.predictSafeBuffer||5000)/1000),predictionDeadline:d.predictionDeadline||null});setRoom({current:nextPlayers.length,players:nextPlayers});setTeamSize(nextTotal||teamSize);setRoomOwner(nextPlayers[0]||null);if(d.inviteCode)setCode(d.inviteCode);setRoomExpiresAt(null);setRoomCountdown(null);setPaymentStartedAt(null);setPaymentCountdown(null);setPaymentTimeoutError(null);setErr(null);setHint(null);setBootstrapped(true);if(fromQuickMatch){clearQuickMatchSession(wallet);setTimeout(()=>nav("/game"),50);return;}setPhase("in_game");}),
       on("game:resume",d=>{if(inactiveRedirectTimerRef.current){clearTimeout(inactiveRedirectTimerRef.current);inactiveRedirectTimerRef.current=null;}const nextPlayers=Array.isArray(d.players)?d.players:[];const nextTotal=d.players?.length||d.totalPlayers||0;updateGame({gameId:d.gameId,chainGameId:d.chainGameId||d.gameId,mode:"room",teamSize:nextTotal,players:nextPlayers,phase:d.phase==="settling"?"settling":"predicting",basePrice:d.basePrice,countdown:d.remaining||Math.round((d.predictTimeout||60000)/1000),predictSafeBuffer:Math.round((d.predictSafeBuffer||5000)/1000),predictionDeadline:d.predictionDeadline||null,currentPrice:d.currentPrice||d.basePrice});setRoom({current:nextPlayers.length||nextTotal,players:nextPlayers});setTeamSize(nextTotal||teamSize);setRoomOwner(nextPlayers[0]||null);if(d.inviteCode)setCode(d.inviteCode);setRoomExpiresAt(null);setRoomCountdown(null);setPaymentStartedAt(null);setPaymentCountdown(null);setPaymentTimeoutError(null);setErr(null);setHint(null);setBootstrapped(true);if(fromQuickMatch){clearQuickMatchSession(wallet);setTimeout(()=>nav("/game"),50);return;}setPhase("in_game");}),
       on("match:found",d=>{if(!fromQuickMatch||quickMatchPaymentOpened.current)return;quickMatchPaymentOpened.current=true;openPayment({gameId:d.gameId||null,chainGameId:d.chainGameId||null,players:d.players||[],total:d.teamSize||0,inviteCode:d.inviteCode||code,paymentTimeout:PAYMENT_TIMEOUT*1000});}),
     ];
     return()=>u.forEach(f=>f());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[on,code,updateGame,nav,handlePaymentFailure,wallet,isPaymentClosureReason,openPayment,fromQuickMatch]);
+  },[on,code,updateGame,nav,handlePaymentFailure,wallet,isPaymentClosureReason,isRoomSetupFailureReason,openPayment,fromQuickMatch]);
 
   useEffect(()=>{
     if(paymentCountdown!==0)return;
@@ -821,13 +822,19 @@ export default function RoomLobby(){
       )}
 
       <PaymentModal
-        visible={fromQuickMatch&&phase==="preparing"}
+        visible={phase==="preparing"}
         onConfirm={()=>{}}
         loading={false}
         mode="preparing"
-        variant="quickPreparing"
+        variant={fromQuickMatch?"quickPreparing":"lobby"}
+        eyebrow={fromQuickMatch?null:t("roomLobby.payment.lobbyUpdate")}
+        title={fromQuickMatch?null:t("home.payment.preparingTitle")}
+        subtitle={fromQuickMatch?null:t("home.payment.preparingRoomSubtitle",{n:paymentProgress.total||teamSize||0})}
         amount={null}
-        hint={null}
+        hint={fromQuickMatch?null:t("home.payment.preparingRoomHint")}
+        totalCount={fromQuickMatch?0:(paymentProgress.total||teamSize)}
+        preparingTitle={t("payment.preparingTitle")}
+        preparingMessage={t("payment.preparingMessage")}
       />
       <PaymentModal
         visible={phase==="payment"||phase==="paid_waiting"||!!paymentTimeoutError}

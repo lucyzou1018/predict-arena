@@ -141,7 +141,10 @@ class RoomService {
       return chainGameId;
     })().catch(async (error) => {
       if (this.rooms[code]) {
-        const message = error?.message || "On-chain room setup failed. Please create a new room.";
+        const rawMessage = error?.message || "";
+        const message = /prepare room|confirmation timed out|on-chain/i.test(rawMessage)
+          ? "Room setup timed out while preparing on-chain payment. Please create a new room."
+          : (rawMessage || "On-chain room setup failed. Please create a new room.");
         await this._abortPaymentRoom(code, message);
       }
       throw error;

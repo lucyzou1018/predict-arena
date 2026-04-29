@@ -42,5 +42,15 @@ export default {
     url: clientUrls[0] || "http://localhost:5173",
     urls: [...new Set(clientUrls)],
   },
-  game: { matchTimeout: 60000, predictTimeout: 60000, predictSafeBuffer: 5000, settleDelay: 30000, roomExpiry: 300000, paymentTimeout: 90000, entryFee: 1_000_000, feeRate: 0.05 },
+  game: {
+    matchTimeout: 60000,
+    predictTimeout: 60000,
+    predictSafeBuffer: 5000,
+    settleDelay: 30000,
+    roomExpiry: 300000,
+    roomPrepareTimeout: parseInt(process.env.ROOM_PREPARE_TIMEOUT_MS || "180000", 10),
+    paymentTimeout: 90000,
+    entryFee: 1_000_000,
+    feeRate: 0.05,
+  },
 };

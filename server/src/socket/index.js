@@ -296,7 +296,7 @@ export function initSocket(httpServer) {
               fallbackPlayers: players,
             });
           } else {
-            roomService.prepareRoomPayment(d.inviteCode, { timeoutMs: config.game.paymentTimeout })
+            roomService.prepareRoomPayment(d.inviteCode, { timeoutMs: config.game.roomPrepareTimeout })
               .then((preparedChainGameId) => openPreparedRoomPayment({
                 gameId: gid,
                 inviteCode: d.inviteCode,
