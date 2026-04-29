@@ -26,6 +26,12 @@ async function main() {
     },
   }));
   app.use(express.json());
+  app.use((req, _res, next) => {
+    const [path, query] = req.url.split("?");
+    const normalizedPath = path.replace(/\/{2,}/g, "/");
+    req.url = query ? `${normalizedPath}?${query}` : normalizedPath;
+    next();
+  });
   app.get("/api/price", (_, res) => res.json(priceService.getStatus()));
   app.use("/api", gameRoutes);
   app.get("/health", (_, res) => res.json({ status: "ok", ...priceService.getStatus() }));
