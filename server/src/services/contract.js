@@ -423,10 +423,11 @@ class ContractService {
     if (!this.redisEnabled || !this.redis) return fn();
     const lockToken = `${this.instanceId}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
     const deadline = Date.now() + NONCE_LOCK_WAIT_MS;
+    const lockKey = this._nonceLockKey(address);
     while (Date.now() < deadline) {
       let acquired = null;
       try {
-        acquired = await this.redis.set(this._nonceLockKey(address), lockToken, "PX", NONCE_LOCK_TTL_MS, "NX");
+        acquired = await this.redis.set(lockKey, lockToken, "PX", NONCE_LOCK_TTL_MS, "NX");
       } catch (error) {
         console.warn("[Contract] Nonce lock attempt failed", error?.message || error);
         break;
@@ -435,9 +436,23 @@ class ContractService {
         await sleep(NONCE_LOCK_RETRY_MS);
         continue;
       }
+      const renewEveryMs = Math.max(1000, Math.floor(NONCE_LOCK_TTL_MS / 2));
+      const renewTimer = setInterval(() => {
+        this.redis.eval(
+          "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('pexpire', KEYS[1], ARGV[2]) else return 0 end",
+          1,
+          lockKey,
+          lockToken,
+          NONCE_LOCK_TTL_MS,
+        ).catch((error) => {
+          console.warn("[Contract] Failed to renew nonce lock", error?.message || error);
+        });
+      }, renewEveryMs);
+      renewTimer.unref?.();
       try {
         return await fn();
       } finally {
+        clearInterval(renewTimer);
         await this._releaseNonceLock(lockToken, address);
       }
     }
@@ -452,7 +467,20 @@ class ContractService {
     const storedRaw = await this.redis.get(this._nonceCounterKey(signer.address));
     if (storedRaw === null) return pendingNonce;
     const storedNonce = Number(storedRaw);
-    return Number.isFinite(storedNonce) ? Math.max(storedNonce, pendingNonce) : pendingNonce;
+    if (!Number.isFinite(storedNonce)) return pendingNonce;
+    if (storedNonce > pendingNonce) {
+      console.warn("[Contract] stale relay nonce counter detected", {
+        signer: signer.address,
+        storedNonce,
+        pendingNonce,
+      });
+      await this._setDistributedNonce(signer.address, pendingNonce);
+      return pendingNonce;
+    }
+    if (storedNonce < pendingNonce) {
+      await this._setDistributedNonce(signer.address, pendingNonce);
+    }
+    return pendingNonce;
   }
 
   async _setDistributedNonce(address, nextNonce) {
