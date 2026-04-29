@@ -26,9 +26,9 @@ const DEFAULT_BASE_RPC_FALLBACKS = {
 
 const RELAY_GAS_LIMITS = {
   ownerCreateGame: 220000n,
-  ownerCreateRoom: 260000n,
+  ownerCreateRoom: 500000n,
   ownerJoinGame: 150000n,
-  ownerJoinRoom: 150000n,
+  ownerJoinRoom: 220000n,
   startGameWithAuth: 220000n,
   submitPredictionBySig: 180000n,
   submitPredictionsBySigBatch: 420000n,
@@ -149,6 +149,14 @@ const formatEth = (value) => {
   }
 };
 
+const formatGwei = (value) => {
+  try {
+    return ethers.formatUnits(value || 0n, "gwei");
+  } catch (_) {
+    return "0";
+  }
+};
+
 const toBigIntOrNull = (value) => {
   try {
     if (value === null || value === undefined) return null;
@@ -259,9 +267,13 @@ class ContractService {
       return new Error(`${action} relay is syncing another transaction. Please retry.`);
     }
     if (isRpcTimeoutLike(error)) {
-      return new Error(`${action} timed out while waiting for Base Sepolia. Please retry.`);
+      return new Error(`${action} timed out while waiting for ${this._networkLabel()}. Please retry.`);
     }
     return error instanceof Error ? error : new Error(`${action} failed`);
+  }
+
+  _networkLabel() {
+    return config.network === "mainnet" ? "Base mainnet" : "Base Sepolia";
   }
 
   _signatureDomain() {
@@ -519,10 +531,32 @@ class ContractService {
     const required = request.gasLimit * request.maxFeePerGas;
     if (balance >= required) return;
     throw new Error(
-      `${action} relay wallet is low on Base Sepolia ETH. ` +
+      `${action} relay wallet is low on ${this._networkLabel()} ETH. ` +
       `Executor ${signerAddress} has ${formatEth(balance)} ETH, ` +
       `but this transaction may need about ${formatEth(required)} ETH for gas.`
     );
+  }
+
+  async _resetRelayNonceToPending(signer, label) {
+    if (!signer?.address) return;
+    const chainNonce = await this._getTransactionCount(signer, "pending");
+    if (this.redisEnabled && this.redis) {
+      await this._setDistributedNonce(signer.address, chainNonce);
+    }
+    this._localNonces.set(signer.address.toLowerCase(), chainNonce);
+    console.warn(`[Contract] ${label} nonce reset to ${chainNonce}`);
+  }
+
+  _logRelayTransaction(label, methodName, nonce, relayOverrides, tx) {
+    console.log("[Contract] relay tx broadcast", {
+      label,
+      methodName,
+      nonce,
+      hash: tx?.hash || null,
+      gasLimit: relayOverrides?.gasLimit?.toString?.() || null,
+      maxFeePerGasGwei: formatGwei(relayOverrides?.maxFeePerGas),
+      maxPriorityFeePerGasGwei: formatGwei(relayOverrides?.maxPriorityFeePerGas),
+    });
   }
 
   async _getTransactionCount(signer, blockTag = "pending") {
@@ -609,6 +643,7 @@ class ContractService {
             nonce: nextNonce,
           });
           const tx = await this._broadcastSignedTransaction(signedTx);
+          this._logRelayTransaction(action, methodName, nextNonce, relayOverrides, tx);
           this._localNonces.set(signer.address.toLowerCase(), nextNonce + 1);
           return tx;
         } catch (error) {
@@ -638,6 +673,7 @@ class ContractService {
           nonce: nextNonce,
         });
         const tx = await this._broadcastSignedTransaction(signedTx);
+        this._logRelayTransaction(action, methodName, nextNonce, relayOverrides, tx);
         await this._setDistributedNonce(signer.address, nextNonce + 1);
         return tx;
       } catch (error) {
@@ -672,11 +708,11 @@ class ContractService {
     return nextNonce;
   }
 
-  async _sendContractTransactionAtNonce(methodName, args, nonce) {
+  async _sendContractTransactionAtNonce(methodName, args, nonce, action = methodName) {
     const signer = this._signerForMethod(methodName);
     const txRequest = await this.contract.getFunction(methodName).populateTransaction(...args);
     const relayOverrides = await this._buildRelayOverrides(methodName, txRequest, signer.address);
-    await this._assertRelayBalance(methodName, { ...txRequest, ...relayOverrides }, signer.address);
+    await this._assertRelayBalance(action, { ...txRequest, ...relayOverrides }, signer.address);
     const signedTx = await signer.signTransaction({
       ...txRequest,
       ...relayOverrides,
@@ -684,7 +720,9 @@ class ContractService {
       type: 2,
       nonce,
     });
-    return this._broadcastSignedTransaction(signedTx);
+    const tx = await this._broadcastSignedTransaction(signedTx);
+    this._logRelayTransaction(action, methodName, nonce, relayOverrides, tx);
+    return tx;
   }
 
   _extractGameIdFromReceipt(receipt, { creator = null, inviteCode = null, isRoom = null } = {}) {
@@ -718,9 +756,16 @@ class ContractService {
 
   async _waitForReceipt(tx, label, options = {}) {
     if (!tx?.hash) throw new Error(`${label} transaction hash missing`);
-    const confirmTimeoutMs = options.confirmTimeoutMs || TX_CONFIRM_TIMEOUT_MS;
+    const deadlineAt = options.deadlineAt || null;
+    const msUntilDeadline = () => deadlineAt ? Math.max(0, deadlineAt - Date.now()) : null;
+    const requestedConfirmTimeoutMs = options.confirmTimeoutMs || TX_CONFIRM_TIMEOUT_MS;
+    const deadlineConfirmMs = msUntilDeadline();
+    const confirmTimeoutMs = deadlineConfirmMs === null
+      ? requestedConfirmTimeoutMs
+      : Math.min(requestedConfirmTimeoutMs, deadlineConfirmMs);
     const recoveryTimeoutMs = options.recoveryTimeoutMs || TX_RECOVERY_TIMEOUT_MS;
     const signer = options.signer || this.executorSigner;
+    if (confirmTimeoutMs <= 0) throw new Error(`${label} confirmation timed out. Please retry.`);
     try {
       const receipt = await this.provider.waitForTransaction(tx.hash, 1, confirmTimeoutMs);
       if (receipt) {
@@ -732,7 +777,7 @@ class ContractService {
       console.warn(`[Contract] ${label} wait timed out`, { hash: tx.hash, error: error?.message || error });
     }
 
-    const deadline = Date.now() + recoveryTimeoutMs;
+    const deadline = deadlineAt || (Date.now() + recoveryTimeoutMs);
     while (Date.now() < deadline) {
       try {
         const receipt = await this._getReceiptFromAnyProvider(tx.hash);
@@ -749,12 +794,7 @@ class ContractService {
     // Tx was broadcast but never confirmed — reset nonce to chain state
     // to prevent nonce drift from dropped transactions
     try {
-      const chainNonce = await this._getTransactionCount(signer, "pending");
-      if (this.redisEnabled && this.redis) {
-        await this._setDistributedNonce(signer.address, chainNonce);
-      }
-      this._localNonces.set(signer.address.toLowerCase(), chainNonce);
-      console.warn(`[Contract] ${label} timed out, nonce reset to ${chainNonce}`);
+      await this._resetRelayNonceToPending(signer, label);
     } catch (_) {}
 
     throw new Error(`${label} confirmation timed out. Please retry.`);
@@ -874,14 +914,44 @@ class ContractService {
     const allPlayers = Array.isArray(players) ? players : [];
     const nonOwners = allPlayers.filter((player) => player && player.toLowerCase() !== owner?.toLowerCase());
     const timeoutMs = options.timeoutMs || TX_CONFIRM_TIMEOUT_MS;
+    const deadlineAt = Date.now() + timeoutMs;
+    const receiptOptions = {
+      ...options,
+      signer: this.ownerSigner,
+      confirmTimeoutMs: timeoutMs,
+      deadlineAt,
+    };
     try {
       return await this._runRelaySequence("Prepare room", this.ownerSigner, async () => {
-        const startNonce = await this._reserveRelayNonces(1 + nonOwners.length, "ownerCreateRoom");
-        await this._sendContractTransactionAtNonce("ownerCreateRoom", [maxPlayers, inviteCode, owner], startNonce);
-        for (let i = 0; i < nonOwners.length; i += 1) {
-          await this._sendContractTransactionAtNonce("ownerJoinRoom", [inviteCode, nonOwners[i]], startNonce + 1 + i);
+        try {
+          const startNonce = await this._reserveRelayNonces(1 + nonOwners.length, "ownerCreateRoom");
+          const createTx = await this._sendContractTransactionAtNonce(
+            "ownerCreateRoom",
+            [maxPlayers, inviteCode, owner],
+            startNonce,
+            "Prepare room create",
+          );
+          const createReceipt = await this._waitForReceipt(createTx, "Prepare room create", receiptOptions);
+          const createdGameId =
+            this._extractGameIdFromReceipt(createReceipt, { creator: owner, inviteCode, isRoom: true }) ||
+            await this._recoverRoomGameId(inviteCode, Math.min(TX_RECOVERY_TIMEOUT_MS, Math.max(0, deadlineAt - Date.now())));
+          if (!createdGameId) throw new Error("Prepare room create confirmed but game id could not be resolved");
+
+          for (let i = 0; i < nonOwners.length; i += 1) {
+            const joinTx = await this._sendContractTransactionAtNonce(
+              "ownerJoinRoom",
+              [inviteCode, nonOwners[i]],
+              startNonce + 1 + i,
+              "Prepare room join",
+            );
+            await this._waitForReceipt(joinTx, "Prepare room join", receiptOptions);
+          }
+        } catch (error) {
+          await this._resetRelayNonceToPending(this.ownerSigner, "Prepare room").catch(() => {});
+          throw error;
         }
-        const gameId = await this.waitForRoomPaymentOpen(inviteCode, timeoutMs);
+        const remainingMs = Math.max(0, deadlineAt - Date.now());
+        const gameId = await this.waitForRoomPaymentOpen(inviteCode, remainingMs);
         if (!gameId) throw new Error("Prepare room confirmation timed out. Please retry.");
         return gameId;
       });
