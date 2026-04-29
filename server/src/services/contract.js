@@ -78,6 +78,7 @@ const ABI = [
   "function allPlayersPaid(uint256) external view returns (bool)",
   "function inviteCodeToGame(string) external view returns (uint256)",
   "function predictionDeadline(uint256) external view returns (uint256)",
+  "function paymentDeadlineAt(uint256) external view returns (uint256)",
   "function getPlayerPrediction(uint256, address) external view returns (uint8,bool,uint256,bool)",
   "function getGameInfo(uint256) external view returns (uint256,uint8,uint8,uint256,uint256,uint256,bool,string)",
   "event GameCreated(uint256 indexed gameId, uint8 maxPlayers, bool isRoom, string inviteCode, address creator)",

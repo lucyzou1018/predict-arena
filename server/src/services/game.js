@@ -14,6 +14,7 @@ const ROOM_PAYMENT_CONFIRM_RETRY_MS = parseInt(process.env.ROOM_PAYMENT_CONFIRM_
 const ROOM_PAYMENT_CONFIRM_MAX_ATTEMPTS = parseInt(process.env.ROOM_PAYMENT_CONFIRM_MAX_ATTEMPTS || "30", 10);
 const SETTLEMENT_RECOVERY_RETRY_MS = parseInt(process.env.SETTLEMENT_RECOVERY_RETRY_MS || "2000", 10);
 const SETTLEMENT_RECOVERY_MAX_ATTEMPTS = parseInt(process.env.SETTLEMENT_RECOVERY_MAX_ATTEMPTS || "30", 10);
+const SETTLEMENT_CHAIN_DEADLINE_BUFFER_MS = parseInt(process.env.SETTLEMENT_CHAIN_DEADLINE_BUFFER_MS || "2500", 10);
 
 class GameService {
   constructor() {
@@ -211,6 +212,13 @@ class GameService {
       reason.includes("socket hang up") ||
       reason.includes("econnreset")
     );
+  }
+
+  async _waitForChainPredictionDeadline(game) {
+    const deadline = Number(game?.predictionDeadline || 0);
+    if (!deadline) return;
+    const waitMs = (deadline * 1000) + SETTLEMENT_CHAIN_DEADLINE_BUFFER_MS - Date.now();
+    if (waitMs > 0) await sleep(waitMs);
   }
 
   _clearSettlementRecovery(gameId) {
@@ -784,6 +792,7 @@ class GameService {
     this.settlingGames.add(gameId);
     let preserveActiveGame = false;
     try {
+      await this._waitForChainPredictionDeadline(g);
       const sp = priceService.getPrice();
       if (!sp || sp <= 0) {
         throw new Error("Settlement price unavailable");
