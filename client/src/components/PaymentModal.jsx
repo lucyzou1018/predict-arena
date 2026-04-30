@@ -1,4 +1,6 @@
-import{useT}from"../context/LangContext";
+import{useState}from"react";import{useT}from"../context/LangContext";
+
+const isNetworkSwitchError=(message="")=>/wallet network is incorrect|switch wallet to|switch to .* before continuing/i.test(String(message));
 
 function LoadingLabel({ label = null }){
   const t=useT();
@@ -41,8 +43,11 @@ export function PaymentModal({
   variant="default",
   eyebrow=null,
   cancelLabel=null,
+  onSwitchNetwork=null,
+  switchNetworkLabel=null,
 }){
   const t=useT();
+  const[switchingNetwork,setSwitchingNetwork]=useState(false);
   if(!visible)return null;
   const isWaiting=mode==="waiting";
   const isPreparing=mode==="preparing";
@@ -62,6 +67,8 @@ export function PaymentModal({
   const displayPreparingPrimary=preparingPrimaryLabel||t("payment.preparingPrimary");
   const displayPreparingSecondary=preparingSecondaryLabel||t("payment.preparingSecondary");
   const displayCancelLabel=cancelLabel||t("payment.cancel");
+  const displaySwitchNetworkLabel=switchNetworkLabel||t("nav.switchChain");
+  const shouldSwitchNetwork=!!onSwitchNetwork&&!isPreparing&&!isWaiting&&isNetworkSwitchError(error);
   const enteringGameLabel=t("payment.enteringGame");
   const waitingOthersLabel=t("payment.waitingOthers");
   const paidLabel=t("payment.paid");
@@ -70,6 +77,13 @@ export function PaymentModal({
     :isWaiting
       ?(remainingPlayers>0?t("payment.waitingMore",{n:remainingPlayers}):t("payment.waitingAllPaid"))
       :(totalCount>0?(paidCount>0?t("payment.everyoneHerePaid",{paid:paidCount,total:totalCount}):t("payment.confirmEntry")):t("payment.confirmWalletContinue"));
+  const handlePrimaryAction=async()=>{
+    if(!shouldSwitchNetwork){onConfirm?.();return;}
+    setSwitchingNetwork(true);
+    try{await onSwitchNetwork();}
+    finally{setSwitchingNetwork(false);}
+  };
+  const primaryActionLabel=shouldSwitchNetwork?displaySwitchNetworkLabel:displayActionLabel;
   if(isQuickPreparing){
     return<div className="payment-modal-backdrop payment-modal-backdrop-lobby fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4">
       <div className="payment-modal-card payment-modal-card-lobby dashboard-modal-card w-full max-w-[23rem] overflow-hidden overscroll-contain animate-slideUp">
@@ -129,7 +143,7 @@ export function PaymentModal({
 
           <div className={lobbyActionWrapClass}>
           {singleAction?(
-            <button onClick={onConfirm} disabled={loading} className={singleActionPrimaryClass}>{loading?<LoadingLabel />:displayActionLabel}</button>
+            <button onClick={handlePrimaryAction} disabled={loading||switchingNetwork} className={singleActionPrimaryClass}>{loading||switchingNetwork?<LoadingLabel label={shouldSwitchNetwork?displaySwitchNetworkLabel:null} />:primaryActionLabel}</button>
           ):isPreparing?(
             <div className="space-y-2">
               <div className="dashboard-room-subcard w-full px-4 py-2.5 text-center text-[10px] font-bold uppercase tracking-[0.18em] text-fuchsia-100/82">{displayPreparingPrimary}</div>
@@ -140,7 +154,7 @@ export function PaymentModal({
           ):(
             <div className="flex flex-col-reverse gap-2 sm:flex-row">
               <button onClick={onCancel} disabled={loading} className="dashboard-secondary-btn flex-1 px-4 py-2.5 text-sm font-semibold !text-white/48 disabled:opacity-40">{displayCancelLabel}</button>
-              <button onClick={onConfirm} disabled={loading} className="dashboard-primary-btn flex-[1.18] !py-2.5 !text-sm">{loading?<LoadingLabel />:displayActionLabel}</button>
+              <button onClick={handlePrimaryAction} disabled={loading||switchingNetwork} className="dashboard-primary-btn flex-[1.18] !py-2.5 !text-sm">{loading||switchingNetwork?<LoadingLabel label={shouldSwitchNetwork?displaySwitchNetworkLabel:null} />:primaryActionLabel}</button>
             </div>
           )}
           </div>
@@ -187,7 +201,7 @@ export function PaymentModal({
       {error&&<div className="mb-3 rounded-[18px] border border-rose-500/20 bg-rose-500/10 px-3.5 py-2.5 text-[11px] leading-5 text-rose-300">{error}</div>}
       {displayHint&&<p className="text-white/26 text-[10px] leading-5 text-center mb-5 max-w-[25rem] mx-auto">{displayHint}</p>}
       {singleAction?(
-        <button onClick={onConfirm} disabled={loading} className={singleActionPrimaryClass}>{loading?<LoadingLabel />:displayActionLabel}</button>
+        <button onClick={handlePrimaryAction} disabled={loading||switchingNetwork} className={singleActionPrimaryClass}>{loading||switchingNetwork?<LoadingLabel label={shouldSwitchNetwork?displaySwitchNetworkLabel:null} />:primaryActionLabel}</button>
       ):isPreparing?(
         <div className="space-y-2">
           <div className="w-full py-2 rounded-xl bg-fuchsia-500/12 border border-fuchsia-500/18 text-fuchsia-300 text-[11px] font-bold text-center">{displayPreparingPrimary}</div>
@@ -198,7 +212,7 @@ export function PaymentModal({
       ):(
         <div className="flex gap-2">
           <button onClick={onCancel} disabled={loading} className="flex-1 py-2.5 rounded-xl bg-white/[0.02] border border-white/[0.06] hover:bg-white/[0.04] transition text-sm text-white/30">{displayCancelLabel}</button>
-          <button onClick={onConfirm} disabled={loading} className="flex-1 btn-primary !py-2.5 !text-sm">{loading?<LoadingLabel />:displayActionLabel}</button>
+          <button onClick={handlePrimaryAction} disabled={loading||switchingNetwork} className="flex-1 btn-primary !py-2.5 !text-sm">{loading||switchingNetwork?<LoadingLabel label={shouldSwitchNetwork?displaySwitchNetworkLabel:null} />:primaryActionLabel}</button>
         </div>
       )}
     </div>

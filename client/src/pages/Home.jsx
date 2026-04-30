@@ -385,7 +385,7 @@ function QuickMatchSelectorCard({ selectedSize, onSelect, onAction, disabled, bl
 export default function Home(){
   const nav=useNavigate();
   const t=useT();
-  const{wallet,provider,signer,connect,mockMode,refund,pendingAction,setPendingAction,ensureChain}=useWallet();
+  const{wallet,provider,signer,connect,mockMode,refund,pendingAction,setPendingAction,ensureChain,switchChain}=useWallet();
   const{emit,on}=useSocket();
   const{updateGame}=useGame();
   const{payForGame,payForRoomEntry,claimGameFunds,getGameClaimStatus,loading,claiming,mockPay,shouldUseMockPayment}=useContract();
@@ -1418,6 +1418,7 @@ export default function Home(){
     });
   },[nav,rememberQuickMatchRoom]);
   const payMatch=useCallback(async()=>{if(!pending)return;try{setPaymentErr(null);setPaymentNotice(null);if(!pending.gameId||!pending.chainGameId||!wallet)throw new Error("Missing game id");const startedAt=paymentStartedAtRef.current;const deadline=startedAt?startedAt+PAYMENT_TIMEOUT*1000:null;if((deadline&&Date.now()>=deadline)||paymentFailureDialogRef.current){handleRoomPaymentFailure(t("home.err.windowClosed"));return;}await payForGame(pending.chainGameId);const nowDeadline=paymentStartedAtRef.current?paymentStartedAtRef.current+PAYMENT_TIMEOUT*1000:deadline;if((nowDeadline&&Date.now()>=nowDeadline)||paymentFailureDialogRef.current){refund(ENTRY_FEE);handleRoomPaymentFailure(t("home.err.windowClosed"));return;}emit("room:payment:confirm",{gameId:pending.gameId,chainGameId:pending.chainGameId,wallet});setMatchPhase("paid_waiting");}catch(e){const startedAtCatch=paymentStartedAtRef.current;const deadlineCatch=startedAtCatch?startedAtCatch+PAYMENT_TIMEOUT*1000:null;const timedOut=(deadlineCatch&&Date.now()>=deadlineCatch)||!!paymentFailureDialogRef.current;if(timedOut){setMatchPhase("select");return;}const msg=formatPaymentUiError(e?.message||"Payment failed");setMatchErr(msg);setPaymentErr(msg);setMatchPhase("select");}},[pending,payForGame,emit,wallet,refund,handleRoomPaymentFailure]);
+  const switchPaymentNetwork=useCallback(async()=>{const ok=await switchChain();if(ok){setPaymentErr(null);setCreateErr(null);setJoinErr(null);setMatchErr(null);}return ok;},[switchChain]);
   const claimHistoryReward=useCallback(async(game)=>{
     if(!game?.claimable||!game?.chain_game_id)return;
     try{
@@ -1917,6 +1918,8 @@ export default function Home(){
             ?t("home.payment.roomFullSubtitle",{n:paymentProgress.total,t:paymentCountdown||PAYMENT_TIMEOUT})
             :t("home.payment.enterMatchSubtitle")}
         actionLabel={paymentFailureDialog?t("home.payment.confirm"):t("home.payment.action")}
+        onSwitchNetwork={switchPaymentNetwork}
+        switchNetworkLabel={t("nav.switchChain")}
         amount="1 USDC"
         error={failureInfo?failureInfo.text:paymentErr}
         notice={paymentNotice}

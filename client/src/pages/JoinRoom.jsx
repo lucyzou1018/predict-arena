@@ -4,7 +4,7 @@ import{TeamSlots,PaymentModal,RoomTransition}from"../components";import{ENTRY_FE
 import{useT}from"../context/LangContext";
 export default function JoinRoom(){
   const nav=useNavigate();const{emit,on}=useSocket();const{updateGame}=useGame();
-  const{wallet,connect,refund}=useWallet();const{payForRoomEntry,loading}=useContract();
+  const{wallet,connect,refund,switchChain}=useWallet();const{payForRoomEntry,loading}=useContract();
   const t=useT();
   const[phase,setPhase]=useState("input");const[code,setCode]=useState("");
   const[room,setRoom]=useState({current:0,total:0,players:[]});const[err,setErr]=useState(null);const[paid,setPaid]=useState(false);
@@ -194,6 +194,7 @@ export default function JoinRoom(){
       setErr(e?.message||t("create.err.paymentFailed"));
     }
   },[code,payForRoomEntry,emit,roomFullInfo,wallet,refund,handlePaymentFailure,t]);
+  const switchPaymentNetwork=useCallback(async()=>{const ok=await switchChain();if(ok)setErr(null);return ok;},[switchChain]);
   const leave=()=>{emit("room:leave");if(paid){refund(ENTRY_FEE);setPaid(false);}setPhase("input");setRoomExpiresAt(null);};
   const fmtCountdown=(s)=>`${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`;
 
@@ -220,7 +221,7 @@ export default function JoinRoom(){
       </div>
     </div>}
     {phase==="joining"&&<div className="text-center py-10"><div className="w-8 h-8 mx-auto rounded-full border-2 border-fuchsia-400/30 border-t-fuchsia-300 animate-spin mb-3"/><p className="text-white/40 text-xs">{t("join.joining")}</p></div>}
-    <PaymentModal visible={phase==="payment"||!!paymentTimeoutError} onConfirm={paymentTimeoutError?confirmPaymentTimeoutError:payRoom} onCancel={paymentTimeoutError?undefined:leave} loading={loading} title={paymentTimeoutError?t("join.payment.timeout.title"):t("join.payment.full.title")} actionLabel={paymentTimeoutError?t("join.payment.timeout.action"):t("join.payment.action")} subtitle={paymentTimeoutError?t("join.payment.timeout.subtitle"):t("join.payment.full.subtitle")} hint={paymentTimeoutError?null:`${paymentProgress.paidCount}/${paymentProgress.total} ${t("join.paid")}`} error={paymentTimeoutError} countdown={paymentTimeoutError?null:paymentCountdown} singleAction={!!paymentTimeoutError}/>
+    <PaymentModal visible={phase==="payment"||!!paymentTimeoutError} onConfirm={paymentTimeoutError?confirmPaymentTimeoutError:payRoom} onCancel={paymentTimeoutError?undefined:leave} loading={loading} title={paymentTimeoutError?t("join.payment.timeout.title"):t("join.payment.full.title")} actionLabel={paymentTimeoutError?t("join.payment.timeout.action"):t("join.payment.action")} onSwitchNetwork={switchPaymentNetwork} switchNetworkLabel={t("nav.switchChain")} subtitle={paymentTimeoutError?t("join.payment.timeout.subtitle"):t("join.payment.full.subtitle")} hint={paymentTimeoutError?null:`${paymentProgress.paidCount}/${paymentProgress.total} ${t("join.paid")}`} error={paymentTimeoutError||err} countdown={paymentTimeoutError?null:paymentCountdown} singleAction={!!paymentTimeoutError}/>
     {(phase==="waiting"||phase==="paid_waiting")&&<div className="card text-center">
       <p className="text-white/20 text-xs mb-1">{t("join.joined")}</p>
       <p className="text-xl font-mono font-black text-gradient tracking-widest mb-3">{code}</p>

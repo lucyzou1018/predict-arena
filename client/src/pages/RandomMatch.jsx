@@ -2,9 +2,10 @@ import{useState,useEffect,useCallback,useRef}from"react";import{useNavigate}from
 import{useSocket}from"../hooks/useSocket";import{useGame}from"../context/GameContext";import{useWallet}from"../context/WalletContext";import{useContract}from"../hooks/useContract";
 import{MatchAnimation,PaymentModal}from"../components";import{TEAM_SIZES}from"../config/constants";
 import{useT}from"../context/LangContext";
+const isNetworkPaymentError=(message="")=>/wallet network is incorrect|switch wallet to|switch to .* before continuing/i.test(String(message));
 export default function RandomMatch(){
   const nav=useNavigate();const{emit,on}=useSocket();const{updateGame}=useGame();
-  const{mockMode,wallet,connect}=useWallet();const{payForGame,mockPay,loading,shouldUseMockPayment}=useContract();
+  const{mockMode,wallet,connect,switchChain}=useWallet();const{payForGame,mockPay,loading,shouldUseMockPayment}=useContract();
   const t=useT();
   const[phase,setPhase]=useState("select");const[sz,setSz]=useState(2);
   const[match,setMatch]=useState({current:0});const[cd,setCd]=useState(60);
@@ -47,7 +48,8 @@ export default function RandomMatch(){
 
   const start=()=>{if(!wallet){connect();return}setPending(null);setErr(null);setPhase("matching");setMatch({current:1});emit("match:join",{teamSize:sz})};
   const cancel=()=>resetMatch(null,{cancelQueue:true});
-  const pay=useCallback(async()=>{if(!pending)return;try{await payForGame(pending.chainGameId);updateGame({gameId:pending.gameId,chainGameId:pending.chainGameId,mode:"random",teamSize:pending.teamSize||szRef.current,players:pending.players,phase:"predicting"});nav("/game")}catch(e){setErr(e?.message||t("random.err.paymentFailed"));setPhase("select")}},[pending,payForGame,updateGame,nav,t]);
+  const pay=useCallback(async()=>{if(!pending)return;try{await payForGame(pending.chainGameId);updateGame({gameId:pending.gameId,chainGameId:pending.chainGameId,mode:"random",teamSize:pending.teamSize||szRef.current,players:pending.players,phase:"predicting"});nav("/game")}catch(e){const msg=e?.message||t("random.err.paymentFailed");setErr(msg);setPhase(isNetworkPaymentError(msg)?"payment":"select")}},[pending,payForGame,updateGame,nav,t]);
+  const switchPaymentNetwork=useCallback(async()=>{const ok=await switchChain();if(ok)setErr(null);return ok;},[switchChain]);
 
   const preparingCount=match.current||sz;
   return<div className="page-container">
@@ -67,7 +69,10 @@ export default function RandomMatch(){
       title={phase==="preparing"?t("random.payment.title.preparing"):t("random.payment.title.confirm")}
       subtitle={phase==="preparing"?t("random.payment.subtitle.preparing").replace("{n}",String(preparingCount)):t("random.payment.subtitle.confirm")}
       actionLabel={t("random.payment.action")}
+      onSwitchNetwork={switchPaymentNetwork}
+      switchNetworkLabel={t("nav.switchChain")}
       amount="1 USDC"
+      error={phase==="payment"?err:null}
       hint={phase==="preparing"?t("random.payment.hint.preparing"):shouldUseMockPayment?t("random.payment.hint.mock"):t("random.payment.hint.confirm")}
       totalCount={phase==="preparing"?(match.current||sz):(pending?.players?.length||0)}
     />

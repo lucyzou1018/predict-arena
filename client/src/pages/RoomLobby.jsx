@@ -71,7 +71,7 @@ export default function RoomLobby(){
   const loc=useLocation();
   const{emit,on}=useSocket();
   const{gameState,updateGame}=useGame();
-  const{wallet,refund}=useWallet();
+  const{wallet,refund,switchChain}=useWallet();
   const{payForRoomEntry,loading,shouldUseMockPayment,mockPay}=useContract();
   const t=useT();
 
@@ -460,6 +460,11 @@ export default function RoomLobby(){
       setErr(msg);
     }
   },[payForRoomEntry,roomFullInfo,code,emit,wallet,refund,handlePaymentFailure,t,fromQuickMatch,updateGame,nav]);
+  const switchPaymentNetwork=useCallback(async()=>{
+    const ok=await switchChain();
+    if(ok)setErr(null);
+    return ok;
+  },[switchChain]);
 
   const dissolve=useCallback(()=>{
     if(phase==="expired"||(phase==="waiting"&&roomCountdown===0)){
@@ -846,6 +851,8 @@ export default function RoomLobby(){
         eyebrow={paymentTimeoutError?t("roomLobby.payment.lobbyUpdate"):t("roomLobby.payment.eyebrow")}
         title={paymentTimeoutError?t("create.payment.timeout.title"):t("create.payment.full.title")}
         actionLabel={paymentTimeoutError?t("create.payment.timeout.action"):t("create.payment.action")}
+        onSwitchNetwork={switchPaymentNetwork}
+        switchNetworkLabel={t("nav.switchChain")}
         subtitle={paymentTimeoutError?t("create.payment.timeout.subtitle"):t("create.payment.full.subtitle").replace("{n}",String(paymentProgress.total))}
         error={paymentTimeoutError||((phase==="payment"||phase==="paid_waiting")?err:null)}
         hint={paymentTimeoutError?null:(phase==="paid_waiting"?t("roomLobby.payment.hint.waiting"):shouldUseMockPayment?t("roomLobby.payment.hint.mock"):t("roomLobby.payment.hint.confirm"))}
