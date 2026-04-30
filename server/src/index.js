@@ -8,6 +8,7 @@ import priceService from "./services/price.js";
 import contractService from "./services/contract.js";
 import gameService from "./services/game.js";
 import gameRoutes from "./routes/game.js";
+import metricsRoutes from "./routes/metrics.js";
 
 async function main() {
   await initDB();
@@ -33,6 +34,7 @@ async function main() {
     next();
   });
   app.get("/api/price", (_, res) => res.json(priceService.getStatus()));
+  app.use("/api", metricsRoutes);
   app.use("/api", gameRoutes);
   app.get("/health", (_, res) => res.json({ status: "ok", ...priceService.getStatus() }));
   const server = http.createServer(app);

@@ -42,6 +42,9 @@ export default {
     url: clientUrls[0] || "http://localhost:5173",
     urls: [...new Set(clientUrls)],
   },
+  charts: {
+    accessToken: process.env.CHARTS_ACCESS_TOKEN || "",
+  },
   game: {
     matchTimeout: 60000,
     predictTimeout: 60000,
