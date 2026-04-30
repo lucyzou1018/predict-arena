@@ -2,9 +2,10 @@ import{useT}from"../context/LangContext";
 
 function LoadingLabel({ label = null }){
   const t=useT();
+  const displayLabel=String(label||t("payment.processing")).replace(/\s*(?:\.{3}|…)\s*$/,"");
   return (
     <span className="inline-flex items-end justify-center gap-0.5">
-      <span>{label||t("payment.processing")}</span>
+      <span>{displayLabel}</span>
       <span className="loading-ellipsis" aria-hidden="true">
         <span>.</span>
         <span>.</span>
@@ -132,7 +133,7 @@ export function PaymentModal({
           ):isPreparing?(
             <div className="space-y-2">
               <div className="dashboard-room-subcard w-full px-4 py-2.5 text-center text-[10px] font-bold uppercase tracking-[0.18em] text-fuchsia-100/82">{displayPreparingPrimary}</div>
-              <button disabled className="dashboard-secondary-btn w-full px-4 py-2.5 text-sm font-bold !text-white/45">{displayPreparingSecondary}</button>
+              <button disabled className="dashboard-secondary-btn w-full px-4 py-2.5 text-sm font-bold !text-white/45"><LoadingLabel label={displayPreparingSecondary} /></button>
             </div>
           ):isWaiting?(
             <button disabled className="dashboard-secondary-btn w-full px-4 py-2.5 text-sm font-bold !text-white/45">{everyonePaid?<LoadingLabel label={enteringGameLabel} />:waitingOthersLabel}</button>
@@ -190,7 +191,7 @@ export function PaymentModal({
       ):isPreparing?(
         <div className="space-y-2">
           <div className="w-full py-2 rounded-xl bg-fuchsia-500/12 border border-fuchsia-500/18 text-fuchsia-300 text-[11px] font-bold text-center">{displayPreparingPrimary}</div>
-          <button disabled className="w-full py-2.5 rounded-xl bg-white/[0.03] border border-white/[0.08] text-white/45 text-sm font-bold">{displayPreparingSecondary}</button>
+          <button disabled className="w-full py-2.5 rounded-xl bg-white/[0.03] border border-white/[0.08] text-white/45 text-sm font-bold"><LoadingLabel label={displayPreparingSecondary} /></button>
         </div>
       ):isWaiting?(
         <button disabled className="w-full py-2.5 rounded-xl bg-white/[0.03] border border-white/[0.08] text-white/45 text-sm font-bold">{everyonePaid?<LoadingLabel label={enteringGameLabel} />:waitingOthersLabel}</button>
